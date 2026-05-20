@@ -7,6 +7,7 @@ import 'package:ona_net/screens/profile.dart';
 import 'package:ona_net/screens/provider_detail.dart';
 import 'package:ona_net/screens/saved.dart';
 import 'package:ona_net/screens/search.dart';
+import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
 import 'package:provider/provider.dart';
@@ -43,7 +44,8 @@ class _MainWrapperState extends State<MainWrapper> {
     ScreenId.home: const HomeScreen(),
     ScreenId.search: const SearchScreen(),
     ScreenId.saved: const SavedScreen(),
-    ScreenId.profile: const ProfileScreen(),
+    ScreenId.profile: const Profile(),
+
   };
 
   @override
