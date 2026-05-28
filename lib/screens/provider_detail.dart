@@ -383,6 +383,7 @@ class _PackageCard extends StatelessWidget {
                                     ?.copyWith(fontWeight: FontWeight.w800),
                               ),
                             ),
+
                             if (isSelected) ...[
                               const SizedBox(width: 6),
                               const Icon(

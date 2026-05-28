@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:ona_net/provider/registration.dart';
 
 class Profile extends StatelessWidget {
   const Profile({super.key});
@@ -154,6 +157,7 @@ class Profile extends StatelessWidget {
                     isDark: isDark,
                     accentColor: AppTheme.amber,
                     showChevron: false,
+                    onTap: () => _signOut(context),
                   ),
                 ],
               ),
@@ -162,6 +166,52 @@ class Profile extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _signOut(BuildContext context) async {
+    final shouldSignOut = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Log out?'),
+          content: const Text('Are you sure you want to log out?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Log out'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldSignOut != true || !context.mounted) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await AuthService().signOut();
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Signed out successfully'),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Could not sign out: $error'),
+        ),
+      );
+    }
   }
 }
 
@@ -180,7 +230,7 @@ class _AuthLinks extends StatelessWidget {
       runSpacing: 4,
       children: [
         Text(
-          'Continue with your account:',
+          'Manage your Ona Net account:',
           style: GoogleFonts.urbanist(
             color: mutedTextColor,
             fontSize: 13,
@@ -188,11 +238,20 @@ class _AuthLinks extends StatelessWidget {
           ),
         ),
         _ProfileTextLink(
-          label: 'Log in',
+          label: 'Customer sign in',
           onTap: () {
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const Login()),
+            );
+          },
+        ),
+        _ProfileTextLink(
+          label: 'Partner portal',
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ProviderReg()),
             );
           },
         ),
@@ -205,7 +264,7 @@ class _AuthLinks extends StatelessWidget {
           ),
         ),
         _ProfileTextLink(
-          label: 'Sign up',
+          label: 'Create account',
           onTap: () {
             Navigator.push(
               context,
@@ -251,9 +310,30 @@ class _ProfileHeaderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      initialData: FirebaseAuth.instance.currentUser,
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        return _ProfileHeaderContent(user: snapshot.data);
+      },
+    );
+  }
+}
+
+class _ProfileHeaderContent extends StatelessWidget {
+  const _ProfileHeaderContent({required this.user});
+
+  final User? user;
+
+  @override
+  Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
     final mutedTextColor = textColor.withValues(alpha: 0.62);
+    final name = _profileName(user);
+    final email = _profileEmail(user);
+    final phoneNumber = user?.phoneNumber?.trim();
+    final photoUrl = user?.photoURL;
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -287,10 +367,22 @@ class _ProfileHeaderCard extends StatelessWidget {
                 width: 2,
               ),
             ),
-            child: const Icon(
-              Icons.person_rounded,
-              color: AppTheme.amber,
-              size: 34,
+            child: ClipOval(
+              child: photoUrl != null && photoUrl.trim().isNotEmpty
+                  ? Image.network(
+                      photoUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => const Icon(
+                        Icons.person_rounded,
+                        color: AppTheme.amber,
+                        size: 34,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.person_rounded,
+                      color: AppTheme.amber,
+                      size: 34,
+                    ),
             ),
           ),
           const SizedBox(width: 14),
@@ -299,7 +391,7 @@ class _ProfileHeaderCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'John Doe',
+                  name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.urbanist(
@@ -310,7 +402,7 @@ class _ProfileHeaderCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'johndoe@example.com',
+                  email,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.urbanist(
@@ -319,15 +411,19 @@ class _ProfileHeaderCard extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  '+254 720 204 930',
-                  style: GoogleFonts.urbanist(
-                    color: mutedTextColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
+                if (phoneNumber != null && phoneNumber.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    phoneNumber,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.urbanist(
+                      color: mutedTextColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -347,6 +443,29 @@ class _ProfileHeaderCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  static String _profileName(User? user) {
+    final displayName = user?.displayName?.trim();
+    if (displayName != null && displayName.isNotEmpty) {
+      return displayName;
+    }
+
+    final email = user?.email?.trim();
+    if (email != null && email.isNotEmpty) {
+      return email.split('@').first;
+    }
+
+    return 'Guest user';
+  }
+
+  static String _profileEmail(User? user) {
+    final email = user?.email?.trim();
+    if (email != null && email.isNotEmpty) {
+      return email;
+    }
+
+    return 'Sign in to view your account';
   }
 }
 
@@ -402,6 +521,7 @@ class _SettingsTile extends StatelessWidget {
     required this.isDark,
     this.accentColor = AppTheme.amber,
     this.showChevron = true,
+    this.onTap,
   });
 
   final IconData icon;
@@ -412,48 +532,57 @@ class _SettingsTile extends StatelessWidget {
   final bool isDark;
   final Color accentColor;
   final bool showChevron;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-      child: Row(
-        children: [
-          _IconBadge(icon: icon, color: accentColor, isDark: isDark),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.urbanist(
-                    color: textColor,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        child: Row(
+          children: [
+            _IconBadge(icon: icon, color: accentColor, isDark: isDark),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.urbanist(
+                      color: textColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.urbanist(
-                    color: mutedTextColor,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.urbanist(
+                      color: mutedTextColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          if (showChevron) ...[
-            const SizedBox(width: 10),
-            Icon(Icons.chevron_right_rounded, color: mutedTextColor, size: 22),
+            if (showChevron) ...[
+              const SizedBox(width: 10),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: mutedTextColor,
+                size: 22,
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

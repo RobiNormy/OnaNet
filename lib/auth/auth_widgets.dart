@@ -6,7 +6,7 @@ import 'package:ona_net/themes/app_theme.dart';
 // ─────────────────────────────────────────────
 
 class OnaNetLogo extends StatelessWidget {
-  const OnaNetLogo();
+  const OnaNetLogo({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +62,7 @@ class AuthField extends StatelessWidget {
   final TextInputType keyboardType;
   final String? Function(String?)? validator;
 
-  const AuthField({
+  const AuthField({super.key, 
     required this.controller,
     required this.hint,
     required this.icon,
@@ -159,7 +159,7 @@ class PrimaryButton extends StatelessWidget {
   final VoidCallback onTap;
   final bool isLoading;
 
-  const PrimaryButton({
+  const PrimaryButton({super.key, 
     required this.label,
     required this.onTap,
     this.isLoading = false,
@@ -208,7 +208,7 @@ class PrimaryButton extends StatelessWidget {
 // ─────────────────────────────────────────────
 
 class OrDivider extends StatelessWidget {
-  const OrDivider();
+  const OrDivider({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -245,7 +245,7 @@ class OrDivider extends StatelessWidget {
 // ─────────────────────────────────────────────
 
 class GoogleButton extends StatelessWidget {
-  const GoogleButton();
+  const GoogleButton({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +316,7 @@ class AuthRedirectText extends StatelessWidget {
   final String actionText;
   final VoidCallback onTap;
 
-  const AuthRedirectText({
+  const AuthRedirectText({super.key, 
     required this.text,
     required this.actionText,
     required this.onTap,

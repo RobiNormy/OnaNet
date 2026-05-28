@@ -35,15 +35,13 @@ class Location {
       );
       if (placemark.isEmpty) return null;
       final place = placemark.first;
-      final exactPlace = _joinUnique([
-        place.name,
-        place.street,
-        place.subLocality,
-        place.locality,
-        place.subAdministrativeArea,
-      ]);
+      final subLocality = place.subLocality;
+      final locality = place.locality;
+      final area = subLocality != null && subLocality.isNotEmpty
+          ? subLocality
+          : locality;
 
-      return exactPlace.isEmpty ? null : exactPlace;
+      return area;
     } catch (_) {
       return null;
     }
@@ -105,6 +103,7 @@ class Location {
 
   static String _withKenyaBias(String query) {
     final lowerQuery = query.toLowerCase();
+    
     if (lowerQuery.contains('kenya') || lowerQuery.contains('ke')) {
       return query;
     }

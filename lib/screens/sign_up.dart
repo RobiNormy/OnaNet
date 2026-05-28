@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
@@ -12,6 +13,88 @@ class SignUp extends StatefulWidget {
 
 class _SignUpState extends State<SignUp> {
   final _formKey = GlobalKey<FormState>();
+  final TextEditingController _firstname = TextEditingController();
+  final TextEditingController _lastname = TextEditingController();
+  final TextEditingController _email = TextEditingController();
+  final TextEditingController _password = TextEditingController();
+  final TextEditingController _confirmPassword = TextEditingController();
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  final RegExp _passwordRegex = RegExp(
+    r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$',
+  );
+
+  @override
+  void dispose() {
+    _firstname.dispose();
+    _lastname.dispose();
+    _email.dispose();
+    _password.dispose();
+    _confirmPassword.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitEmailSignUp() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final authService = AuthService();
+      await authService.signUpWithEmail(
+        email: _email.text.trim(),
+        password: _password.text,
+        firstName: _firstname.text.trim(),
+        lastName: _lastname.text.trim(),
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _submitGoogleSignIn() async {
+    setState(() => _isLoading = true);
+    try {
+      final authService = AuthService();
+      await authService.signInWithGoogle();
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -20,6 +103,9 @@ class _SignUpState extends State<SignUp> {
     final cardColor = isDark ? AppTheme.navyLight : AppTheme.white;
     final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
     final mutedTextColor = textColor.withValues(alpha: 0.65);
+    final borderColor = isDark
+        ? AppTheme.offWhite.withValues(alpha: 0.18)
+        : AppTheme.lightGray;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -63,7 +149,7 @@ class _SignUpState extends State<SignUp> {
                           color: textColor,
                         ),
                       ),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Text(
                         'Find better internet near you',
                         textAlign: TextAlign.center,
@@ -73,41 +159,117 @@ class _SignUpState extends State<SignUp> {
                           color: mutedTextColor,
                         ),
                       ),
-                      SizedBox(height: 15),
+                      const SizedBox(height: 15),
                       AuthTextField(
-                        label: 'Full Name',
+                        label: 'First Name',
                         icon: Icons.person_outline,
+                        borderColor: borderColor,
+                        controller: _firstname,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter your first name';
+                          }
+                          return null;
+                        },
                       ),
-                      SizedBox(height: 15),
+                      const SizedBox(height: 15),
+                      AuthTextField(
+                        label: 'Last Name',
+                        icon: Icons.person_outline,
+                        borderColor: borderColor,
+                        controller: _lastname,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter your last name';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 15),
                       AuthTextField(
                         label: 'Email Address',
                         icon: Icons.email_outlined,
+                        borderColor: borderColor,
                         keyboardType: TextInputType.emailAddress,
+                        controller: _email,
+                        validator: (value) {
+                          final email = value?.trim() ?? '';
+                          if (email.isEmpty ||
+                              !RegExp(
+                                r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$',
+                              ).hasMatch(email)) {
+                            return 'Please enter a valid email address';
+                          }
+                          return null;
+                        },
                       ),
-                      SizedBox(height: 15),
+                      const SizedBox(height: 15),
                       AuthTextField(
                         label: 'Password',
                         icon: Icons.lock_outline,
-                        obscureText: true,
-                        suffixIcon: Icon(Icons.visibility_outlined),
+                        borderColor: borderColor,
+                        obscureText: _obscurePassword,
+                        controller: _password,
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                          onPressed: () {
+                            setState(
+                              () => _obscurePassword = !_obscurePassword,
+                            );
+                          },
+                        ),
+                        validator: (value) {
+                          final password = value ?? '';
+                          if (password.isEmpty) {
+                            return 'Please enter a password';
+                          }
+                          if (!_passwordRegex.hasMatch(password)) {
+                            return 'Password must be 8+ chars with uppercase, lowercase, number & symbol';
+                          }
+                          return null;
+                        },
                       ),
-                      SizedBox(height: 15),
+                      const SizedBox(height: 15),
                       AuthTextField(
                         label: 'Confirm Password',
                         icon: Icons.lock_reset_outlined,
-                        obscureText: true,
-                        suffixIcon: Icon(Icons.visibility_outlined),
+                        borderColor: borderColor,
+                        obscureText: _obscureConfirmPassword,
+                        controller: _confirmPassword,
+                        validator: (value) {
+                          final confirmPassword = value ?? '';
+                          if (confirmPassword.isEmpty) {
+                            return 'Please confirm your password';
+                          }
+                          if (confirmPassword != _password.text) {
+                            return 'Passwords do not match';
+                          }
+                          return null;
+                        },
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscureConfirmPassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                          onPressed: () {
+                            setState(
+                              () => _obscureConfirmPassword =
+                                  !_obscureConfirmPassword,
+                            );
+                          },
+                        ),
                       ),
                       const SizedBox(height: 28),
                       SizedBox(
                         width: double.infinity,
                         height: 54,
                         child: ElevatedButton(
-                          onPressed: () {
-                            if (_formKey.currentState!.validate()) {
-                              // TODO: handle sign up
-                            }
-                          },
+                          onPressed: _isLoading ? null : _submitEmailSignUp,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppTheme.amber,
                             foregroundColor: AppTheme.navy,
@@ -116,16 +278,25 @@ class _SignUpState extends State<SignUp> {
                               borderRadius: BorderRadius.circular(16),
                             ),
                           ),
-                          child: Text(
-                            'Sign Up',
-                            style: GoogleFonts.urbanist(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.navy,
+                                  ),
+                                )
+                              : Text(
+                                  'Sign Up',
+                                  style: GoogleFonts.urbanist(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
                         ),
                       ),
-                      SizedBox(height: 24),
+                      const SizedBox(height: 24),
                       Row(
                         children: [
                           Expanded(
@@ -158,27 +329,25 @@ class _SignUpState extends State<SignUp> {
 
                       SizedBox(
                         width: double.infinity,
-                        height: 54,
-                        child: OutlinedButton(
-                          onPressed: () {
-                            // TODO: Google sign in
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: textColor,
-                            side: BorderSide(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.outline.withValues(alpha: 0.8),
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
+                        height: 55,
+                        child: OutlinedButton.icon(
+                          onPressed: _isLoading ? null : _submitGoogleSignIn,
+                          icon: Image.asset(
+                            'lib/images/noback.png',
+                            height: 22,
                           ),
-                          child: Text(
+                          label: Text(
                             'Continue with Google',
                             style: GoogleFonts.urbanist(
                               fontSize: 15,
                               fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: textColor,
+                            side: BorderSide(color: borderColor),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
                             ),
                           ),
                         ),
@@ -200,7 +369,9 @@ class _SignUpState extends State<SignUp> {
                             onTap: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => const Login()),
+                                MaterialPageRoute(
+                                  builder: (context) => const Login(),
+                                ),
                               );
                             },
                             child: Text(
@@ -253,8 +424,7 @@ class _OnaNetLogo extends StatelessWidget {
             ),
             Positioned(
               top: -15,
-              height: -1,
-              child: Icon(Icons.wifi_rounded, color: Colors.amber),
+              child: Icon(Icons.wifi_rounded, color: AppTheme.amber, size: 18),
             ),
           ],
         ),
@@ -295,6 +465,9 @@ class AuthTextField extends StatelessWidget {
   final bool obscureText;
   final TextInputType keyboardType;
   final Widget? suffixIcon;
+  final TextEditingController? controller;
+  final String? Function(String?)? validator;
+  final Color borderColor;
 
   const AuthTextField({
     super.key,
@@ -303,6 +476,9 @@ class AuthTextField extends StatelessWidget {
     this.obscureText = false,
     this.keyboardType = TextInputType.text,
     this.suffixIcon,
+    this.controller,
+    this.validator,
+    required this.borderColor,
   });
 
   @override
@@ -312,11 +488,10 @@ class AuthTextField extends StatelessWidget {
     final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
     final mutedTextColor = textColor.withValues(alpha: 0.65);
     final fillColor = isDark ? AppTheme.navyMid : AppTheme.white;
-    final borderColor = isDark
-        ? AppTheme.offWhite.withValues(alpha: 0.18)
-        : AppTheme.lightGray;
 
     return TextFormField(
+      controller: controller,
+      validator: validator,
       obscureText: obscureText,
       keyboardType: keyboardType,
       style: GoogleFonts.urbanist(

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "351928103440",
+    "project_id": "onanet-956af",
+    "storage_bucket": "onanet-956af.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:351928103440:android:dce139c006a75976e29095",
+        "android_client_info": {
+          "package_name": "com.robinson.ona_net"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "351928103440-ujerff9ettubgnbs7t6autvt3q6b3039.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.robinson.ona_net",
+            "certificate_hash": "65679c2ca21a7f34f6e6765eb511f305669b4878"
+          }
+        },
+        {
+          "client_id": "351928103440-obq164uddumbknobl1stse0ivfnejptn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAkM_ow1lFbgcpJTMI1z_56TapXgruXO6Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "351928103440-obq164uddumbknobl1stse0ivfnejptn.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

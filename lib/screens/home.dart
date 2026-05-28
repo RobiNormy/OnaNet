@@ -45,7 +45,6 @@ class _MainWrapperState extends State<MainWrapper> {
     ScreenId.search: const SearchScreen(),
     ScreenId.saved: const SavedScreen(),
     ScreenId.profile: const Profile(),
-
   };
 
   @override
@@ -110,13 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             children: [
               SizedBox(height: 20),
-
-              // _TopBar(
-              //   area: _area,
-              //   isLoading: _loadingLocation,
-              //   onLocationTap: _showLocation,
-              // ),
-              _HomeHeader(area: _area),
+              HomeHeader(area: _area),
               SizedBox(height: 20),
 
               _LocationBar(
@@ -419,9 +412,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   }
 }
 
-class _HomeHeader extends StatelessWidget {
+class HomeHeader extends StatelessWidget {
   final String? area;
-  const _HomeHeader({required this.area});
+  const HomeHeader({super.key, required this.area});
 
   @override
   Widget build(BuildContext context) {
@@ -560,13 +553,31 @@ class _LocationBar extends StatelessWidget {
   }
 }
 
-class _SearchBar extends StatelessWidget {
+class _SearchBar extends StatefulWidget {
   const _SearchBar();
+
+  @override
+  State<_SearchBar> createState() => _SearchBarState();
+}
+
+class _SearchBarState extends State<_SearchBar> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    TextEditingController locationController = TextEditingController();
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
@@ -595,7 +606,11 @@ class _SearchBar extends StatelessWidget {
           SizedBox(width: 10),
           Expanded(
             child: TextField(
-              controller: locationController,
+              controller: _searchController,
+              onSubmitted: (value) {
+                // TODO: Implement search navigation or filtering logic
+                print("Searching for: $value");
+              },
               decoration: InputDecoration(
                 hintText: "Search providers near you...",
                 hintStyle: GoogleFonts.plusJakartaSans(
