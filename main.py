@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from backend.api.auth import router as auth_router
+from backend.api.provider import router as provider_router
 
 app = FastAPI(
     title="OnaNet API",
@@ -12,7 +14,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost",
         "http://127.0.0.1",
-        "http://localhost:8080"
+        "http://localhost:8080",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -20,7 +22,10 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(provider_router)
 
 @app.get("/")
 async def root():
-    return {"status": "OnaNet API is running"}
+    return {
+        "status": "OnaNet API is running"
+    }

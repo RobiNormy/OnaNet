@@ -28,53 +28,62 @@ class _ProviderRegState extends State<ProviderReg> {
                 margin: EdgeInsets.symmetric(horizontal: 24),
                 padding: EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: isDark ? AppTheme.navy.withValues(alpha: 0.5) : Colors.white,
+                  color: isDark
+                      ? AppTheme.navy.withValues(alpha: 0.5)
+                      : Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow:[
+                  boxShadow: [
                     BoxShadow(
-                        color:Colors.black.withValues(alpha: isDark? 0.25:0.08),
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.25 : 0.08,
+                      ),
                       blurRadius: 28,
-                      offset: Offset(0, 12)
+                      offset: Offset(0, 12),
                     ),
-
                   ],
-                  border: Border.all(color: isDark ? Colors.white10 : Colors.grey.shade200),
+                  border: Border.all(
+                    color: isDark ? Colors.white10 : Colors.grey.shade200,
+                  ),
                 ),
                 child: Column(
-                children: [
-                  const HomeHeader(),
-                  const SizedBox(height: 20),
-                  Text(
-                    "Provider Registration",
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? AppTheme.offWhite : AppTheme.navy,
+                  children: [
+                    const HomeHeader(),
+                    const SizedBox(height: 20),
+                    Text(
+                      "Provider Registration",
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? AppTheme.offWhite : AppTheme.navy,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    "Fill in the details below to get started",
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                  SizedBox(height: 20,),
-                  ...providerKinds.map((kind){
-                    return ProviderType(
-                      key: ValueKey(kind),
-                      isSelected: selectedKind == kind,
-                      title: kind.title,
-                      icon: kind.icon,
-                      subtitle: kind.subtitle,
-                      onTap: () {
-                        setState(() {
-                          selectedKind = kind;
-                        });
-                        Navigator.push(context, MaterialPageRoute(
-                          builder: (context) => ProviderAccountDetails(providerKind: kind),
-                        ));
-                      },
-                    );
-                  }),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Fill in the details below to get started",
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                    SizedBox(height: 20),
+                    ...providerKinds.map((kind) {
+                      return ProviderType(
+                        key: ValueKey(kind),
+                        isSelected: selectedKind == kind,
+                        title: kind.title,
+                        icon: kind.icon,
+                        subtitle: kind.subtitle,
+                        onTap: () {
+                          setState(() {
+                            selectedKind = kind;
+                          });
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ProviderAccountDetails(providerKind: kind),
+                            ),
+                          );
+                        },
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -170,7 +179,7 @@ class ProviderType extends StatelessWidget {
     required this.title,
     this.onTap,
     required this.icon,
-    required this.subtitle
+    required this.subtitle,
   });
 
   final bool isSelected;
@@ -185,25 +194,33 @@ class ProviderType extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
-          duration: Duration(milliseconds: 180),
+        duration: Duration(milliseconds: 180),
         margin: EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
-          color: isSelected ?
-          AppTheme.amber.withValues(alpha: isDark ? 0.16:0.12)
-              : isDark ? AppTheme.navyMid : AppTheme.white,
+          color: isSelected
+              ? AppTheme.amber.withValues(alpha: isDark ? 0.16 : 0.12)
+              : isDark
+              ? AppTheme.navyMid
+              : AppTheme.white,
 
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? AppTheme.amber : isDark ? AppTheme.navyLight : AppTheme.lightGray,
+            color: isSelected
+                ? AppTheme.amber
+                : isDark
+                ? AppTheme.navyLight
+                : AppTheme.lightGray,
             width: isSelected ? 2 : 1,
           ),
-          boxShadow: isDark ? [] : [
-            BoxShadow(
-              color: AppTheme.navy.withValues(alpha: 0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          boxShadow: isDark
+              ? []
+              : [
+                  BoxShadow(
+                    color: AppTheme.navy.withValues(alpha: 0.06),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
@@ -211,7 +228,9 @@ class ProviderType extends StatelessWidget {
             children: [
               Icon(
                 icon,
-                color: isSelected ? AppTheme.amber : (isDark ? AppTheme.offWhite : AppTheme.navy),
+                color: isSelected
+                    ? AppTheme.amber
+                    : (isDark ? AppTheme.offWhite : AppTheme.navy),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -238,8 +257,12 @@ class ProviderType extends StatelessWidget {
                 ),
               ),
               Icon(
-                isSelected ? Icons.check_circle_rounded : Icons.chevron_right_rounded,
-                color: isSelected ? AppTheme.amber : (isDark ? Colors.white24 : Colors.grey[400]),
+                isSelected
+                    ? Icons.check_circle_rounded
+                    : Icons.chevron_right_rounded,
+                color: isSelected
+                    ? AppTheme.amber
+                    : (isDark ? Colors.white24 : Colors.grey[400]),
                 size: 20,
               ),
             ],
@@ -249,6 +272,3 @@ class ProviderType extends StatelessWidget {
     );
   }
 }
-
-
-

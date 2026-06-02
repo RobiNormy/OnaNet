@@ -1,7 +1,10 @@
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
 
 class AuthService {
   AuthService() {
@@ -54,7 +57,13 @@ class AuthService {
       );
       final userCred = await _auth.signInWithCredential(credential);
 
-      await syncCurrentUserWithApi(authProvider: 'google');
+      try {
+        await syncCurrentUserWithApi(authProvider: 'google');
+      } on AuthServiceException {
+        await _googleSignIn.signOut();
+        await _auth.signOut();
+        rethrow;
+      }
       return userCred;
     } on FirebaseAuthException catch (e) {
       throw AuthServiceException(_firebaseAuthMessage(e));
@@ -182,6 +191,208 @@ class AuthService {
     }
 
     return response.data ?? <String, dynamic>{};
+  }
+
+  Future<Map<String, dynamic>> submitProviderRegistration(
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/providers/register',
+        data: payload,
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <String, dynamic>{};
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  Future<List<dynamic>> submitProviderServices({
+    required String providerId,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final response = await _dio.post<List<dynamic>>(
+        '/providers/$providerId/services',
+        data: payload,
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <dynamic>[];
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  Future<List<dynamic>> submitProviderCoverageAreas({
+    required String providerId,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final response = await _dio.post<List<dynamic>>(
+        '/providers/$providerId/coverage-areas',
+        data: payload,
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <dynamic>[];
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  Future<List<dynamic>> submitProviderContacts({
+    required String providerId,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final response = await _dio.post<List<dynamic>>(
+        '/providers/$providerId/contacts',
+        data: payload,
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <dynamic>[];
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> submitProviderPackage({
+    required String providerId,
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/providers/$providerId/packages',
+        data: payload,
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <String, dynamic>{};
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  Future<Map<String, dynamic>> uploadProviderDocument({
+    required String providerId,
+    required String documentType,
+    required PlatformFile file,
+  }) async {
+    try {
+      final mimeType =
+          lookupMimeType(file.name, headerBytes: file.bytes) ??
+          'application/octet-stream';
+      final mediaType = MediaType.parse(mimeType);
+      final multipartFile = file.path != null
+          ? await MultipartFile.fromFile(
+              file.path!,
+              filename: file.name,
+              contentType: mediaType,
+            )
+          : _multipartFileFromBytes(file, mediaType);
+
+      final formData = FormData.fromMap({
+        'document_type': documentType,
+        'file': multipartFile,
+      });
+
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/providers/$providerId/documents',
+        data: formData,
+        options: Options(contentType: Headers.multipartFormDataContentType),
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <String, dynamic>{};
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  MultipartFile _multipartFileFromBytes(
+    PlatformFile file,
+    MediaType mediaType,
+  ) {
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      throw AuthServiceException('Could not read ${file.name} for upload.');
+    }
+
+    return MultipartFile.fromBytes(
+      bytes,
+      filename: file.name,
+      contentType: mediaType,
+    );
+  }
+
+  Future<List<dynamic>> getProviderContacts(String providerId) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/providers/$providerId/contacts',
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <dynamic>[];
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  Future<List<dynamic>> getProviderCoverageAreas(String providerId) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/providers/$providerId/coverage-areas',
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <dynamic>[];
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
+  }
+
+  Future<List<dynamic>> getProviderServices(String providerId) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/providers/$providerId/services',
+      );
+
+      if (response.statusCode != null && response.statusCode! >= 400) {
+        throw AuthServiceException(_extractErrorMessage(response.data));
+      }
+
+      return response.data ?? <dynamic>[];
+    } on DioException catch (e) {
+      throw AuthServiceException(_extractDioErrorMessage(e));
+    }
   }
 
   Future<void> signOut() async {

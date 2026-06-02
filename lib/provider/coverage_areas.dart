@@ -12,9 +12,14 @@ import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/search.dart';
 
 class CoverageAreasScreen extends StatefulWidget {
-  const CoverageAreasScreen({super.key, required this.providerKind});
+  const CoverageAreasScreen({
+    super.key,
+    required this.providerKind,
+    required this.draft,
+  });
 
   final ProviderKind providerKind;
+  final ProviderRegistrationDraft draft;
 
   @override
   State<CoverageAreasScreen> createState() => _CoverageAreasScreenState();
@@ -168,14 +173,15 @@ class _CoverageAreasScreenState extends State<CoverageAreasScreen> {
       );
       return;
     }
-    debugPrint(
-      'Coverage areas: ${coverageAreas.map((area) => area.toJson()).toList()}',
-    );
+    final draft = widget.draft.copyWith(coverageAreas: coverageAreas);
+
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            ContactDetailsScreen(providerKind: widget.providerKind),
+        builder: (context) => ContactDetailsScreen(
+          providerKind: widget.providerKind,
+          draft: draft,
+        ),
       ),
     );
   }

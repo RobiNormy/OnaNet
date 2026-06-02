@@ -2,4 +2,8 @@ asyncpg
 fastapi
 firebase-admin
 pydantic-settings
+python-jose[cryptography]
+sqlalchemy
 uvicorn
+jose
+supabase python-multipart

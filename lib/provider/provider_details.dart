@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum ProviderType {
-  licensedISP,
-  localWISP,
-}
+enum ProviderType { licensedISP, localWISP }
 
 class ProviderDetails extends ChangeNotifier {
   final String name;

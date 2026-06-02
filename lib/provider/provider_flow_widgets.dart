@@ -167,10 +167,7 @@ class StepProgressHeader extends StatelessWidget {
               Positioned(
                 left: 12,
                 right: 12,
-                child: Container(
-                  height: 1,
-                  color: lineColor,
-                ),
+                child: Container(height: 1, color: lineColor),
               ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -290,6 +287,7 @@ class ProviderTextField extends StatelessWidget {
     this.obscureText = false,
     this.suffixIcon,
     this.validator,
+    this.maxLines = 1,
   });
 
   final TextEditingController controller;
@@ -299,6 +297,7 @@ class ProviderTextField extends StatelessWidget {
   final bool obscureText;
   final Widget? suffixIcon;
   final String? Function(String?)? validator;
+  final int maxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -312,6 +311,7 @@ class ProviderTextField extends StatelessWidget {
       keyboardType: keyboardType,
       textInputAction: textInputAction,
       obscureText: obscureText,
+      maxLines: obscureText ? 1 : maxLines,
       validator: validator,
       style: GoogleFonts.urbanist(
         color: textColor,
@@ -365,7 +365,7 @@ class ProviderPrimaryButton extends StatelessWidget {
   });
 
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {

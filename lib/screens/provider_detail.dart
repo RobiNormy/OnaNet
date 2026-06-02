@@ -112,7 +112,14 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
 
                       const _SectionHeader(title: 'Reviews'),
                       const SizedBox(height: 12),
-                      ..._dummyReviews.map((r) => _ReviewCard(review: r)),
+                      if ((provider['reviews']?.toString() ?? '0') == '0')
+                        Text(
+                          'No reviews yet for this provider.',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: AppTheme.gray),
+                        )
+                      else
+                        ..._dummyReviews.map((r) => _ReviewCard(review: r)),
 
                       const SizedBox(height: 100),
                     ],
@@ -306,8 +313,14 @@ class _PackagesList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final packages =
+        (provider['packages'] as List<dynamic>?)
+            ?.whereType<Map<String, dynamic>>()
+            .toList() ??
+        _providerPackages;
+
     return Column(
-      children: _providerPackages.asMap().entries.map((entry) {
+      children: packages.asMap().entries.map((entry) {
         return _PackageCard(
           package: entry.value,
           isSelected: entry.key == selectedIndex,

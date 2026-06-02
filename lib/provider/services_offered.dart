@@ -6,16 +6,21 @@ import 'package:ona_net/provider/provider_registration_data.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
 class ServicesOfferedScreen extends StatefulWidget {
-  const ServicesOfferedScreen({super.key, required this.providerKind});
+  const ServicesOfferedScreen({
+    super.key,
+    required this.providerKind,
+    required this.draft,
+  });
 
   final ProviderKind providerKind;
+  final ProviderRegistrationDraft draft;
 
   @override
   State<ServicesOfferedScreen> createState() => _ServicesOfferedScreenState();
 }
 
 class _ServicesOfferedScreenState extends State<ServicesOfferedScreen> {
-  final Set<String> _selectedServices = {'home_fiber', 'wireless_home'};
+  final Set<String> _selectedServiceTypes = {'home_fiber', 'wireless_home'};
 
   @override
   Widget build(BuildContext context) {
@@ -48,13 +53,13 @@ class _ServicesOfferedScreenState extends State<ServicesOfferedScreen> {
                     width: cardWidth,
                     child: _ServiceCard(
                       service: service,
-                      isSelected: _selectedServices.contains(service.id),
+                      isSelected: _selectedServiceTypes.contains(service.id),
                       onTap: () {
                         setState(() {
-                          if (_selectedServices.contains(service.id)) {
-                            _selectedServices.remove(service.id);
+                          if (_selectedServiceTypes.contains(service.id)) {
+                            _selectedServiceTypes.remove(service.id);
                           } else {
-                            _selectedServices.add(service.id);
+                            _selectedServiceTypes.add(service.id);
                           }
                         });
                       },
@@ -68,11 +73,27 @@ class _ServicesOfferedScreenState extends State<ServicesOfferedScreen> {
           ProviderPrimaryButton(
             label: 'Continue',
             onPressed: () {
+              if (_selectedServiceTypes.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Select at least one service.'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+                return;
+              }
+
+              final draft = widget.draft.copyWith(
+                serviceTypes: _selectedServiceTypes.toList(),
+              );
+
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) =>
-                      CoverageAreasScreen(providerKind: widget.providerKind),
+                  builder: (context) => CoverageAreasScreen(
+                    providerKind: widget.providerKind,
+                    draft: draft,
+                  ),
                 ),
               );
             },

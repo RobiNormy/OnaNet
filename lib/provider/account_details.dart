@@ -162,14 +162,21 @@ class _ProviderAccountDetailsState extends State<ProviderAccountDetails> {
   void _continue() {
     if (!_formKey.currentState!.validate()) return;
 
+    final draft = ProviderRegistrationDraft(
+      providerType: widget.providerKind.id,
+      adminFullName: _nameController.text.trim(),
+      adminEmail: _emailController.text.trim(),
+      adminPhone:
+          '${_countryCodeController.text.trim()}${_phoneController.text.trim()}',
+      adminRole: _roleController.text.trim(),
+    );
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) =>
-            ProviderInfoScreen(providerKind: widget.providerKind),
+            ProviderInfoScreen(providerKind: widget.providerKind, draft: draft),
       ),
     );
   }
 }
-
-

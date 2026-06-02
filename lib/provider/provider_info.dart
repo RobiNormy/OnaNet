@@ -4,9 +4,14 @@ import 'package:ona_net/provider/provider_registration_data.dart';
 import 'package:ona_net/provider/services_offered.dart';
 
 class ProviderInfoScreen extends StatefulWidget {
-  const ProviderInfoScreen({super.key, required this.providerKind});
+  const ProviderInfoScreen({
+    super.key,
+    required this.providerKind,
+    required this.draft,
+  });
 
   final ProviderKind providerKind;
+  final ProviderRegistrationDraft draft;
 
   @override
   State<ProviderInfoScreen> createState() => _ProviderInfoScreenState();
@@ -14,17 +19,21 @@ class ProviderInfoScreen extends StatefulWidget {
 
 class _ProviderInfoScreenState extends State<ProviderInfoScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _providerNameController = TextEditingController();
   final _businessNameController = TextEditingController();
-  final _registrationNumberController = TextEditingController();
-  final _kraPinController = TextEditingController();
+  final _logoUrlController = TextEditingController();
+  final _yearStartedController = TextEditingController();
   final _cityController = TextEditingController();
+  final _descriptionController = TextEditingController();
 
   @override
   void dispose() {
+    _providerNameController.dispose();
     _businessNameController.dispose();
-    _registrationNumberController.dispose();
-    _kraPinController.dispose();
+    _logoUrlController.dispose();
+    _yearStartedController.dispose();
     _cityController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -49,29 +58,46 @@ class _ProviderInfoScreenState extends State<ProviderInfoScreen> {
             ),
             const SizedBox(height: 22),
             ProviderTextField(
-              controller: _businessNameController,
-              label: 'Business Name',
+              controller: _providerNameController,
+              label: 'Provider Name',
               textInputAction: TextInputAction.next,
               validator: _requiredField,
             ),
             const SizedBox(height: 16),
             ProviderTextField(
-              controller: _registrationNumberController,
-              label: 'Registration Number',
+              controller: _businessNameController,
+              label: 'Business Name (Optional)',
               textInputAction: TextInputAction.next,
             ),
             const SizedBox(height: 16),
             ProviderTextField(
-              controller: _kraPinController,
-              label: 'KRA PIN',
+              controller: _logoUrlController,
+              label: 'Logo URL (Optional)',
+              keyboardType: TextInputType.url,
               textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 16),
+            ProviderTextField(
+              controller: _yearStartedController,
+              label: 'Year Started (Optional)',
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
+              validator: _optionalYearValidator,
             ),
             const SizedBox(height: 16),
             ProviderTextField(
               controller: _cityController,
               label: 'Primary City / Town',
-              textInputAction: TextInputAction.done,
+              textInputAction: TextInputAction.next,
               validator: _requiredField,
+            ),
+            const SizedBox(height: 16),
+            ProviderTextField(
+              controller: _descriptionController,
+              label: 'Description (Optional)',
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.done,
+              maxLines: 4,
             ),
             const SizedBox(height: 42),
             ProviderPrimaryButton(label: 'Continue', onPressed: _continue),
@@ -88,15 +114,47 @@ class _ProviderInfoScreenState extends State<ProviderInfoScreen> {
     return null;
   }
 
+  String? _optionalYearValidator(String? value) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+
+    final year = int.tryParse(trimmed);
+    if (year == null) return 'Enter a valid year';
+    if (year < 1900) return 'Enter a year after 1900';
+    return null;
+  }
+
   void _continue() {
     if (!_formKey.currentState!.validate()) return;
+
+    final draft = widget.draft.copyWith(
+      providerName: _providerNameController.text.trim(),
+      businessName: _optionalText(_businessNameController.text),
+      logoUrl: _optionalText(_logoUrlController.text),
+      yearStarted: _optionalInt(_yearStartedController.text),
+      primaryCity: _cityController.text.trim(),
+      description: _optionalText(_descriptionController.text),
+    );
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            ServicesOfferedScreen(providerKind: widget.providerKind),
+        builder: (context) => ServicesOfferedScreen(
+          providerKind: widget.providerKind,
+          draft: draft,
+        ),
       ),
     );
+  }
+
+  String? _optionalText(String value) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  int? _optionalInt(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    return int.tryParse(trimmed);
   }
 }
