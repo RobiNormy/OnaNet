@@ -1,9 +1,7 @@
 import 'dart:async';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/navigation/screen_ids.dart';
 import 'package:ona_net/screens/profile.dart';
 import 'package:ona_net/screens/provider_detail.dart';
@@ -77,15 +75,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String? _area;
   bool _loadingLocation = true;
-  bool _loadingProviders = true;
-  String? _providersError;
-  List<Map<String, dynamic>> _providers = [];
 
   @override
   void initState() {
     super.initState();
     _fetchLocation();
-    _fetchProviders();
   }
 
   Future<void> _fetchLocation() async {
@@ -98,40 +92,6 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _area = area ?? _area;
         _loadingLocation = false;
-      });
-    }
-  }
-
-  Future<void> _fetchProviders() async {
-    setState(() {
-      _loadingProviders = true;
-      _providersError = null;
-    });
-
-    try {
-      final dio = Dio(
-        BaseOptions(
-          baseUrl: AuthService.apiBaseUrl,
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 10),
-          responseType: ResponseType.json,
-        ),
-      );
-      final response = await dio.get<List<dynamic>>('/providers');
-      final providers = (response.data ?? <dynamic>[])
-          .whereType<Map<String, dynamic>>()
-          .toList();
-
-      if (!mounted) return;
-      setState(() {
-        _providers = providers;
-        _loadingProviders = false;
-      });
-    } on DioException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _providersError = error.message ?? 'Could not load providers.';
-        _loadingProviders = false;
       });
     }
   }
@@ -176,29 +136,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
-              SizedBox(height: 20),
-              if (_loadingProviders)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: CircularProgressIndicator(color: AppTheme.amber),
-                )
-              else if (_providersError != null)
-                _ProvidersEmptyState(
-                  title: 'Could not load providers',
-                  subtitle: _providersError!,
-                  actionLabel: 'Retry',
-                  onAction: _fetchProviders,
-                )
-              else if (_providers.isEmpty)
-                const _ProvidersEmptyState(
-                  title: 'No providers yet',
-                  subtitle: 'Providers you register will appear here.',
-                )
-              else
-                ..._providers.map(
-                  (provider) => _ProviderCard(provider: provider),
-                ),
-              SizedBox(height: 20),
             ],
           ),
         ),
@@ -641,7 +578,9 @@ class _SearchBarState extends State<_SearchBar> {
           Expanded(
             child: TextField(
               controller: _searchController,
-              onSubmitted: (_) {},
+              onSubmitted: (value) {
+                print("Searching for: $value");
+              },
               decoration: InputDecoration(
                 hintText: "Search providers near you...",
                 hintStyle: GoogleFonts.plusJakartaSans(
@@ -716,66 +655,6 @@ class _FilterChipsState extends State<_FilterChips> {
   }
 }
 
-class _ProvidersEmptyState extends StatelessWidget {
-  const _ProvidersEmptyState({
-    required this.title,
-    required this.subtitle,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  final String title;
-  final String subtitle;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.navyMid : AppTheme.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
-        ),
-      ),
-      child: Column(
-        children: [
-          Icon(Icons.wifi_off_rounded, color: AppTheme.amber, size: 34),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.plusJakartaSans(
-              color: isDark ? AppTheme.white : AppTheme.navy,
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.plusJakartaSans(
-              color: AppTheme.gray,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (actionLabel != null && onAction != null) ...[
-            const SizedBox(height: 12),
-            TextButton(onPressed: onAction, child: Text(actionLabel!)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class _ProviderCard extends StatelessWidget {
   final Map<String, dynamic> provider;
   const _ProviderCard({required this.provider});
@@ -783,9 +662,6 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final reviews = provider['reviews']?.toString() ?? '0';
-    final hasReviews = reviews != '0';
-
     return Container(
       margin: EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
@@ -872,7 +748,7 @@ class _ProviderCard extends StatelessWidget {
                     SizedBox(width: 5),
                     Flexible(
                       child: Text(
-                        hasReviews ? '($reviews reviews)' : 'No reviews yet',
+                        '(${provider['reviews']} reviews)',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(

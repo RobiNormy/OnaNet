@@ -4,11 +4,15 @@ from pydantic import BaseModel, field_validator
 
 
 class ProviderRegistrationRequest(BaseModel):
-    provider_type: Literal["licensed_isp", "local_provider"]
+    provider_type: Literal["local_provider"]
     provider_name: str
     business_name: str | None = None
     logo_url: str | None = None
+    logo_display_size: float = 1.0
+    logo_offset_x: float = 0.0
+    logo_offset_y: float = 0.0
     year_started: int | None = None
+    upstream_provider: str | None = None
     primary_city: str
     description: str | None = None
 
@@ -30,6 +34,7 @@ class ProviderRegistrationRequest(BaseModel):
     @field_validator(
         "business_name",
         "logo_url",
+        "upstream_provider",
         "description",
         mode="before",
     )
@@ -54,11 +59,15 @@ class ProviderRegistrationRequest(BaseModel):
 class ProviderRegistrationResponse(BaseModel):
     id: str
     user_id: str
-    provider_type: Literal["licensed_isp", "local_provider"]
+    provider_type: Literal["local_provider"]
     provider_name: str
     business_name: str | None = None
     logo_url: str | None = None
+    logo_display_size: float = 1.0
+    logo_offset_x: float = 0.0
+    logo_offset_y: float = 0.0
     year_started: int | None = None
+    upstream_provider: str | None = None
     primary_city: str | None = None
     description: str | None = None
     status: str

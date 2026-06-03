@@ -233,6 +233,17 @@ class _PackagesScreenState extends State<PackagesScreen> {
         );
       }
 
+      final logoFile = draft.logoFile;
+      if (logoFile != null) {
+        await authService.uploadProviderLogo(
+          providerId: providerId,
+          file: logoFile,
+          logoDisplaySize: draft.logoDisplaySize,
+          logoOffsetX: draft.logoOffsetX,
+          logoOffsetY: draft.logoOffsetY,
+        );
+      }
+
       await authService.submitProviderCoverageAreas(
         providerId: providerId,
         payload: draft.toProviderCoverageAreasJson(),

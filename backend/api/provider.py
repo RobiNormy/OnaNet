@@ -18,8 +18,8 @@ from backend.providers.repos.provider_coverage_repo import (
     replace_provider_coverage_areas,
 )
 from backend.providers.repos.provider_repo import (
+    create_provider_registration,
     get_provider_by_firebase_uid,
-    upsert_provider_registration,
 )
 from backend.providers.repos.provider_service_repo import (
     get_provider_services,
@@ -49,6 +49,12 @@ from backend.providers.schema.schema import (
 router = APIRouter(prefix="/providers", tags=["providers"])
 
 SUPABASE_BUCKET = "provider-documents"
+ASSET_BUCKET = "provider-assets"
+ALLOWED_LOGO_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp"
+}
 MAX_FILE_SIZE = 5 * 1024 * 1024
 ALLOWED_MIME_TYPES = {
     "image/jpeg",
@@ -88,7 +94,11 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 provider_name,
                 provider_type,
                 primary_city,
-                is_verified
+                is_verified,
+                logo_url,
+                logo_display_size,
+                logo_offset_x,
+                logo_offset_y
             FROM providers
             WHERE status != 'suspended'
             ORDER BY created_at DESC;
@@ -184,6 +194,10 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 "verified": provider["is_verified"],
                 "providerType": provider["provider_type"],
                 "primaryCity": provider["primary_city"],
+                "logoUrl": provider["logo_url"],
+                "logoScale": float(provider["logo_display_size"] or 1),
+                "logoOffsetX": float(provider["logo_offset_x"] or 0),
+                "logoOffsetY": float(provider["logo_offset_y"] or 0),
                 "coverageAreas": coverage_areas,
                 "packages": packages,
             }
@@ -201,7 +215,7 @@ async def register_provider(
 
     async with get_db_connection() as db:
         try:
-            return await upsert_provider_registration(
+            return await create_provider_registration(
                 db,
                 firebase_user["uid"],
                 provider_in,
@@ -211,6 +225,182 @@ async def register_provider(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=str(exc),
             ) from exc
+
+@router.post("/{provider_id}/logo")
+async def upload_provider_logo(
+    provider_id: UUID,
+    file: UploadFile = File(...),
+    logo_display_size: float = Form(default=1.0),
+    logo_offset_x: float = Form(default=0.0),
+    logo_offset_y: float = Form(default=0.0),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    firebase_user = await _get_current_firebase_user(authorization)
+
+    if file.content_type not in ALLOWED_LOGO_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid logo file type",
+        )
+
+    contents = await file.read()
+
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Logo exceeds 5MB limit",
+        )
+
+    file_ext = Path(file.filename or "").suffix.lower()
+
+    if file_ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid logo file extension",
+        )
+
+    async with get_db_connection() as db:
+        provider = await db.fetchrow(
+            """
+            SELECT providers.id
+            FROM providers
+            JOIN users ON users.id = providers.user_id
+            WHERE providers.id = $1
+              AND users.firebase_uid = $2;
+            """,
+            provider_id,
+            firebase_user["uid"],
+        )
+
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found for this user",
+            )
+
+        storage_path = f"providers/{provider_id}/logo{file_ext}"
+
+        try:
+            supabase.storage.from_(ASSET_BUCKET).upload(
+                storage_path,
+                contents,
+                {
+                    "content-type": file.content_type,
+                    "upsert": "true",
+                },
+            )
+
+            public_url = supabase.storage.from_(ASSET_BUCKET).get_public_url(
+                storage_path
+            )
+
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Could not upload logo to storage: {str(exc)}",
+            ) from exc
+
+        row = await db.fetchrow(
+            """
+            UPDATE providers
+            SET logo_url = $1,
+                logo_storage_path = $2,
+                logo_display_size = $3,
+                logo_offset_x = $4,
+                logo_offset_y = $5,
+                updated_at = now()
+            WHERE id = $6
+            RETURNING
+                id,
+                provider_name,
+                logo_url,
+                logo_storage_path,
+                logo_display_size,
+                logo_offset_x,
+                logo_offset_y;
+            """,
+            public_url,
+            storage_path,
+            logo_display_size,
+            logo_offset_x,
+            logo_offset_y,
+            provider_id,
+        )
+
+    return {
+        "message": "Logo uploaded successfully",
+        "provider_id": str(row["id"]),
+        "provider_name": row["provider_name"],
+        "logo_url": row["logo_url"],
+        "logoUrl": row["logo_url"],
+        "logo_storage_path": row["logo_storage_path"],
+        "logoScale": float(row["logo_display_size"] or 1),
+        "logoOffsetX": float(row["logo_offset_x"] or 0),
+        "logoOffsetY": float(row["logo_offset_y"] or 0),
+    }
+
+
+@router.delete("/{provider_id}/logo")
+async def delete_provider_logo(
+    provider_id: UUID,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    firebase_user = await _get_current_firebase_user(authorization)
+
+    async with get_db_connection() as db:
+        provider = await db.fetchrow(
+            """
+            SELECT providers.id, providers.logo_storage_path
+            FROM providers
+            JOIN users ON users.id = providers.user_id
+            WHERE providers.id = $1
+              AND users.firebase_uid = $2;
+            """,
+            provider_id,
+            firebase_user["uid"],
+        )
+
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found for this user",
+            )
+
+        storage_path = provider["logo_storage_path"]
+        if storage_path:
+            try:
+                supabase.storage.from_(ASSET_BUCKET).remove([storage_path])
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Could not delete logo from storage: {str(exc)}",
+                ) from exc
+
+        row = await db.fetchrow(
+            """
+            UPDATE providers
+            SET logo_url = NULL,
+                logo_storage_path = NULL,
+                logo_display_size = 1,
+                logo_offset_x = 0,
+                logo_offset_y = 0,
+                updated_at = now()
+            WHERE id = $1
+            RETURNING id, provider_name;
+            """,
+            provider_id,
+        )
+
+    return {
+        "message": "Logo deleted successfully",
+        "provider_id": str(row["id"]),
+        "provider_name": row["provider_name"],
+        "logo_url": None,
+        "logoUrl": None,
+        "logoScale": 1.0,
+        "logoOffsetX": 0.0,
+        "logoOffsetY": 0.0,
+    }
 
 
 @router.post(

@@ -146,6 +146,15 @@ class _HeroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final logoUrl = (provider['logoUrl'] ?? provider['logo_url'])?.toString();
+    final logoScale =
+        _asDouble(provider['logoScale'] ?? provider['logo_display_size']) ??
+        1.0;
+    final logoOffset = Offset(
+      _asDouble(provider['logoOffsetX'] ?? provider['logo_offset_x']) ?? 0,
+      _asDouble(provider['logoOffsetY'] ?? provider['logo_offset_y']) ?? 0,
+    );
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -162,26 +171,16 @@ class _HeroSection extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const SizedBox(height: 40),
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: Color(provider['color']),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.3),
-                  width: 3,
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  provider['initials'],
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+            _ProviderLogoMark(
+              logoUrl: logoUrl,
+              logoScale: logoScale,
+              logoOffset: logoOffset,
+              color: Color(provider['color']),
+              initials: provider['initials'],
+              size: 80,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.3),
+                width: 3,
               ),
             ),
 
@@ -236,6 +235,85 @@ class _HeroSection extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  double? _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+}
+
+class _ProviderLogoMark extends StatelessWidget {
+  const _ProviderLogoMark({
+    required this.logoUrl,
+    required this.logoScale,
+    required this.logoOffset,
+    required this.color,
+    required this.initials,
+    required this.size,
+    this.border,
+  });
+
+  final String? logoUrl;
+  final double logoScale;
+  final Offset logoOffset;
+  final Color color;
+  final String initials;
+  final double size;
+  final Border? border;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = logoUrl;
+    final imageSize = size * logoScale.clamp(0.75, 3.0);
+    final displayOffset = Offset(
+      logoOffset.dx * size / 280,
+      logoOffset.dy * size / 280,
+    );
+
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: border,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: url == null || url.isEmpty
+          ? _LogoInitials(initials: initials, size: size)
+          : Image.network(
+              url,
+              width: imageSize,
+              height: imageSize,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) =>
+                  _LogoInitials(initials: initials, size: size),
+              frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                return Transform.translate(offset: displayOffset, child: child);
+              },
+            ),
+    );
+  }
+}
+
+class _LogoInitials extends StatelessWidget {
+  const _LogoInitials({required this.initials, required this.size});
+
+  final String initials;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      initials,
+      style: TextStyle(
+        color: Colors.white,
+        fontSize: size * 0.35,
+        fontWeight: FontWeight.w800,
       ),
     );
   }
@@ -634,6 +712,15 @@ class _PackageTrustHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final logoUrl = (provider['logoUrl'] ?? provider['logo_url'])?.toString();
+    final logoScale =
+        _asDouble(provider['logoScale'] ?? provider['logo_display_size']) ??
+        1.0;
+    final logoOffset = Offset(
+      _asDouble(provider['logoOffsetX'] ?? provider['logo_offset_x']) ?? 0,
+      _asDouble(provider['logoOffsetY'] ?? provider['logo_offset_y']) ?? 0,
+    );
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -645,22 +732,13 @@ class _PackageTrustHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Color(provider['color']),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              provider['initials'],
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
+          _ProviderLogoMark(
+            logoUrl: logoUrl,
+            logoScale: logoScale,
+            logoOffset: logoOffset,
+            color: Color(provider['color']),
+            initials: provider['initials'],
+            size: 56,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -694,6 +772,11 @@ class _PackageTrustHeader extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  double? _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 }
 

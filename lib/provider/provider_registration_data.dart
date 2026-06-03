@@ -20,13 +20,6 @@ class ProviderKind {
 
 const providerKinds = [
   ProviderKind(
-    id: 'licensed_isp',
-    title: 'Licensed ISP',
-    registrationTitle: 'Licensed ISP Registration',
-    subtitle: 'Registered internet service provider operating under a license.',
-    icon: Icons.apartment_rounded,
-  ),
-  ProviderKind(
     id: 'local_provider',
     title: 'Local Fiber / Wireless Provider',
     registrationTitle: 'Local Provider Registration',
@@ -62,7 +55,12 @@ class ProviderRegistrationDraft {
     this.providerName,
     this.businessName,
     this.logoUrl,
+    this.logoFile,
+    this.logoDisplaySize = 1.0,
+    this.logoOffsetX = 0.0,
+    this.logoOffsetY = 0.0,
     this.yearStarted,
+    this.upstreamProvider,
     this.primaryCity,
     this.description,
     this.serviceTypes = const [],
@@ -82,7 +80,12 @@ class ProviderRegistrationDraft {
   final String? providerName;
   final String? businessName;
   final String? logoUrl;
+  final PlatformFile? logoFile;
+  final double logoDisplaySize;
+  final double logoOffsetX;
+  final double logoOffsetY;
   final int? yearStarted;
+  final String? upstreamProvider;
   final String? primaryCity;
   final String? description;
   final List<String> serviceTypes;
@@ -101,7 +104,12 @@ class ProviderRegistrationDraft {
     String? providerName,
     String? businessName,
     String? logoUrl,
+    PlatformFile? logoFile,
+    double? logoDisplaySize,
+    double? logoOffsetX,
+    double? logoOffsetY,
     int? yearStarted,
+    String? upstreamProvider,
     String? primaryCity,
     String? description,
     List<String>? serviceTypes,
@@ -121,7 +129,12 @@ class ProviderRegistrationDraft {
       providerName: providerName ?? this.providerName,
       businessName: businessName ?? this.businessName,
       logoUrl: logoUrl ?? this.logoUrl,
+      logoFile: logoFile ?? this.logoFile,
+      logoDisplaySize: logoDisplaySize ?? this.logoDisplaySize,
+      logoOffsetX: logoOffsetX ?? this.logoOffsetX,
+      logoOffsetY: logoOffsetY ?? this.logoOffsetY,
       yearStarted: yearStarted ?? this.yearStarted,
+      upstreamProvider: upstreamProvider ?? this.upstreamProvider,
       primaryCity: primaryCity ?? this.primaryCity,
       description: description ?? this.description,
       serviceTypes: serviceTypes ?? this.serviceTypes,
@@ -143,7 +156,11 @@ class ProviderRegistrationDraft {
     'provider_name': providerName,
     'business_name': businessName,
     'logo_url': logoUrl,
+    'logo_display_size': logoDisplaySize,
+    'logo_offset_x': logoOffsetX,
+    'logo_offset_y': logoOffsetY,
     'year_started': yearStarted,
+    'upstream_provider': upstreamProvider,
     'primary_city': primaryCity,
     'description': description,
     'has_business_docs': hasBusinessDocs,
