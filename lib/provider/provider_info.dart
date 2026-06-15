@@ -352,35 +352,84 @@ class _LogoPicker extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
+                child: _LogoActionButton(
                   onPressed: onPick,
                   icon: const Icon(Icons.photo_library_outlined, size: 18),
-                  label: Text(selectedFile == null ? 'Gallery' : 'Replace'),
+                  label: selectedFile == null ? 'Gallery' : 'Replace',
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: OutlinedButton.icon(
+                child: _LogoActionButton(
                   onPressed: onCapture,
                   icon: const Icon(Icons.photo_camera_outlined, size: 18),
-                  label: const Text('Camera'),
+                  label: 'Open Camera',
                 ),
               ),
-              if (selectedFile != null) ...[
-                const SizedBox(width: 10),
-                IconButton(
-                  onPressed: onEdit,
-                  icon: const Icon(Icons.crop_free_rounded),
-                  tooltip: 'Edit logo',
+            ],
+          ),
+          if (selectedFile != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.crop_free_rounded, size: 18),
+                    label: const Text('Edit Logo'),
+                  ),
                 ),
-                IconButton(
+                const SizedBox(width: 10),
+                IconButton.filledTonal(
                   onPressed: onRemove,
                   icon: const Icon(Icons.delete_outline_rounded),
                   color: Colors.red,
                   tooltip: 'Remove logo',
                 ),
               ],
-            ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LogoActionButton extends StatelessWidget {
+  const _LogoActionButton({
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+  });
+
+  final VoidCallback onPressed;
+  final Widget icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          icon,
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              softWrap: false,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ],
       ),
@@ -403,7 +452,7 @@ class _LogoPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final bytes = file?.bytes;
     const frameSize = 72.0;
-    final imageSize = frameSize * scale;
+    final displayScale = scale.clamp(1.0, 3.0);
     final displayOffset = Offset(
       offset.dx * frameSize / 280,
       offset.dy * frameSize / 280,
@@ -421,12 +470,14 @@ class _LogoPreview extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: bytes == null
           ? const Icon(Icons.image_outlined, color: AppTheme.amber, size: 28)
-          : Transform.translate(
-              offset: displayOffset,
+          : Transform(
+              transform: Matrix4.identity()
+                ..translate(displayOffset.dx, displayOffset.dy)
+                ..scale(displayScale),
               child: Image.memory(
                 bytes,
-                width: imageSize,
-                height: imageSize,
+                width: frameSize,
+                height: frameSize,
                 fit: BoxFit.cover,
               ),
             ),
@@ -457,17 +508,33 @@ class _LogoEditorScreen extends StatefulWidget {
 }
 
 class _LogoEditorScreenState extends State<_LogoEditorScreen> {
-  late double _scale = widget.initialScale.clamp(0.75, 3.0);
+  static const double _frameSize = 280.0;
+
+  late double _scale = widget.initialScale.clamp(1.0, 3.0);
   late Offset _offset = widget.initialOffset;
-  double _startScale = 1.0;
-  Offset _startOffset = Offset.zero;
-  Offset _startFocalPoint = Offset.zero;
+  late final TransformationController _transformController;
+  bool _isApplyingTransform = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _offset = _clampOffset(_offset, _frameSize);
+    _transformController = TransformationController(
+      _matrixFor(scale: _scale, offset: _offset),
+    )..addListener(_syncFromTransform);
+  }
+
+  @override
+  void dispose() {
+    _transformController.removeListener(_syncFromTransform);
+    _transformController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final bytes = widget.file.bytes;
-    const frameSize = 280.0;
-    final imageSize = frameSize * _scale;
+    const frameSize = _frameSize;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -505,61 +572,76 @@ class _LogoEditorScreenState extends State<_LogoEditorScreen> {
             ),
             Expanded(
               child: Center(
-                child: GestureDetector(
-                  onScaleStart: (details) {
-                    _startScale = _scale;
-                    _startOffset = _offset;
-                    _startFocalPoint = details.focalPoint;
-                  },
-                  onScaleUpdate: (details) {
-                    setState(() {
-                      _scale = (_startScale * details.scale).clamp(0.75, 3.0);
-                      _offset = _clampOffset(
-                        _startOffset + (details.focalPoint - _startFocalPoint),
-                        frameSize,
-                      );
-                    });
-                  },
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Container(
-                        width: frameSize,
-                        height: frameSize,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.55),
-                            width: 2,
+                child: Container(
+                  width: frameSize,
+                  height: frameSize,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      width: 2,
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: bytes == null
+                      ? const Icon(
+                          Icons.image_outlined,
+                          color: Colors.white,
+                          size: 52,
+                        )
+                      : InteractiveViewer(
+                          transformationController: _transformController,
+                          minScale: 1.0,
+                          maxScale: 3.0,
+                          boundaryMargin: const EdgeInsets.all(frameSize),
+                          clipBehavior: Clip.none,
+                          panEnabled: true,
+                          scaleEnabled: true,
+                          onInteractionEnd: (_) => _setTransform(
+                            scale: _scale,
+                            offset: _clampOffset(_offset, frameSize),
+                          ),
+                          child: Image.memory(
+                            bytes,
+                            width: frameSize,
+                            height: frameSize,
+                            fit: BoxFit.cover,
                           ),
                         ),
-                        clipBehavior: Clip.antiAlias,
-                        child: bytes == null
-                            ? const Icon(
-                                Icons.image_outlined,
-                                color: Colors.white,
-                                size: 52,
-                              )
-                            : Transform.translate(
-                                offset: _offset,
-                                child: Image.memory(
-                                  bytes,
-                                  width: imageSize,
-                                  height: imageSize,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
                 ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 0, 28, 12),
+              child: Row(
+                children: [
+                  IconButton.filledTonal(
+                    onPressed: () => _setScale(_scale - 0.15, frameSize),
+                    icon: const Icon(Icons.remove_rounded),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      value: _scale,
+                      min: 1.0,
+                      max: 3.0,
+                      divisions: 20,
+                      activeColor: AppTheme.amber,
+                      onChanged: (value) =>
+                          _setTransform(scale: value, offset: _offset),
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: () => _setScale(_scale + 0.15, frameSize),
+                    icon: const Icon(Icons.add_rounded),
+                  ),
+                ],
               ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(28, 0, 28, 30),
               child: Text(
-                'Drag to reposition. Pinch to zoom.',
+                'Drag to reposition. Pinch or use the slider to zoom.',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.urbanist(
                   color: Colors.white70,
@@ -580,6 +662,41 @@ class _LogoEditorScreenState extends State<_LogoEditorScreen> {
       offset.dx.clamp(-limit, limit),
       offset.dy.clamp(-limit, limit),
     );
+  }
+
+  void _setScale(double value, double frameSize) {
+    _setTransform(scale: value, offset: _offset);
+  }
+
+  void _setTransform({required double scale, required Offset offset}) {
+    final nextScale = scale.clamp(1.0, 3.0);
+    final nextOffset = _clampOffset(offset, _frameSize);
+    _isApplyingTransform = true;
+    setState(() {
+      _scale = nextScale;
+      _offset = nextOffset;
+      _transformController.value = _matrixFor(
+        scale: nextScale,
+        offset: nextOffset,
+      );
+    });
+    _isApplyingTransform = false;
+  }
+
+  void _syncFromTransform() {
+    if (_isApplyingTransform || !mounted) return;
+    final matrix = _transformController.value;
+    final translation = matrix.getTranslation();
+    setState(() {
+      _scale = matrix.getMaxScaleOnAxis().clamp(1.0, 3.0);
+      _offset = Offset(translation.x, translation.y);
+    });
+  }
+
+  Matrix4 _matrixFor({required double scale, required Offset offset}) {
+    return Matrix4.identity()
+      ..translate(offset.dx, offset.dy)
+      ..scale(scale);
   }
 }
 

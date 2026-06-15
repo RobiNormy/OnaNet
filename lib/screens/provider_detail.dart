@@ -267,7 +267,7 @@ class _ProviderLogoMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final url = logoUrl;
-    final imageSize = size * logoScale.clamp(0.75, 3.0);
+    final displayScale = logoScale.clamp(1.0, 3.0);
     final displayOffset = Offset(
       logoOffset.dx * size / 280,
       logoOffset.dy * size / 280,
@@ -285,16 +285,18 @@ class _ProviderLogoMark extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: url == null || url.isEmpty
           ? _LogoInitials(initials: initials, size: size)
-          : Image.network(
-              url,
-              width: imageSize,
-              height: imageSize,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) =>
-                  _LogoInitials(initials: initials, size: size),
-              frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                return Transform.translate(offset: displayOffset, child: child);
-              },
+          : Transform(
+              transform: Matrix4.identity()
+                ..translate(displayOffset.dx, displayOffset.dy)
+                ..scale(displayScale),
+              child: Image.network(
+                url,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) =>
+                    _LogoInitials(initials: initials, size: size),
+              ),
             ),
     );
   }
@@ -600,6 +602,10 @@ class PackageDetailScreen extends StatelessWidget {
           package['coverageAreas'] ??
           ['Westlands', 'Kilimani', 'Lavington'],
     );
+    final mainIspProvider =
+        (provider['mainIspProvider'] ?? provider['upstream_provider'])
+            ?.toString()
+            .trim();
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -654,6 +660,12 @@ class PackageDetailScreen extends StatelessWidget {
             _PackageInfoCard(
               rows: [
                 _PackageInfoRowData('Speed', '${package['speed']}'),
+                _PackageInfoRowData(
+                  'Main ISP Provider',
+                  mainIspProvider == null || mainIspProvider.isEmpty
+                      ? 'Not specified'
+                      : mainIspProvider,
+                ),
                 _PackageInfoRowData(
                   'Monthly Price',
                   'KES ${package['price']}/mo',

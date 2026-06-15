@@ -839,14 +839,17 @@ class _TileActionButton extends StatelessWidget {
             Icon(icon, color: color, size: 17),
             const SizedBox(width: 7),
             Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.plusJakartaSans(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ),

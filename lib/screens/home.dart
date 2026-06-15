@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/navigation/screen_ids.dart';
 import 'package:ona_net/screens/profile.dart';
 import 'package:ona_net/screens/provider_detail.dart';
@@ -75,11 +76,15 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String? _area;
   bool _loadingLocation = true;
+  bool _loadingProviders = true;
+  String? _providersError;
+  List<Map<String, dynamic>> _providers = [];
 
   @override
   void initState() {
     super.initState();
     _fetchLocation();
+    _fetchProviders();
   }
 
   Future<void> _fetchLocation() async {
@@ -96,6 +101,35 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _fetchProviders({bool showLoading = true}) async {
+    if (showLoading) {
+      setState(() {
+        _loadingProviders = true;
+        _providersError = null;
+      });
+    }
+
+    try {
+      final providers = await AuthService().getPublicProviders();
+      if (!mounted) return;
+      setState(() {
+        _providers = providers;
+        _providersError = null;
+        _loadingProviders = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _providersError = error.toString();
+        _loadingProviders = false;
+      });
+    }
+  }
+
+  Future<void> _refreshHome() async {
+    await Future.wait([_fetchLocation(), _fetchProviders(showLoading: false)]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -103,40 +137,54 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         bottom: false,
-        child: SingleChildScrollView(
-          padding: EdgeInsets.symmetric(horizontal: 20),
-          child: Column(
-            children: [
-              SizedBox(height: 20),
-              HomeHeader(area: _area),
-              SizedBox(height: 20),
+        child: RefreshIndicator(
+          color: AppTheme.amber,
+          backgroundColor: isDark ? AppTheme.navyMid : AppTheme.white,
+          onRefresh: _refreshHome,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              children: [
+                SizedBox(height: 20),
+                HomeHeader(area: _area),
+                SizedBox(height: 20),
 
-              _LocationBar(
-                label: _area ?? "Select Location",
-                onLocationTap: _showLocation,
-                isLoading: _loadingLocation,
-              ),
-              SizedBox(height: 20),
+                _LocationBar(
+                  label: _area ?? "Select Location",
+                  onLocationTap: _showLocation,
+                  isLoading: _loadingLocation,
+                ),
+                SizedBox(height: 20),
 
-              _SearchBar(),
-              SizedBox(height: 20),
+                _SearchBar(),
+                SizedBox(height: 20),
 
-              _FilterChips(),
-              SizedBox(height: 20),
+                _FilterChips(),
+                SizedBox(height: 20),
 
-              Row(
-                children: [
-                  Text(
-                    "Top Providers",
-                    style: GoogleFonts.plusJakartaSans(
-                      color: isDark ? AppTheme.white : AppTheme.navy,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                Row(
+                  children: [
+                    Text(
+                      "Top Providers",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: isDark ? AppTheme.white : AppTheme.navy,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+                SizedBox(height: 12),
+                _ProvidersList(
+                  providers: _providers,
+                  isLoading: _loadingProviders,
+                  error: _providersError,
+                  onRetry: _fetchProviders,
+                ),
+                SizedBox(height: 110),
+              ],
+            ),
           ),
         ),
       ),
@@ -163,6 +211,125 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         );
       },
+    );
+  }
+}
+
+class _ProvidersList extends StatelessWidget {
+  const _ProvidersList({
+    required this.providers,
+    required this.isLoading,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final List<Map<String, dynamic>> providers;
+  final bool isLoading;
+  final String? error;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 28),
+        child: Center(child: CircularProgressIndicator(color: AppTheme.amber)),
+      );
+    }
+
+    if (error != null) {
+      return _ProviderStateMessage(
+        icon: Icons.cloud_off_rounded,
+        title: 'Could not load providers',
+        message: error!,
+        actionLabel: 'Try Again',
+        onAction: onRetry,
+      );
+    }
+
+    if (providers.isEmpty) {
+      return const _ProviderStateMessage(
+        icon: Icons.wifi_find_rounded,
+        title: 'No providers yet',
+        message: 'Pull down to check again after adding a network.',
+      );
+    }
+
+    return Column(
+      children: providers
+          .map((provider) => _ProviderCard(provider: provider))
+          .toList(),
+    );
+  }
+}
+
+class _ProviderStateMessage extends StatelessWidget {
+  const _ProviderStateMessage({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.navyMid : AppTheme.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: AppTheme.amber, size: 28),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(
+              color: isDark ? AppTheme.white : AppTheme.navy,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(
+              color: AppTheme.gray,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: onAction,
+              child: Text(
+                actionLabel!,
+                style: GoogleFonts.plusJakartaSans(
+                  color: AppTheme.amber,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -684,24 +851,7 @@ class _ProviderCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 44,
-            width: 44,
-            decoration: BoxDecoration(
-              color: Color(provider['color']),
-              borderRadius: BorderRadius.circular(40),
-            ),
-            child: Center(
-              child: Text(
-                provider['initials'],
-                style: TextStyle(
-                  color: AppTheme.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
+          _ProviderLogoAvatar(provider: provider, size: 44),
           SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -889,6 +1039,80 @@ class _ProviderCard extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _ProviderLogoAvatar extends StatelessWidget {
+  const _ProviderLogoAvatar({required this.provider, required this.size});
+
+  final Map<String, dynamic> provider;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final logoUrl = (provider['logoUrl'] ?? provider['logo_url'])?.toString();
+    final logoScale =
+        _asDouble(provider['logoScale'] ?? provider['logo_display_size']) ??
+        1.0;
+    final logoOffset = Offset(
+      _asDouble(provider['logoOffsetX'] ?? provider['logo_offset_x']) ?? 0,
+      _asDouble(provider['logoOffsetY'] ?? provider['logo_offset_y']) ?? 0,
+    );
+    final displayScale = logoScale.clamp(1.0, 3.0);
+    final displayOffset = Offset(
+      logoOffset.dx * size / 280,
+      logoOffset.dy * size / 280,
+    );
+    final fallbackColor = Color(provider['color'] as int);
+    final initials = provider['initials']?.toString() ?? '';
+    final hasLogo = logoUrl != null && logoUrl.trim().isNotEmpty;
+
+    return Container(
+      height: size,
+      width: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: fallbackColor, shape: BoxShape.circle),
+      clipBehavior: Clip.antiAlias,
+      child: hasLogo
+          ? Transform(
+              transform: Matrix4.identity()
+                ..translate(displayOffset.dx, displayOffset.dy)
+                ..scale(displayScale),
+              child: Image.network(
+                logoUrl,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) =>
+                    _ProviderInitials(initials: initials, size: size),
+              ),
+            )
+          : _ProviderInitials(initials: initials, size: size),
+    );
+  }
+
+  double? _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+}
+
+class _ProviderInitials extends StatelessWidget {
+  const _ProviderInitials({required this.initials, required this.size});
+
+  final String initials;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      initials,
+      style: TextStyle(
+        color: AppTheme.white,
+        fontSize: size * 0.36,
+        fontWeight: FontWeight.w800,
+      ),
     );
   }
 }

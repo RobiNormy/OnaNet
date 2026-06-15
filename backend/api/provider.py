@@ -94,6 +94,7 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 provider_name,
                 provider_type,
                 primary_city,
+                upstream_provider,
                 is_verified,
                 logo_url,
                 logo_display_size,
@@ -194,6 +195,7 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 "verified": provider["is_verified"],
                 "providerType": provider["provider_type"],
                 "primaryCity": provider["primary_city"],
+                "mainIspProvider": provider["upstream_provider"],
                 "logoUrl": provider["logo_url"],
                 "logoScale": float(provider["logo_display_size"] or 1),
                 "logoOffsetX": float(provider["logo_offset_x"] or 0),
@@ -774,3 +776,109 @@ def _format_contract_type(value: str | None) -> str:
     if not value:
         return "No contract"
     return value.replace("_", " ").title()
+
+
+@router.get("/{provider_id}/dashboard")
+async def get_dashboard(
+    provider_id: UUID,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    firebase_user = await _get_current_firebase_user(authorization)
+
+    async with get_db_connection() as db:
+        provider = await db.fetchrow(
+            """
+            SELECT
+                providers.provider_name,
+                providers.status,
+                providers.is_verified,
+                providers.created_at
+            FROM providers
+            JOIN users ON users.id = providers.user_id
+            WHERE providers.id = $1
+              AND users.firebase_uid = $2
+            """,
+            provider_id,
+            firebase_user["uid"],
+        )
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider dashboard not found for this user",
+            )
+
+        packages_count = await db.fetchval(
+            """
+            SELECT count(*)
+            FROM provider_packages
+            WHERE provider_id = $1
+
+            """,
+            provider_id,
+        )
+
+        coverage_count = await db.fetchval(
+            """
+            SELECT count(*)
+            FROM provider_coverage_areas
+            WHERE provider_id = $1
+        
+            """,
+            provider_id,
+        )
+
+        coverage_areas = await db.fetch(
+            """
+            SELECT area_name
+            FROM provider_coverage_areas
+            WHERE provider_id = $1
+            ORDER BY created_at ASC
+            """,
+            provider_id,
+        )
+
+        pending_docs = await db.fetchval(
+            """
+            SELECT count(*)
+            FROM provider_documents
+            WHERE provider_id = $1
+                AND status = 'pending'
+            """,
+            provider_id,
+        )
+
+        packages = await db.fetch(
+            """
+            SELECT package_name, speed_mbps, monthly_price
+            FROM provider_packages
+            WHERE provider_id = $1
+            ORDER BY monthly_price ASC
+
+            """,
+            provider_id,
+        )
+        return {
+            "provider_name": provider["provider_name"],
+            "status": provider["status"],
+            "is_verified": provider["is_verified"],
+            "joined_at": provider["created_at"].isoformat(),
+            "active_customers": 0,
+            "pending_installations": 0,
+            "monthly_revenue": 0,
+            "commission_due": 0,
+            "packages_count": packages_count,
+            "coverage_count": coverage_count,
+            "coverage_areas": [row["area_name"] for row in coverage_areas],
+            "pending_documents": pending_docs,
+            "packages": [
+                {
+                    "package_name": row["package_name"],
+                    "speed_mbps": row["speed_mbps"],
+                    "monthly_price": float(row["monthly_price"] or 0),
+                }
+                for row in packages
+            ],
+            "top_packages": [],
+            "top_locations": [],
+            "recent_requests": [],
+        }

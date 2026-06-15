@@ -22,6 +22,7 @@ class _PackagesScreenState extends State<PackagesScreen> {
   String _routerIncluded = 'Yes';
   String _speedUnit = 'Mbps';
   bool _isSubmitting = false;
+  String? _savedProviderId;
   final List<String> installationPeriod = [
     'Same Day (0-12 Hours)',
     '12-24 Hours',
@@ -65,7 +66,7 @@ class _PackagesScreenState extends State<PackagesScreen> {
           const ProviderSectionTitle(
             title: 'Packages',
             subtitle:
-                'Add your first internet package. You can add more packages later.',
+                'Add your internet package. Save it, then add another network package if you offer more.',
           ),
           const SizedBox(height: 22),
           ProviderTextField(
@@ -183,7 +184,20 @@ class _PackagesScreenState extends State<PackagesScreen> {
           const SizedBox(height: 42),
           ProviderPrimaryButton(
             label: _isSubmitting ? 'Saving...' : 'Finish',
-            onPressed: _isSubmitting ? null : _submitRegistration,
+            onPressed: _isSubmitting ? null : _finishRegistration,
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _isSubmitting ? null : _saveAndAddAnother,
+            icon: const Icon(Icons.add_rounded),
+            label: const FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                'Save Network & Add Another',
+                maxLines: 1,
+                softWrap: false,
+              ),
+            ),
           ),
           const SizedBox(height: 24),
           const SecureFooter(),
@@ -192,105 +206,163 @@ class _PackagesScreenState extends State<PackagesScreen> {
     );
   }
 
-  Future<void> _submitRegistration() async {
-    final packageName = _optionalText(_packageNameController.text);
-    final speedMbps = _speedToMbps(_speedController.text, _speedUnit);
-    final monthlyPrice = _optionalInt(_priceController.text);
+  Future<void> _finishRegistration() async {
+    if (_savedProviderId != null && !_hasPackageInput) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      return;
+    }
 
-    if (packageName == null || speedMbps == null || monthlyPrice == null) {
+    final saved = await _saveCurrentPackage();
+    if (!saved || !mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Provider registration saved.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  Future<void> _saveAndAddAnother() async {
+    final saved = await _saveCurrentPackage();
+    if (!saved || !mounted) return;
+
+    _clearPackageFields();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Network package saved. Add another package.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<bool> _saveCurrentPackage() async {
+    final package = _currentPackageDraft();
+    if (package == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Package name, speed, and monthly price are required.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
-      return;
+      return false;
     }
 
     setState(() => _isSubmitting = true);
 
-    final draft = widget.draft.copyWith(
-      package: ProviderPackageDraft(
-        name: packageName,
-        speedMbps: speedMbps,
-        monthlyPrice: monthlyPrice,
-        installationFee: _optionalInt(_installationController.text),
-        fairUsagePolicy: _optionalText(_fairusage.text),
-        installationPeriod: _optionalText(_installationperiod.text),
-        routerIncluded: _routerIncluded == 'Yes',
-      ),
-    );
+    final draft = widget.draft.copyWith(package: package);
 
     try {
       final authService = AuthService();
-      final provider = await authService.submitProviderRegistration(
-        draft.toJson(),
-      );
-      final providerId = provider['id']?.toString();
-      if (providerId == null || providerId.isEmpty) {
-        throw const AuthServiceException(
-          'Provider saved, but the API did not return a provider ID.',
-        );
-      }
+      var providerId = _savedProviderId;
 
-      final logoFile = draft.logoFile;
-      if (logoFile != null) {
-        await authService.uploadProviderLogo(
+      if (providerId == null) {
+        final provider = await authService.submitProviderRegistration(
+          draft.toJson(),
+        );
+        providerId = provider['id']?.toString();
+        if (providerId == null || providerId.isEmpty) {
+          throw const AuthServiceException(
+            'Provider saved, but the API did not return a provider ID.',
+          );
+        }
+
+        final logoFile = draft.logoFile;
+        if (logoFile != null) {
+          await authService.uploadProviderLogo(
+            providerId: providerId,
+            file: logoFile,
+            logoDisplaySize: draft.logoDisplaySize,
+            logoOffsetX: draft.logoOffsetX,
+            logoOffsetY: draft.logoOffsetY,
+          );
+        }
+
+        await authService.submitProviderCoverageAreas(
           providerId: providerId,
-          file: logoFile,
-          logoDisplaySize: draft.logoDisplaySize,
-          logoOffsetX: draft.logoOffsetX,
-          logoOffsetY: draft.logoOffsetY,
+          payload: draft.toProviderCoverageAreasJson(),
         );
-      }
 
-      await authService.submitProviderCoverageAreas(
-        providerId: providerId,
-        payload: draft.toProviderCoverageAreasJson(),
-      );
-
-      await authService.submitProviderContacts(
-        providerId: providerId,
-        payload: draft.toProviderContactsJson(),
-      );
-
-      await authService.submitProviderServices(
-        providerId: providerId,
-        payload: draft.toProviderServicesJson(),
-      );
-
-      final packagePayload = draft.toProviderPackageJson();
-      if (packagePayload != null) {
-        await authService.submitProviderPackage(
+        await authService.submitProviderContacts(
           providerId: providerId,
-          payload: packagePayload,
+          payload: draft.toProviderContactsJson(),
         );
-      }
 
-      for (final document in draft.documents) {
-        await authService.uploadProviderDocument(
+        await authService.submitProviderServices(
           providerId: providerId,
-          documentType: document.documentType,
-          file: document.file,
+          payload: draft.toProviderServicesJson(),
         );
-      }
-      if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Provider registration saved.'),
-          behavior: SnackBarBehavior.floating,
-        ),
+        for (final document in draft.documents) {
+          await authService.uploadProviderDocument(
+            providerId: providerId,
+            documentType: document.documentType,
+            file: document.file,
+          );
+        }
+
+        if (mounted) setState(() => _savedProviderId = providerId);
+      }
+
+      await authService.submitProviderPackage(
+        providerId: providerId,
+        payload: package.toJson(),
       );
-      Navigator.of(context).popUntil((route) => route.isFirst);
+
+      return true;
     } on AuthServiceException catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.message), behavior: SnackBarBehavior.floating),
       );
+      return false;
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  ProviderPackageDraft? _currentPackageDraft() {
+    final packageName = _optionalText(_packageNameController.text);
+    final speedMbps = _speedToMbps(_speedController.text, _speedUnit);
+    final monthlyPrice = _optionalInt(_priceController.text);
+
+    if (packageName == null || speedMbps == null || monthlyPrice == null) {
+      return null;
+    }
+
+    return ProviderPackageDraft(
+      name: packageName,
+      speedMbps: speedMbps,
+      monthlyPrice: monthlyPrice,
+      installationFee: _optionalInt(_installationController.text),
+      fairUsagePolicy: _optionalText(_fairusage.text),
+      installationPeriod: _optionalText(_installationperiod.text),
+      routerIncluded: _routerIncluded == 'Yes',
+    );
+  }
+
+  bool get _hasPackageInput {
+    return _packageNameController.text.trim().isNotEmpty ||
+        _speedController.text.trim().isNotEmpty ||
+        _priceController.text.trim().isNotEmpty ||
+        _installationController.text.trim().isNotEmpty ||
+        _fairusage.text.trim().isNotEmpty ||
+        _installationperiod.text.trim().isNotEmpty;
+  }
+
+  void _clearPackageFields() {
+    setState(() {
+      selectedItem = null;
+      _routerIncluded = 'Yes';
+      _speedUnit = 'Mbps';
+      _packageNameController.clear();
+      _speedController.clear();
+      _priceController.clear();
+      _installationController.clear();
+      _fairusage.clear();
+      _installationperiod.clear();
+    });
   }
 
   int? _optionalInt(String value) {
