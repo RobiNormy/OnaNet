@@ -1,6 +1,10 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
+import 'package:ona_net/auth/phone_verification.dart';
+
 
 class InstallationRequestScreen extends StatefulWidget {
   final Map<String, dynamic> provider;
@@ -28,6 +32,9 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
   bool _phoneVerified = false;
   bool _loadingLocation = false;
   bool _consentAccepted = false;
+  bool _otpLoading = false;
+  String?  _otpError;
+  final _phoneVerificationService = PhoneVerificationService();
   String? _gpsLocation;
   DateTime? _installationDate;
   TimeOfDay? _installationTime;
@@ -74,14 +81,63 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
     if (picked != null) setState(() => _installationTime = picked);
   }
 
-  void _sendOtp() {
-    if (_phoneController.text.trim().isEmpty) return;
-    setState(() => _otpSent = true);
+  Future<void> _sendOtp() async {
+    final raw = _phoneController.text.trim();
+    if (raw.isEmpty) return;
+    final e164 = PhoneVerificationService.normalizeKenyanPhone(raw);
+    if (!e164.startsWith('+') || e164.length < 10){
+      setState(()=> _otpError = 'Enter a Valid phone number.' );
+      return;
+    }
+
+    setState(() {
+      _otpError = null;
+      _otpLoading = true;
+    });
+
+    try {
+      await _phoneVerificationService.startVerification(phoneE164: e164);
+      if (!mounted) return;
+      _phoneController.text = e164;
+      setState(() {
+        _otpSent = true;
+        _otpLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _otpError = e.toString();
+        _otpLoading = false;
+      });
+    }
   }
 
-  void _verifyOtp() {
-    if (_otpController.text.trim().length < 4) return;
-    setState(() => _phoneVerified = true);
+  Future <void> _verifyOtp() async {
+    final raw = _phoneController.text.trim();
+    final otp = _otpController.text.trim();
+
+    if (otp.length < 4) return;
+    final e164 = PhoneVerificationService.normalizeKenyanPhone(raw);
+    setState(() {
+      _otpLoading = true;
+      _otpError = null;
+    });
+
+    try {
+      await _phoneVerificationService.verify(phoneE164: e164, otp: otp);
+      if (!mounted) return;
+      setState(() {
+        _phoneVerified = true;
+        _otpLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _otpLoading = false;
+        _otpError = e.toString();
+      });
+    }
+
   }
 
   bool get _canSubmit =>
@@ -185,10 +241,39 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                     ),
                   ),
                 ],
+                if (_otpError != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _otpError!,
+                    style: const TextStyle(
+                        color: Colors.red,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                if (_otpError != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _otpError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: TextButton(
+                  child: _otpLoading
+                      ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                      : TextButton(
                     onPressed: _phoneVerified
                         ? null
                         : _otpSent

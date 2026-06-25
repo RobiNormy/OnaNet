@@ -1,216 +1,207 @@
-from typing import Any
-
-from fastapi import APIRouter, Header, HTTPException, status
-from firebase_admin import auth as firebase_auth
-from pydantic import BaseModel, field_validator
-
-from backend.core.firebase import verify_firebase_token
+import anyio
+import functools
+import logging
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, EmailStr
+from firebase_admin import auth
 from backend.db.session import get_db_connection
+from backend.core.firebase import create_firebase_user_rest,verify_firebase_token
+from backend.core.security import create_access_token
+from backend.schemas.user import AuthResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+log = logging.getLogger(__name__)
 
+class FirebaseTokenRequest(BaseModel):
+    token: str
 
-class UserSyncRequest(BaseModel):
-    firebase_uid: str
-    email: str | None = None
+class SignUpRequest(BaseModel):
+    email: EmailStr
+    password: str
     first_name: str | None = None
     last_name: str | None = None
-    phone_number: str | None = None
-    profile_image_url: str | None = None
-    auth_provider: str | None = None
-    role: str = "user"
-    is_phone_verified: bool = False
-    is_profile_complete: bool = False
-
-    @field_validator("email")
-    @classmethod
-    def validate_email(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-
-        email = value.strip().lower()
-        if "@" not in email or "." not in email.rsplit("@", maxsplit=1)[-1]:
-            raise ValueError("Invalid email address")
-
-        return email
 
 
-class UserResponse(BaseModel):
-    firebase_uid: str
-    email: str | None = None
-    first_name: str | None = None
-    last_name: str | None = None
-    phone_number: str | None = None
-    profile_image_url: str | None = None
-    auth_provider: str | None = None
-    role: str = "user"
-    is_phone_verified: bool = False
-    is_profile_complete: bool = False
-    created_at: str | None = None
-    updated_at: str | None = None
-
-
-@router.get("/ping")
-async def auth_ping() -> dict[str, str]:
-    return {"status": "auth router working"}
-
-
-@router.post("/sync", response_model=UserResponse)
-async def sync_user(
-    user_in: UserSyncRequest,
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
-    token_uid = firebase_user["uid"]
-    if user_in.firebase_uid != token_uid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Firebase UID does not match authenticated user",
-        )
-
-    email = user_in.email or firebase_user.get("email")
-    profile_image_url = user_in.profile_image_url or firebase_user.get("picture")
-    is_phone_verified = bool(user_in.is_phone_verified or user_in.phone_number)
-
-    async with get_db_connection() as db:
-        row = await db.fetchrow(
-            """
-            INSERT INTO users (
-                firebase_uid,
-                email,
-                first_name,
-                last_name,
-                phone_number,
-                profile_image_url,
-                auth_provider,
-                role,
-                is_phone_verified,
-                is_profile_complete
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (firebase_uid)
-            DO UPDATE SET
-                email = EXCLUDED.email,
-                first_name = COALESCE(EXCLUDED.first_name, users.first_name),
-                last_name = COALESCE(EXCLUDED.last_name, users.last_name),
-                phone_number = COALESCE(EXCLUDED.phone_number, users.phone_number),
-                profile_image_url = COALESCE(EXCLUDED.profile_image_url, users.profile_image_url),
-                auth_provider = COALESCE(EXCLUDED.auth_provider, users.auth_provider),
-                role = COALESCE(EXCLUDED.role, users.role),
-                is_phone_verified = EXCLUDED.is_phone_verified,
-                is_profile_complete = EXCLUDED.is_profile_complete,
-                updated_at = NOW()
-            RETURNING
-                firebase_uid,
-                email,
-                first_name,
-                last_name,
-                phone_number,
-                profile_image_url,
-                auth_provider,
-                role,
-                is_phone_verified,
-                is_profile_complete,
-                created_at,
-                updated_at;
-            """,
-            token_uid,
-            email.lower() if email else None,
-            _clean(user_in.first_name),
-            _clean(user_in.last_name),
-            _clean(user_in.phone_number),
-            _clean(profile_image_url),
-            _clean(user_in.auth_provider),
-            _clean(user_in.role) or "user",
-            is_phone_verified,
-            user_in.is_profile_complete,
-        )
-
-    return _serialize_user(row)
-
-
-@router.get("/me", response_model=UserResponse)
-async def get_me(
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
-    async with get_db_connection() as db:
-        row = await db.fetchrow(
-            """
-            SELECT
-                firebase_uid,
-                email,
-                first_name,
-                last_name,
-                phone_number,
-                profile_image_url,
-                auth_provider,
-                role,
-                is_phone_verified,
-                is_profile_complete,
-                created_at,
-                updated_at
-            FROM users
-            WHERE firebase_uid = $1;
-            """,
-            firebase_user["uid"],
-        )
-
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User profile not found",
-        )
-
-    return _serialize_user(row)
-
-
-async def _get_current_firebase_user(
-    authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
+async def _get_current_firebase_user(authorization: str | None) -> dict:
     if not authorization:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-        )
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header must be Bearer token",
+            status_code=401,
+            detail="Missing authorization header",
         )
 
     try:
-        return verify_firebase_token(token)
-    except firebase_auth.InvalidIdTokenError as exc:
+        scheme, token = authorization.split(" ", 1)
+        if scheme.lower() != "bearer":
+            raise ValueError("Invalid authorization scheme")
+    except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Firebase token",
-        ) from exc
-    except firebase_auth.ExpiredIdTokenError as exc:
+            status_code=401,
+            detail="Invalid authorization header format",
+        )
+
+    decoded = await verify_firebase_token(token)
+    if not decoded:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Expired Firebase token",
-        ) from exc
+            status_code=401,
+            detail="Invalid or expired token",
+        )
+
+    return decoded
+
+
+@router.post('/signup', response_model=AuthResponse)
+async def sign_up(body: SignUpRequest):
+    email = body.email.strip().lower()
+    display_name_parts = [
+        part.strip() for part in [body.first_name, body.last_name] if part and part.strip()
+    ]
+    display_name = " ".join(display_name_parts) or None
+
+    log.info(f"Attempting to create Firebase user for email: {email}")
+    try:
+        firebase_uid = await create_firebase_user_rest(
+            email=email,
+            password=body.password,
+            display_name=display_name,
+        )
+        log.info(f"Successfully created Firebase user with UID: {firebase_uid}")
     except Exception as exc:
+        error_msg = str(exc)
+        log.error(f"Error creating Firebase user: {error_msg}")
+        if "EMAIL_EXISTS" in error_msg:
+            raise HTTPException(status_code=400, detail="A user with that email already exists.")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+    async with get_db_connection() as connection:
+        user_row = await connection.fetchrow(
+            "SELECT * FROM users WHERE firebase_uid = $1 OR email = $2",
+            firebase_uid,
+            email,
+        )
+        if not user_row:
+            log.info("Inserting new user into Supabase...")
+            try:
+                user_row = await connection.fetchrow(
+                    """
+                    INSERT INTO users (
+                        firebase_uid, email, first_name, last_name,
+                        auth_provider, role, is_profile_complete, is_phone_verified
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    RETURNING *
+                    """,
+                    firebase_uid, email, body.first_name, body.last_name,
+                    'email', 'user', False, False,
+                )
+                log.info(f"User inserted into Supabase with ID: {user_row['id']}")
+            except Exception as exc:
+                log.error(f"DB insert failed: {exc}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"DB error: {str(exc)}")
+
+    if not user_row:
+        raise HTTPException(status_code=500, detail="Failed to create user in database.")
+
+    access_token = create_access_token(
+        data={'sub': str(user_row['id']), 'role': user_row['role']}
+    )
+
+    return AuthResponse(
+        access_token=access_token,
+        user={
+            'id': user_row['id'],
+            'firebase_uid': user_row['firebase_uid'],
+            'email': user_row['email'],
+            'first_name': user_row['first_name'],
+            'last_name': user_row['last_name'],
+            'phone_number': user_row['phone_number'],
+            'profile_image_url': user_row['profile_image_url'],
+            'auth_provider': user_row['auth_provider'],
+            'role': user_row['role'],
+            'is_phone_verified': user_row['is_phone_verified'],
+            'is_profile_complete': user_row['is_profile_complete'],
+        },
+    )
+
+
+@router.post('/firebase', response_model=AuthResponse)
+async def firebase_auth(body: FirebaseTokenRequest):
+    firebase_data = await verify_firebase_token(body.token)
+
+    if not firebase_data:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not verify Firebase token",
-        ) from exc
+            status_code=401,
+            detail="Invalid or expired Firebase token",
+        )
 
+    firebase_uid = firebase_data['uid']
+    email = firebase_data.get('email')
+    name = firebase_data.get('name', '')
+    photo = firebase_data.get('picture')
 
-def _clean(value: str | None) -> str | None:
-    if value is None:
-        return None
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="Firebase account has no email",
+        )
 
-    cleaned = value.strip()
-    return cleaned or None
+    firebase_info = firebase_data.get('firebase', {})
+    provider = firebase_info.get('sign_in_provider', 'email')
 
+    name_parts = name.strip().split(' ', 1)
+    first_name = name_parts[0] if name_parts else None
+    last_name = name_parts[1] if len(name_parts) > 1 else None
 
-def _serialize_user(row: Any) -> dict[str, Any]:
-    data = dict(row)
-    for key in ("created_at", "updated_at"):
-        if data.get(key) is not None:
-            data[key] = data[key].isoformat()
-    return data
+    async with get_db_connection() as connection:
+        user_row = await connection.fetchrow(
+            "SELECT * FROM users WHERE firebase_uid = $1",
+            firebase_uid,
+        )
+        if not user_row:
+            user_row = await connection.fetchrow(
+                """
+                INSERT INTO users (
+                    firebase_uid,
+                    email,
+                    first_name,
+                    last_name,
+                    profile_image_url,
+                    auth_provider,
+                    role,
+                    is_profile_complete,
+                    is_phone_verified
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                RETURNING *
+                """,
+                firebase_uid,
+                email.strip().lower(),
+                first_name,
+                last_name,
+                photo,
+                provider,
+                'user',
+                False,
+                False,
+            )
+
+    access_token = create_access_token(
+        data={
+            'sub': str(user_row['id']),
+            'role': user_row['role'],
+        }
+    )
+
+    return AuthResponse(
+        access_token=access_token,
+        user={
+            'id': user_row['id'],
+            'firebase_uid': user_row['firebase_uid'],
+            'email': user_row['email'],
+            'first_name': user_row['first_name'],
+            'last_name': user_row['last_name'],
+            'phone_number': user_row['phone_number'],
+            'profile_image_url': user_row['profile_image_url'],
+            'auth_provider': user_row['auth_provider'],
+            'role': user_row['role'],
+            'is_phone_verified': user_row['is_phone_verified'],
+            'is_profile_complete': user_row['is_profile_complete'],
+        },
+    )

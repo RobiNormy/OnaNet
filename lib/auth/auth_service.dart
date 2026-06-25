@@ -51,10 +51,21 @@ class AuthService {
     String? lastName,
   }) async {
     try {
-      final credential = await _auth.createUserWithEmailAndPassword(
+      await _dio.post<dynamic>(
+        _url('/auth/signup'),
+        data: {
+          'email': email.trim(),
+          'password': password,
+          'first_name': firstName?.trim(),
+          'last_name': lastName?.trim(),
+        },
+      );
+
+      final credential = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
+
       final displayName = [firstName, lastName]
           .where((part) => part != null && part.trim().isNotEmpty)
           .map((part) => part!.trim())
