@@ -1,50 +1,63 @@
-from __future__ import annotations
-
-import json
-import os
-from pathlib import Path
-from typing import Any
-
+import anyio
+import httpx
+import logging
 import firebase_admin
-from firebase_admin import auth, credentials
-
-from backend.core.config import get_settings
-
-
-def init_firebase() -> None:
-    if firebase_admin._apps:
-        return
-
-    settings = get_settings()
-    options: dict[str, str] = {}
-    if settings.firebase_project_id:
-        options["projectId"] = settings.firebase_project_id
-
-    credential = _load_credential(settings.firebase_service_account_path)
-    firebase_admin.initialize_app(credential, options=options or None)
+from firebase_admin import auth
+from backend.core.config import settings
 
 
-def verify_firebase_token(token: str) -> dict[str, Any]:
-    init_firebase()
-    return auth.verify_id_token(token)
+def _init_firebase_admin() -> None:
+    pass
 
 
-def _load_credential(path: str | None) -> credentials.Base:
-    if not path:
-        return credentials.ApplicationDefault()
+_init_firebase_admin()
 
-    credential_path = Path(path).expanduser()
-    if not credential_path.exists():
-        return credentials.ApplicationDefault()
 
-    os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", str(credential_path))
-
+async def verify_firebase_token(token: str) -> dict | None:
     try:
-        data = json.loads(credential_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return credentials.ApplicationDefault()
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                f"https://identitytoolkit.googleapis.com/v1/accounts:lookup?key={settings.FIREBASE_API_KEY}",
+                json={"idToken": token}
+            )
+            data = res.json()
+            if "error" in data:
+                return None
+            users = data.get("users", [])
+            if not users:
+                return None
+            user = users[0]
+            return {
+                "uid": user["localId"],
+                "email": user.get("email"),
+                "name": user.get("displayName", ""),
+                "picture": user.get("photoUrl"),
+                "firebase": {"sign_in_provider": "password"},
+            }
+    except Exception:
+        return None
 
-    if data.get("type") == "service_account":
-        return credentials.Certificate(str(credential_path))
 
-    return credentials.ApplicationDefault()
+async def create_firebase_user_rest(email: str, password: str, display_name: str | None = None) -> str:
+    api_key = settings.FIREBASE_API_KEY
+    print(f"DEBUG API KEY: '{api_key}'")
+
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={settings.FIREBASE_API_KEY}",
+            json={"email": email, "password": password, "returnSecureToken": True}
+        )
+        data = res.json()
+        if "error" in data:
+            raise Exception(data["error"]["message"])
+        firebase_uid = data["localId"]
+        id_token = data["idToken"]
+
+    if display_name:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"https://identitytoolkit.googleapis.com/v1/accounts:update?key={settings.FIREBASE_API_KEY}",
+                json={"idToken": id_token, "displayName": display_name}
+            )
+
+    return firebase_uid

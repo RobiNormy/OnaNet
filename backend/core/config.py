@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,7 +12,19 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
     FIREBASE_SERVICE_ACCOUNT_PATH: str
+    FIREBASE_API_KEY: str
     FIREBASE_PROJECT_ID: str | None = None
+
+    SMS_PROVIDER: str = "console"
+    DEV_OTP: str | None = None
+    AT_USERNAME: str | None = None
+    AT_API_KEY: str | None = None
+    AT_SENDER_ID: str | None = None
+    OTP_LENGTH: int = 6
+    OTP_TTL_SECONDS: int = Field(300, env="OTP_TTL_sECONDS")
+    OTP_MAX_ATTEMPTS: int = Field(5, env="OTP_MAX_aTTEMPTS")
+    OTP_RATE_LIMIT_PER_HOUR: int = 3
+    
 
     @property
     def database_url(self) -> str:

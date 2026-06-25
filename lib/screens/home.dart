@@ -455,26 +455,32 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                 ),
               ),
               SizedBox(height: 10),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.my_location_rounded, color: AppTheme.amber),
-                title: Text(
-                  "Use current location",
-                  style: GoogleFonts.plusJakartaSans(
-                    color: widget.isDark ? AppTheme.white : AppTheme.navy,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
+              Material(
+                color: Colors.transparent,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    Icons.my_location_rounded,
+                    color: AppTheme.amber,
                   ),
-                ),
-                subtitle: Text(
-                  widget.currentArea ?? "Find providers near you",
-                  style: GoogleFonts.plusJakartaSans(
-                    color: AppTheme.gray,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                  title: Text(
+                    "Use current location",
+                    style: GoogleFonts.plusJakartaSans(
+                      color: widget.isDark ? AppTheme.white : AppTheme.navy,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
+                  subtitle: Text(
+                    widget.currentArea ?? "Find providers near you",
+                    style: GoogleFonts.plusJakartaSans(
+                      color: AppTheme.gray,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  onTap: widget.onUseCurrent,
                 ),
-                onTap: widget.onUseCurrent,
               ),
               if (_isSearching)
                 Padding(
