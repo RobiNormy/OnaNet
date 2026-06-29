@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ona_net/auth/package_service.dart';
 import 'package:ona_net/screens/installation_request.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
@@ -91,7 +92,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
 
                       const _SectionHeader(title: 'Available Packages'),
                       const SizedBox(height: 12),
-                      _PackagesList(
+                      _ProviderPackagesList(
                         provider: provider,
                         selectedIndex: _selectedPackageIndex,
                         onSelected: (index, package) {
@@ -119,7 +120,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                               ?.copyWith(color: AppTheme.gray),
                         )
                       else
-                        ..._dummyReviews.map((r) => _ReviewCard(review: r)),
+                        // ..._dummyReviews.map((r) => _ReviewCard(review: r)),
 
                       const SizedBox(height: 100),
                     ],
@@ -287,8 +288,8 @@ class _ProviderLogoMark extends StatelessWidget {
           ? _LogoInitials(initials: initials, size: size)
           : Transform(
               transform: Matrix4.identity()
-                ..translate(displayOffset.dx, displayOffset.dy)
-                ..scale(displayScale),
+                ..translate(displayOffset.dx, displayOffset.dy, 0)
+                ..scale(displayScale, displayScale, displayScale),
               child: Image.network(
                 url,
                 width: size,
@@ -377,36 +378,6 @@ class _SectionHeader extends StatelessWidget {
       style: Theme.of(
         context,
       ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-    );
-  }
-}
-
-class _PackagesList extends StatelessWidget {
-  final Map<String, dynamic> provider;
-  final int? selectedIndex;
-  final void Function(int index, Map<String, dynamic> package) onSelected;
-  const _PackagesList({
-    required this.provider,
-    required this.selectedIndex,
-    required this.onSelected,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final packages =
-        (provider['packages'] as List<dynamic>?)
-            ?.whereType<Map<String, dynamic>>()
-            .toList() ??
-        _providerPackages;
-
-    return Column(
-      children: packages.asMap().entries.map((entry) {
-        return _PackageCard(
-          package: entry.value,
-          isSelected: entry.key == selectedIndex,
-          onTap: () => onSelected(entry.key, entry.value),
-        );
-      }).toList(),
     );
   }
 }
@@ -594,9 +565,9 @@ class PackageDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final reviews = _dummyReviews
-        .where((review) => review['packageName'] == package['name'])
-        .toList();
+    // final reviews = _dummyReviews
+    //     .where((review) => review['packageName'] == package['name'])
+    //     .toList();
     final coverageAreas = List<String>.from(
       provider['coverageAreas'] ??
           package['coverageAreas'] ??
@@ -699,15 +670,15 @@ class PackageDetailScreen extends StatelessWidget {
             const SizedBox(height: 22),
             _SectionHeader(title: 'Reviews for ${package['name']}'),
             const SizedBox(height: 12),
-            if (reviews.isEmpty)
-              Text(
-                'No reviews yet for this package.',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppTheme.gray),
-              )
-            else
-              ...reviews.map((review) => _ReviewCard(review: review)),
+            // if (reviews.isEmpty)
+            //   Text(
+            //     'No reviews yet for this package.',
+            //     style: Theme.of(
+            //       context,
+            //     ).textTheme.bodySmall?.copyWith(color: AppTheme.gray),
+            //   )
+            // else
+            //   ...reviews.map((review) => _ReviewCard(review: review)),
           ],
         ),
       ),
@@ -1183,7 +1154,6 @@ class _StickyBottomBar extends StatelessWidget {
 
           const SizedBox(width: 12),
 
-          // Request Callback
           Expanded(
             child: GestureDetector(
               onTap: () {},
@@ -1217,83 +1187,82 @@ class _StickyBottomBar extends StatelessWidget {
   }
 }
 
-final _providerPackages = [
-  {
-    'name': 'Basic',
-    'speed': '10Mbps',
-    'contract': 'No contract',
-    'price': '2,499',
-    'installationFee': '1,500',
-    'fairUsage': 'Unlimited browsing with fair-use shaping after 500GB',
-    'routerIncluded': true,
-    'installationTime': '24-48 hours',
-    'coverageAreas': ['Westlands', 'Kilimani', 'Lavington'],
-    'trustLabel': 'Popular in Westlands',
-    'subscriberCount': '132 active subscribers nearby',
-    'popular': false,
-  },
-  {
-    'name': 'Standard',
-    'speed': '25Mbps',
-    'contract': 'No contract',
-    'price': '3,999',
-    'installationFee': '1,500',
-    'fairUsage': 'Unlimited browsing with fair-use shaping after 1TB',
-    'routerIncluded': true,
-    'installationTime': 'Same day to 24 hours',
-    'coverageAreas': ['Westlands', 'Kileleshwa', 'Parklands'],
-    'trustLabel': 'Popular in Westlands',
-    'subscriberCount': '132 active subscribers nearby',
-    'popular': true,
-  },
-  {
-    'name': 'Premium',
-    'speed': '50Mbps',
-    'contract': '12 months',
-    'price': '6,999',
-    'installationFee': 'Free',
-    'fairUsage': 'Unlimited browsing with priority traffic management',
-    'routerIncluded': true,
-    'installationTime': 'Same day to 24 hours',
-    'coverageAreas': ['Westlands', 'Lavington', 'Riverside'],
-    'trustLabel': 'Popular in Westlands',
-    'subscriberCount': '132 active subscribers nearby',
-    'popular': false,
-  },
-];
+class _ProviderPackagesList extends StatefulWidget {
+  final Map<String, dynamic> provider;
+  final int? selectedIndex;
+  final void Function(int index, Map<String, dynamic> package) onSelected;
 
-final _dummyReviews = [
-  {
-    'name': 'Brian M.',
-    'initials': 'BM',
-    'avatarColor': 0xFF1B4F8A,
-    'rating': 5.0,
-    'date': '2 days ago',
-    'packageName': 'Standard',
-    'package': 'Standard - 25Mbps',
-    'text':
-        'Installation was done same day, very professional. Speed is consistent even during peak hours.',
-  },
-  {
-    'name': 'Grace W.',
-    'initials': 'GW',
-    'avatarColor': 0xFF16A34A,
-    'rating': 4.5,
-    'date': '1 week ago',
-    'packageName': 'Premium',
-    'package': 'Premium - 50Mbps',
-    'text':
-        'Great service and reliable connection. Perfect for work from home in Westlands.',
-  },
-  {
-    'name': 'Kevin O.',
-    'initials': 'KO',
-    'avatarColor': 0xFFDC2626,
-    'rating': 4.0,
-    'date': '2 weeks ago',
-    'packageName': 'Basic',
-    'package': 'Basic - 10Mbps',
-    'text':
-        'Good speeds overall. Customer support was responsive when I had an issue.',
-  },
-];
+  const _ProviderPackagesList({
+    required this.provider,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  @override
+  State<_ProviderPackagesList> createState() => _ProviderPackagesListState();
+}
+
+class _ProviderPackagesListState extends State<_ProviderPackagesList>{
+  late Future<List<ProviderPackage>> _packagesFuture;
+  @override
+  void initState() {
+    super.initState();
+    _packagesFuture = ProviderPackageService().listForProvider(widget.provider['id'] as String);
+  }
+  Future <void> _refresh() async {
+    setState(() {
+      _packagesFuture = ProviderPackageService().listForProvider(widget.provider['id'] as String);
+      
+    });
+  }
+  Widget _buildPackagesList(List<Map<String, dynamic>> packages) {
+    return Column(
+      children: packages.asMap().entries.map((entry) {
+        return _PackageCard(
+          package: entry.value,
+          isSelected: entry.key == widget.selectedIndex,
+          onTap: () => widget.onSelected(entry.key, entry.value),
+        );
+      }).toList(),
+    );
+  }
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<ProviderPackage>>(
+        future: _packagesFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done){
+            return
+              const Padding(padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          if (snapshot.hasError) {
+            return Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  Text('Could not load packages: ${snapshot.error}'),
+                  SizedBox(height: 12,),
+                  OutlinedButton.icon(
+                      onPressed: _refresh,
+                      icon: Icon(Icons.refresh),
+                      label: Text('Try again'),
+
+                  ),
+                ],
+              ),
+            );
+          }
+          final packages = snapshot.data ?? const [];
+          if (packages.isEmpty){
+            return Padding(padding: EdgeInsets.all(20),
+              child: Text("This provider has no packages yet."),
+            );
+          }
+          final uiMaps =packages.map((p)=> p.toUiMap()).toList();
+          return _buildPackagesList(uiMaps);
+        },
+        );
+  }
+}

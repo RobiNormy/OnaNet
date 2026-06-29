@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
-// ─────────────────────────────────────────────
-// LOGO
-// ─────────────────────────────────────────────
 
 class OnaNetLogo extends StatelessWidget {
   const OnaNetLogo({super.key});
@@ -175,7 +172,7 @@ class PrimaryButton extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppTheme.amber,
           foregroundColor: AppTheme.white,
-          disabledBackgroundColor: AppTheme.amber.withOpacity(0.6),
+          disabledBackgroundColor: AppTheme.amber.withValues(alpha: 0.6),
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),

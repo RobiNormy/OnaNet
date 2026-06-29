@@ -36,18 +36,18 @@ class InstallationRequestOut(BaseModel):
     package_id:UUID
 
     phone_e164: str
-    gps_location: str | None = None
+    gps_location: str | None = Field(default=None)
 
     estate_or_building: str
-    house_or_apartment: str
-    landmark:str | None = None
+    house_or_apartment: str | None = Field(default=None)
+    landmark:str | None = Field(default=None)
 
     preferred_date: date
     preferred_time: time
 
     status: InstallationStatus
-    decline_reason: str | None = None
-    completed_at: datetime | None = None
+    decline_reason: str | None = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
     
     created_at: datetime
     updated_at: datetime
