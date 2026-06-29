@@ -41,6 +41,11 @@ class InstallationRequestOut(BaseModel):
     estate_or_building: str
     house_or_apartment: str | None = Field(default=None)
     landmark:str | None = Field(default=None)
+    gps_location: str | None = None
+
+    estate_or_building: str
+    house_or_apartment: str
+    landmark:str | None = None
 
     preferred_date: date
     preferred_time: time
@@ -48,6 +53,9 @@ class InstallationRequestOut(BaseModel):
     status: InstallationStatus
     decline_reason: str | None = Field(default=None)
     completed_at: datetime | None = Field(default=None)
+
+    decline_reason: str | None = None
+    completed_at: datetime | None = None
     
     created_at: datetime
     updated_at: datetime
