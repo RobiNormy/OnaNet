@@ -1,10 +1,8 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
 import 'package:ona_net/auth/phone_verification.dart';
-
+import 'package:ona_net/auth/installation_service_request.dart';
 
 class InstallationRequestScreen extends StatefulWidget {
   final Map<String, dynamic> provider;
@@ -34,7 +32,11 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
   bool _consentAccepted = false;
   bool _otpLoading = false;
   String?  _otpError;
+
+  bool _submitting = false;
+  String? _submitError;
   final _phoneVerificationService = PhoneVerificationService();
+  final _installationRequestService = InstallationServiceRequest();
   String? _gpsLocation;
   DateTime? _installationDate;
   TimeOfDay? _installationTime;
@@ -139,15 +141,91 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
     }
 
   }
+  Future <void> _submit() async {
+    if (!_canSubmit) return;
+    final providerId = widget.provider['id']?.toString();
+    final packageId = widget.package['id']?.toString();
+    debugPrint('SUBMIT: provider keys = ${widget.provider.keys.toList()}');
+    debugPrint('SUBMIT: package keys = ${widget.package.keys.toList()}');
+    debugPrint('SUBMIT: provider[id] = ${widget.provider['id']}');
+    debugPrint('SUBMIT: provider[provider_id] = ${widget.provider['provider_id']}');
+    debugPrint('SUBMIT: provider[providerId] = ${widget.provider['providerId']}');
+    debugPrint('SUBMIT: package[id] = ${widget.package['id']}');
+    debugPrint('SUBMIT: package[package_id] = ${widget.package['package_id']}');
+    debugPrint('SUBMIT: package[packageId] = ${widget.package['packageId']}');
+    if(providerId == null || packageId == null) {
+      setState(()=> _submitError = 'Could not read provider or package. Please go back and retry.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _submitError = null;
+    });
+    try {
+      final phone = PhoneVerificationService.normalizeKenyanPhone(
+        _phoneController.text,
+      );
+      await _installationRequestService.submit(
+          providerId: providerId,
+          packageId: packageId,
+          phoneE164: phone,
+          gpsLocation: _gpsLocation,
+          estateOrBuilding: _estateController.text.trim(),
+          houseOrApartment: _houseController.text.trim().isEmpty ? null : _houseController.text.trim(),
+          landmark:  _landmarkController.text.trim().isEmpty ? null
+              : _landmarkController.text.trim(),
+          preferredTime: _installationTime!,
+          preferredDate: _installationDate!,
+          );
+      if(!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Request Submitted. The provider will be in touch."),
+            behavior: SnackBarBehavior.floating,
+      ),
+      );
+      Navigator.pop(context, true);
+    } catch (e){
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _submitError = e.toString();
+      });
+    }
+  }
 
-  bool get _canSubmit =>
-      _phoneVerified &&
-      _gpsLocation != null &&
-      _estateController.text.trim().isNotEmpty &&
-      _houseController.text.trim().isNotEmpty &&
-      _installationDate != null &&
-      _installationTime != null &&
-      _consentAccepted;
+  bool get _canSubmit {
+    debugPrint(
+
+      'canSubmit: phone=$_phoneVerified '
+
+          'gps=$_gpsLocation '
+
+          'estate="${_estateController.text}" '
+
+          'house="${_houseController.text}" '
+
+          'landmark="${_landmarkController.text}" '
+
+          'date=$_installationDate '
+
+          'time=$_installationTime '
+
+          'consent=$_consentAccepted',
+
+    );
+    return  _phoneVerified &&
+        _gpsLocation != null &&
+        _estateController.text.trim().isNotEmpty &&
+        (_houseController.text.trim().isNotEmpty ||
+            _landmarkController.text.trim().isNotEmpty)&&
+        _installationDate != null &&
+        _installationTime != null &&
+        _consentAccepted;
+
+
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -177,21 +255,55 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
-          child: ElevatedButton(
-            onPressed: _canSubmit ? () {} : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.amber,
-              disabledBackgroundColor: AppTheme.gray.withValues(alpha: 0.35),
-              foregroundColor: AppTheme.navy,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'Submit Request',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+             children: [
+               if (_submitError != null) ...[
+                 Container(
+                   width: double.infinity,
+                   padding: EdgeInsets.symmetric(horizontal: 12,vertical: 8),
+                   decoration: BoxDecoration(
+                     color: Colors.red.withValues(alpha: 0.12),
+                     borderRadius: BorderRadius.circular(8),
+                     border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
+                   ),
+                   child: Text(
+                     _submitError!,
+                     style: TextStyle(
+                       color: Colors.red,
+                       fontSize: 12,
+                       fontWeight: FontWeight.w600,
+                     ),
+                   ),
+                 ),
+                 SizedBox(height: 8),
+               ],
+               ElevatedButton(
+                   onPressed: (_canSubmit && !_submitting) ? _submit : null,
+                   style: ElevatedButton.styleFrom(
+                     backgroundColor: AppTheme.amber,
+                     disabledBackgroundColor: AppTheme.gray.withValues(alpha: 0.35),
+                     foregroundColor: AppTheme.navy,
+                     padding: const EdgeInsets.symmetric(vertical: 14),
+                     shape: RoundedRectangleBorder(
+                       borderRadius: BorderRadius.circular(10),
+                     ),
+                   ),
+                   child: _submitting ?
+                       SizedBox(
+                         width: 18,
+                           height: 18,
+                         child: CircularProgressIndicator(
+                           strokeWidth: 2,
+                             color: AppTheme.navy,
+                         ),
+                       )
+                       : Text(
+                     "Submit Request",
+                     style: TextStyle(fontWeight: FontWeight.w800,fontSize: 15,),
+                   ),
+               ),
+             ],
           ),
         ),
       ),
@@ -249,18 +361,6 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                         color: Colors.red,
                         fontSize: 12,
                         fontWeight: FontWeight.w600
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                if (_otpError != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    _otpError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -332,6 +432,7 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                     labelText: 'Landmark',
                     hintText: 'e.g. Near AIC Pipeline Church',
                   ),
+                  onChanged: (_) => setState(() {}),
                 ),
               ],
             ),

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:camera/camera.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -39,14 +41,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
     String id, {
     List<String> allowedExtensions = const ['jpg', 'jpeg', 'png', 'pdf'],
   }) async {
-    final result = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: allowedExtensions,
-      allowMultiple: false,
-      withData: true,
     );
-
-    final file = result?.files.single;
     if (file == null) {
       return;
     }
@@ -56,7 +54,15 @@ class _VerificationScreenState extends State<VerificationScreen> {
       return;
     }
 
-    setState(() => _selectedFiles[id] = file);
+    final bytes = await file.readAsBytes();
+    setState(() {
+      _selectedFiles[id] = PlatformFile(
+        name: file.name,
+        size: file.size,
+        path: file.path,
+        bytes: bytes,
+      );
+    });
   }
 
   Future<void> _capturePhoto(String id) async {
@@ -150,10 +156,24 @@ class _VerificationScreenState extends State<VerificationScreen> {
           ),
           content: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
-            child: isImage && file.bytes != null
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(file.bytes!, fit: BoxFit.contain),
+            child: isImage
+                ? FutureBuilder<Uint8List?>(
+                    future: file.readAsBytes(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      final bytes = snapshot.data;
+                      if (bytes == null) {
+                        return _FilePreviewPlaceholder(file: file);
+                      }
+
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(bytes, fit: BoxFit.contain),
+                      );
+                    },
                   )
                 : _FilePreviewPlaceholder(file: file),
           ),
@@ -633,8 +653,44 @@ class _SelectedFilePreview extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: selectedFile == null
           ? Center(child: Icon(fallbackIcon, color: AppTheme.amber, size: 42))
-          : isImage && selectedFile.bytes != null
-          ? Image.memory(selectedFile.bytes!, fit: BoxFit.cover)
+          : isImage
+          ? FutureBuilder<Uint8List?>(
+              future: selectedFile.readAsBytes(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final bytes = snapshot.data;
+                if (bytes == null) {
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        selectedFile.name.toLowerCase().endsWith('.pdf')
+                            ? Icons.picture_as_pdf_outlined
+                            : Icons.insert_drive_file_outlined,
+                        color: AppTheme.amber,
+                        size: 30,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        selectedFile.name.toLowerCase().endsWith('.pdf')
+                            ? 'PDF'
+                            : 'File',
+                        style: GoogleFonts.plusJakartaSans(
+                          color: textColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+
+                return Image.memory(bytes, fit: BoxFit.cover);
+              },
+            )
           : Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [

@@ -752,7 +752,7 @@ class _SearchBarState extends State<_SearchBar> {
             child: TextField(
               controller: _searchController,
               onSubmitted: (value) {
-                print("Searching for: $value");
+                debugPrint("Searching for: $value");
               },
               decoration: InputDecoration(
                 hintText: "Search providers near you...",
@@ -1083,8 +1083,8 @@ class _ProviderLogoAvatar extends StatelessWidget {
       child: hasLogo
           ? Transform(
               transform: Matrix4.identity()
-                ..translate(displayOffset.dx, displayOffset.dy)
-                ..scale(displayScale),
+                ..translate(displayOffset.dx, displayOffset.dy, 0)
+                ..scale(displayScale, displayScale, displayScale),
               child: Image.network(
                 logoUrl,
                 width: size,

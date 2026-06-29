@@ -36,7 +36,7 @@ class InstallationRequestResult:
     phone_e164: str
     gps_location: str | None
     estate_or_building: str
-    house_or_appartment: str | None
+    house_or_apartment: str | None
     landmark: str | None
 
     preferred_date: str
@@ -50,16 +50,17 @@ def _row_to_result(row: dict[str,Any])-> InstallationRequestResult:
     return InstallationRequestResult(
         id = row["id"],
         user_id=row["user_id"],
+        provider_id=row["provider_id"],
         package_id=row["package_id"],
         phone_e164=row["phone_e164"],
         gps_location=row["gps_location"],
         estate_or_building=row["estate_or_building"],
-        house_or_appartment=row["house_or_appartment"],
+        house_or_apartment=row["house_or_apartment"],
         landmark=row["landmark"],
         preferred_date=row["preferred_date"].isoformat(),
-        preferred_time=row["preferred_time"].isoformart(),
+        preferred_time=row["preferred_time"].isoformat(),
         status=row["status"],
-        created_at=row["created_at"].isoformart(),
+        created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
     
     )
@@ -164,33 +165,34 @@ class InstallationRequestService:
         )
 
         return _row_to_result(dict(row))
+    
 
-async def list_for_user(self,*,user_id:UUID)-> list[InstallationRequestResult]:
-    async with get_db_connection() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT
+    async def list_for_user(self,*,user_id:UUID)-> list[InstallationRequestResult]:
+        async with get_db_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
 
-                id,user_id,provider_id,package_id,
+                    id,user_id,provider_id,package_id,
 
-                phone_e164,gps_location,
+                    phone_e164,gps_location,
 
-                estate_or_building,house_or_apartment,landmark,
+                    estate_or_building,house_or_apartment,landmark,
 
-                preferre_date,preferred_time,
+                    preferred_date,preferred_time,
 
-                status,created_at,updated_at
+                    status,created_at,updated_at
 
-              FROM installation requests
+                FROM installation_requests
 
-            WHERE user_id = $1
+                WHERE user_id = $1
 
-            ORDER BY created_at DESC
+                ORDER BY created_at DESC
 
-            """,
-            user_id,
-        )
-    return [_row_to_result(dict(r)) for r in rows]
+                """,
+                user_id,
+            )
+        return [_row_to_result(dict(r)) for r in rows]
 
 
 def get_installation_request_service() -> InstallationRequestService:
