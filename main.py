@@ -5,7 +5,7 @@ from backend.api.auth import router as auth_router
 from backend.api.provider import router as provider_router
 from backend.db.session import init_db_pool, close_db_pool
 from backend.api.phone_verification import router as phone_router
-
+from backend.api.installation_requests import router as installation_requests_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db_pool()
@@ -34,7 +34,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(provider_router)
 app.include_router(phone_router)
-
+app.include_router(installation_requests_router)
 @app.get("/")
 async def root():
     return {
