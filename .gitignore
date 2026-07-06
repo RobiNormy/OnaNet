@@ -51,6 +51,7 @@ env/
 
 # Environment Variables & Credentials
 .env
+random
 *.json
 
 # Python Cache & Compiled Files
