@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
-import 'package:ona_net/onanet%20provider%20dash/dashy.dart';
+import 'package:ona_net/onanet_provider_dash/dashy.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
@@ -257,15 +257,24 @@ class _AuthLinks extends StatelessWidget {
             );
           },
         ),
-        _ProfileTextLink(label: "Dashboard", onTap: (){
-          Navigator.push(context, MaterialPageRoute(builder: (context)=> Dashboard()));
-        }),
-        _ProfileTextLink(label: "Ona", onTap: (){
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => ProviderAdminScreen()),
-          );
-    }),
+        _ProfileTextLink(
+          label: "Dashboard",
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => Dashboard()),
+            );
+          },
+        ),
+        _ProfileTextLink(
+          label: "Ona",
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => ProviderAdminScreen()),
+            );
+          },
+        ),
         Text(
           'or',
           style: GoogleFonts.urbanist(

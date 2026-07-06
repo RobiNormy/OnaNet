@@ -5,12 +5,20 @@ class InstallationServiceRequest {
   InstallationServiceRequest({Dio? dio, String? apiBaseUrl})
     : _dio = dio ?? Dio(),
       _apiBaseUrl = apiBaseUrl ??
-          String.fromEnvironment("ONA_NET_BASE_URL");
+          const String.fromEnvironment("ONA_NET_API_BASE_URL");
 
   final Dio _dio;
   final String _apiBaseUrl;
 
-  String _url(String path) => '$_apiBaseUrl$path';
+  String _url(String path) {
+    if (_apiBaseUrl.isEmpty) return path;
+    final base = Uri.parse(_apiBaseUrl);
+    final normalizedBase =
+        base.path.endsWith('/') ? base : base.replace(path: '${base.path}/');
+    return normalizedBase
+        .resolve(path.replaceFirst(RegExp(r'^/+'), ''))
+        .toString();
+  }
 
   Future <Options> _authorizedOptions() async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -31,16 +33,16 @@ class AuthService {
 
   Future<UserCredential?> signInWithGoogle() async {
     try {
-      final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
-      final GoogleSignInAuthentication googleAuth = googleUser.authentication;
-      final AuthCredential credential = GoogleAuthProvider.credential(
+      final googleUser = await _googleSignIn.authenticate();
+      final googleAuth = googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
         idToken: googleAuth.idToken,
       );
-      final userCred = await _auth.signInWithCredential(credential);
-
-      return userCred;
+      return _auth.signInWithCredential(credential);
+    } on FirebaseAuthException catch (e) {
+      throw AuthServiceException(_firebaseErrorMessage(e));
     } catch (e) {
-      throw Exception("Error during Google Sign In: $e");
+      throw AuthServiceException('Google sign-in failed: $e');
     }
   }
 
@@ -73,8 +75,12 @@ class AuthService {
       if (displayName.isNotEmpty) {
         await credential.user?.updateDisplayName(displayName);
       }
+    } on FirebaseAuthException catch (e) {
+      throw AuthServiceException(_firebaseErrorMessage(e));
+    } on DioException catch (e) {
+      throw AuthServiceException(_errorMessage(e));
     } catch (e) {
-      throw Exception("Error during Email/Password Sign Up: $e");
+      throw AuthServiceException('Sign-up failed: $e');
     }
   }
 
@@ -87,22 +93,20 @@ class AuthService {
         email: email.trim(),
         password: password,
       );
-    } catch (e) {
-      throw Exception("Error during Email/Password Sign In: $e");
+    } on FirebaseAuthException catch (e) {
+      throw AuthServiceException(_firebaseErrorMessage(e));
     }
   }
 
   Future<void> sendPasswordReset({required String email}) async {
     try {
       await _auth.sendPasswordResetEmail(email: email.trim());
-    } catch (e) {
-      throw Exception("Error Sending Password Reset: $e");
+    } on FirebaseAuthException catch (e) {
+      throw AuthServiceException(_firebaseErrorMessage(e));
     }
   }
 
-  Future<String?> getFirebaseIdToken() async {
-    return await _auth.currentUser?.getIdToken();
-  }
+  Future<String?> getFirebaseIdToken() async => _auth.currentUser?.getIdToken();
 
   Future<Map<String, dynamic>> submitProviderRegistration(
     Map<String, dynamic> payload,
@@ -167,15 +171,8 @@ class AuthService {
   }
 
   Future<Map<String, dynamic>> getDashboard(String providerId) async {
-    try {
-      final response = await _dio.get<dynamic>(
-        _url('/providers/$providerId/dashboard'),
-        options: await _authorizedOptions(),
-      );
-      return _asMap(response.data);
-    } on DioException catch (e) {
-      throw AuthServiceException(_errorMessage(e));
-    }
+    final response = await _getJson('/providers/$providerId/dashboard');
+    return _asMap(response.data);
   }
 
   Future<void> submitProviderServices({
@@ -205,13 +202,7 @@ class AuthService {
     );
   }
 
-  Future<void> signOut() async {
-    try {
-      await _auth.signOut();
-    } catch (e) {
-      rethrow;
-    }
-  }
+  Future<void> signOut() => _auth.signOut();
 
   Future<Response<dynamic>> _postJson(
     String path,
@@ -280,8 +271,15 @@ class AuthService {
       );
     }
 
+    final Uint8List bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } catch (_) {
+      throw const AuthServiceException('Could not read the selected file.');
+    }
+
     return MultipartFile.fromBytes(
-      await file.readAsBytes(),
+      bytes,
       filename: file.name,
       contentType: mediaType,
     );
@@ -329,6 +327,19 @@ class AuthService {
       }).toList();
     }
     throw const AuthServiceException('The API returned an invalid response.');
+  }
+
+  String _firebaseErrorMessage(FirebaseAuthException error) {
+    return switch (error.code) {
+      'email-already-in-use' => 'That email is already registered.',
+      'invalid-email' => 'Please enter a valid email address.',
+      'user-disabled' => 'This account has been disabled.',
+      'user-not-found' => 'No account was found for that email.',
+      'wrong-password' || 'invalid-credential' => 'Invalid email or password.',
+      'weak-password' => 'Please choose a stronger password.',
+      'network-request-failed' => 'Network error. Please try again.',
+      _ => error.message ?? 'Authentication failed.',
+    };
   }
 
   String _errorMessage(DioException error) {

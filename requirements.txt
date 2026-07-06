@@ -6,4 +6,5 @@ python-jose[cryptography]
 sqlalchemy
 uvicorn
 jose
-supabase python-multipart
+supabase
+python-multipart

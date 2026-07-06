@@ -118,6 +118,7 @@ async def list_public_providers() -> list[dict[str, Any]]:
             package_rows = await db.fetch(
                 """
                 SELECT
+                    id,
                     provider_id,
                     package_name,
                     speed_mbps,
@@ -136,6 +137,8 @@ async def list_public_providers() -> list[dict[str, Any]]:
             for row in package_rows:
                 packages_by_provider[row["provider_id"]].append(
                     {
+                        "id": str(row["id"]),
+                        "package_id": str(row["id"]),
                         "name": row["package_name"],
                         "speed": f"{row['speed_mbps']}Mbps",
                         "contract": _format_contract_type(row["contract_type"]),

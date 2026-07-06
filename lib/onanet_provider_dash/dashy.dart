@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:ona_net/services/provider_inbox.dart';
 
 bool _isDark(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark;
@@ -60,6 +61,79 @@ class _DashboardState extends State<Dashboard> {
   late final Future<Map<String, dynamic>> _providerFuture;
   late DateTimeRange _selectedDateRange;
   late String _selectedMonth;
+  final _inboxService = ProviderInbox();
+  final _requestsSectionKey = GlobalKey();
+  List<ProviderInboxItem> _inboxItems = const [];
+  bool _inboxLoading = false;
+  String? _inboxError;
+
+  Future<void> _refreshInbox() async {
+    setState(() {
+      _inboxLoading = true;
+      _inboxError = null;
+    });
+    try {
+      final items = await _inboxService.listInbox();
+      if (!mounted) return;
+      setState(() {
+        _inboxItems = items;
+        _inboxLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _inboxError = e.toString();
+        _inboxLoading = false;
+      });
+    }
+  }
+
+  Future<void> _acceptRequest(String requestId) async {
+    try {
+      await _inboxService.accept(requestId);
+      await _refreshInbox();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _declineRequest(String requestId, String? reason) async {
+    try {
+      await _inboxService.decline(requestId, reason: reason);
+      await _refreshInbox();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _showInstallationRequests({bool closeSidebar = false}) {
+    if (closeSidebar) {
+      setState(() => _showMobileSidebar = false);
+    }
+    _refreshInbox();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final sectionContext = _requestsSectionKey.currentContext;
+      if (sectionContext == null) return;
+      Scrollable.ensureVisible(
+        sectionContext,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+        alignment: 0.05,
+      );
+    });
+  }
 
   @override
   void initState() {
@@ -71,6 +145,7 @@ class _DashboardState extends State<Dashboard> {
       end: now,
     );
     _selectedMonth = _monthLabel(now);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshInbox());
   }
 
   @override
@@ -93,7 +168,6 @@ class _DashboardState extends State<Dashboard> {
               final revenue = _revenueFromProvider(provider);
               final packages = _packagesFromProvider(provider);
               final locations = _locationsFromProvider(provider);
-              final requests = _requestsFromProvider(provider);
               final reviews = _reviewsFromProvider(provider);
               final pendingRequestCount = _intValue(
                 provider,
@@ -117,7 +191,13 @@ class _DashboardState extends State<Dashboard> {
                         onMonthPressed: _pickMonth,
                         packages: packages,
                         locations: locations,
-                        requests: requests,
+                        requests: _inboxItems,
+                        requestsLoading: _inboxLoading,
+                        requestsError: _inboxError,
+                        onRefreshRequests: _refreshInbox,
+                        onAcceptRequest: _acceptRequest,
+                        onDeclineRequest: _declineRequest,
+                        requestsSectionKey: _requestsSectionKey,
                         reviews: reviews,
                         pendingRequestCount: pendingRequestCount,
                         providerName: providerName,
@@ -194,6 +274,10 @@ class _DashboardState extends State<Dashboard> {
                                     },
                                     child: _SideBar(
                                       pendingRequestCount: pendingRequestCount,
+                                      onInstallationRequestsPressed: () =>
+                                          _showInstallationRequests(
+                                            closeSidebar: true,
+                                          ),
                                     ),
                                   ),
                                 ),
@@ -204,7 +288,11 @@ class _DashboardState extends State<Dashboard> {
                       }
                       return Row(
                         children: [
-                          _SideBar(pendingRequestCount: pendingRequestCount),
+                          _SideBar(
+                            pendingRequestCount: pendingRequestCount,
+                            onInstallationRequestsPressed:
+                                _showInstallationRequests,
+                          ),
                           Expanded(
                             child: SafeArea(
                               left: false,
@@ -457,39 +545,6 @@ class _DashboardState extends State<Dashboard> {
         .toList();
   }
 
-  List<_RequestRow> _requestsFromProvider(Map<String, dynamic>? provider) {
-    final requests = provider?['recent_requests'];
-    if (requests is! List) return const [];
-    return _mapList(requests).map((request) {
-      final customer =
-          _stringValue(request, 'customer_name') ??
-          _stringValue(request, 'customer') ??
-          _stringValue(request, 'name') ??
-          'Customer';
-      final package =
-          _stringValue(request, 'package_name') ??
-          _stringValue(request, 'package') ??
-          'Package';
-      final location =
-          _stringValue(request, 'location') ??
-          _stringValue(request, 'coverage_area') ??
-          'Not set';
-      final status = _titleCase(_stringValue(request, 'status') ?? 'Pending');
-      final colors = _requestStatusColors(status);
-
-      return _RequestRow(
-        _initials(customer),
-        customer,
-        package,
-        location,
-        _dateLabel(request['requested_on'] ?? request['created_at']),
-        status,
-        colors.$1,
-        colors.$2,
-      );
-    }).toList();
-  }
-
   List<_ReviewRow> _reviewsFromProvider(Map<String, dynamic>? provider) {
     final reviews = provider?['recent_reviews'];
     if (reviews is! List) return const [];
@@ -575,26 +630,6 @@ class _DashboardState extends State<Dashboard> {
 
   String _monthLabel(DateTime date) => '${_longMonth(date)} ${date.year}';
 
-  String _dateLabel(Object? value) {
-    final raw = value?.toString();
-    if (raw == null || raw.trim().isEmpty) return 'Not set';
-    final parsed = DateTime.tryParse(raw);
-    if (parsed == null) return raw;
-    return '${_shortMonth(parsed)} ${parsed.day}, ${parsed.year}';
-  }
-
-  String _titleCase(String value) {
-    final normalized = value.replaceAll('_', ' ').trim();
-    if (normalized.isEmpty) return value;
-    return normalized
-        .split(RegExp(r'\s+'))
-        .map(
-          (word) =>
-              '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
-        )
-        .join(' ');
-  }
-
   String _initials(String name) {
     final words = name
         .trim()
@@ -604,17 +639,6 @@ class _DashboardState extends State<Dashboard> {
     if (words.isEmpty) return 'ON';
     if (words.length == 1) return words.first.substring(0, 1).toUpperCase();
     return '${words[0][0]}${words[1][0]}'.toUpperCase();
-  }
-
-  (Color, Color) _requestStatusColors(String status) {
-    final normalized = status.toLowerCase();
-    if (normalized.contains('approved') || normalized.contains('complete')) {
-      return (AppTheme.greenLight, AppTheme.green);
-    }
-    if (normalized.contains('cancel') || normalized.contains('reject')) {
-      return (Colors.red.withValues(alpha: .12), Colors.red.shade700);
-    }
-    return (AppTheme.amberLight.withValues(alpha: .7), AppTheme.amberDark);
   }
 
   String _shortMonth(DateTime date) {
@@ -666,6 +690,12 @@ class _DashboardContent extends StatelessWidget {
     required this.packages,
     required this.locations,
     required this.requests,
+    required this.requestsLoading,
+    required this.requestsError,
+    required this.onRefreshRequests,
+    required this.onAcceptRequest,
+    required this.onDeclineRequest,
+    required this.requestsSectionKey,
     required this.reviews,
     required this.pendingRequestCount,
     required this.providerName,
@@ -684,7 +714,14 @@ class _DashboardContent extends StatelessWidget {
   final VoidCallback onMonthPressed;
   final List<_PackageRow> packages;
   final List<_LocationRow> locations;
-  final List<_RequestRow> requests;
+  final List<ProviderInboxItem> requests;
+  final bool requestsLoading;
+  final String? requestsError;
+  final Future<void> Function() onRefreshRequests;
+  final Future<void> Function(String requestId) onAcceptRequest;
+  final Future<void> Function(String requestId, String? reason)
+  onDeclineRequest;
+  final GlobalKey requestsSectionKey;
   final List<_ReviewRow> reviews;
   final int pendingRequestCount;
   final String providerName;
@@ -738,7 +775,15 @@ class _DashboardContent extends StatelessWidget {
           leftFlex: 9,
           rightFlex: 10,
           left: _LocationsCard(locations: locations),
-          right: _RequestsCard(requests: requests),
+          right: _RequestsCard(
+            key: requestsSectionKey,
+            requests: requests,
+            isLoading: requestsLoading,
+            error: requestsError,
+            onRefresh: onRefreshRequests,
+            onAccept: onAcceptRequest,
+            onDecline: onDeclineRequest,
+          ),
         ),
         const SizedBox(height: 18),
         _ReviewsCard(reviews: reviews),
@@ -969,9 +1014,13 @@ class _MenuButton extends StatelessWidget {
 }
 
 class _SideBar extends StatelessWidget {
-  const _SideBar({required this.pendingRequestCount});
+  const _SideBar({
+    required this.pendingRequestCount,
+    required this.onInstallationRequestsPressed,
+  });
 
   final int pendingRequestCount;
+  final VoidCallback onInstallationRequestsPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1060,6 +1109,9 @@ class _SideBar extends StatelessWidget {
                     icon: item.$2,
                     badge: item.$3,
                     selected: item.$4,
+                    onTap: item.$1 == 'Installation Requests'
+                        ? onInstallationRequestsPressed
+                        : null,
                   );
                 },
               ),
@@ -1088,54 +1140,67 @@ class _NavItem extends StatelessWidget {
     required this.icon,
     required this.badge,
     required this.selected,
+    this.onTap,
   });
   final String label;
   final IconData icon;
   final String badge;
   final bool selected;
+  final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) {
     final foreground = selected ? AppTheme.navy : Colors.white;
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: selected ? AppTheme.amber : Colors.transparent,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: foreground, size: 23),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: foreground,
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
+        onTap: onTap,
+        child: Container(
+          height: 56,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: selected ? AppTheme.amber : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
           ),
-          if (badge != '0')
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              decoration: BoxDecoration(
-                color: selected ? AppTheme.navy : AppTheme.amber,
-                shape: BoxShape.circle,
-              ),
-              child: Text(
-                badge,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: foreground, size: 23),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
                 ),
               ),
-            ),
-        ],
+              if (badge != '0')
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected ? AppTheme.navy : AppTheme.amber,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    badge,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1831,8 +1896,23 @@ class _MapLabel extends StatelessWidget {
 }
 
 class _RequestsCard extends StatelessWidget {
-  const _RequestsCard({required this.requests});
-  final List<_RequestRow> requests;
+  const _RequestsCard({
+    super.key,
+    required this.requests,
+    required this.isLoading,
+    required this.error,
+    required this.onRefresh,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final List<ProviderInboxItem> requests;
+  final bool isLoading;
+  final String? error;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(String requestId) onAccept;
+  final Future<void> Function(String requestId, String? reason) onDecline;
+
   @override
   Widget build(BuildContext context) {
     return _Surface(
@@ -1842,14 +1922,18 @@ class _RequestsCard extends StatelessWidget {
           _SectionTitle(
             title: 'Installation Requests',
             trailing: TextButton(
-              onPressed: () {},
+              onPressed: () => onRefresh(),
               style: TextButton.styleFrom(
                 foregroundColor: _dashAccentText(context),
               ),
-              child: const Text('View all'),
+              child: Text(isLoading ? 'Refreshing...' : 'Refresh'),
             ),
           ),
           const SizedBox(height: 10),
+          if (error != null) ...[
+            _DashboardNotice(message: error!),
+            const SizedBox(height: 10),
+          ],
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
@@ -1867,17 +1951,133 @@ class _RequestsCard extends StatelessWidget {
                     ],
                     flexes: [3, 3, 2, 3, 3, 2],
                   ),
-                  if (requests.isEmpty)
-                    const _EmptyDashboardText(
-                      message: 'No installation requests yet.',
-                    )
-                  else
-                    ...requests.map(
-                      (request) => _RequestItem(request: request),
-                    ),
+                  _buildInboxList(),
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInboxList() {
+    if (isLoading && requests.isEmpty) {
+      return const _InboxLoadingSkeleton();
+    }
+
+    if (requests.isEmpty) {
+      return _InboxEmptyState(
+        message: error == null
+            ? 'No installation requests yet.'
+            : 'No installation requests loaded.',
+        onRefresh: onRefresh,
+      );
+    }
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: requests.length,
+      itemBuilder: (context, index) {
+        return _RequestItem(
+          request: requests[index],
+          onAccept: onAccept,
+          onDecline: onDecline,
+        );
+      },
+    );
+  }
+}
+
+class _InboxLoadingSkeleton extends StatelessWidget {
+  const _InboxLoadingSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: List.generate(
+        3,
+        (index) => _RowShell(
+          child: Row(
+            children: [
+              for (final width in const [170.0, 150.0, 120.0, 115.0, 92.0])
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: _SkeletonBar(width: width),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonBar extends StatelessWidget {
+  const _SkeletonBar({required this.width});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        width: width,
+        height: 14,
+        decoration: BoxDecoration(
+          color: _dashBorder(context).withValues(alpha: .62),
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
+    );
+  }
+}
+
+class _InboxEmptyState extends StatelessWidget {
+  const _InboxEmptyState({required this.message, required this.onRefresh});
+
+  final String message;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Column(
+        children: [
+          Container(
+            width: 74,
+            height: 74,
+            decoration: BoxDecoration(
+              color: _dashSoftAmber(context),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _dashBorder(context)),
+            ),
+            child: Icon(
+              Icons.mark_email_unread_outlined,
+              color: _dashAccentText(context),
+              size: 34,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _dashText(context),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () => onRefresh(),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Refresh Inbox'),
           ),
         ],
       ),
@@ -2158,6 +2358,7 @@ class _PackageItem extends StatelessWidget {
 
     return _RowShell(
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             flex: 4,
@@ -2264,12 +2465,39 @@ class _LocationItem extends StatelessWidget {
 }
 
 class _RequestItem extends StatelessWidget {
-  const _RequestItem({required this.request});
-  final _RequestRow request;
+  const _RequestItem({
+    required this.request,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final ProviderInboxItem request;
+  final Future<void> Function(String requestId) onAccept;
+  final Future<void> Function(String requestId, String? reason) onDecline;
+
   @override
   Widget build(BuildContext context) {
+    final customer = request.phoneE164?.isNotEmpty == true
+        ? request.phoneE164!
+        : 'Customer ${request.userId}';
+    final location = [
+      request.estateOrBuilding,
+      if (request.houseOrApartment?.isNotEmpty == true)
+        request.houseOrApartment!,
+    ].where((part) => part.trim().isNotEmpty).join(', ');
+    final date = request.preferredDate ?? request.createdAt;
+    final status = request.statusLabel;
+    final colors = _inboxStatusColors(status);
+    final canAct = request.id.isNotEmpty && request.isPending;
+    final packageLabel = request.packageName?.trim().isNotEmpty == true
+        ? request.packageName!.trim()
+        : request.packageId.isEmpty
+        ? 'Package'
+        : request.packageId;
+
     return _RowShell(
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             flex: 3,
@@ -2279,7 +2507,7 @@ class _RequestItem extends StatelessWidget {
                   radius: 14,
                   backgroundColor: _dashBorder(context),
                   child: Text(
-                    request.initials,
+                    _inboxInitials(customer),
                     style: TextStyle(
                       color: _dashText(context),
                       fontSize: 10,
@@ -2288,23 +2516,30 @@ class _RequestItem extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Expanded(
-                  child: _Cell(request.customer, bold: true, full: true),
-                ),
+                Expanded(child: _Cell(customer, bold: true, full: true)),
               ],
             ),
           ),
-          Expanded(flex: 3, child: _Cell(request.package, full: true)),
-          Expanded(flex: 2, child: _Cell(request.location, full: true)),
-          Expanded(flex: 3, child: _Cell(request.date, full: true)),
+          Expanded(flex: 3, child: _Cell(packageLabel, full: true)),
+          Expanded(
+            flex: 2,
+            child: _Cell(location.isEmpty ? 'Not set' : location, full: true),
+          ),
+          Expanded(
+            flex: 3,
+            child: _Cell(
+              date == null ? 'Not set' : _inboxDateLabel(date),
+              full: true,
+            ),
+          ),
           Expanded(
             flex: 3,
             child: Align(
               alignment: Alignment.centerLeft,
               child: _StatusPill(
-                label: request.status,
-                background: request.background,
-                foreground: request.foreground,
+                label: status,
+                background: colors.$1,
+                foreground: colors.$2,
               ),
             ),
           ),
@@ -2316,17 +2551,20 @@ class _RequestItem extends StatelessWidget {
               children: [
                 _ActionIcon(icon: Icons.remove_red_eye_outlined),
                 _ActionIcon(
-                  icon:
-                      request.status == 'Approved' ||
-                          request.status == 'Completed'
+                  icon: request.isAccepted || request.isCompleted
                       ? Icons.check_circle_outline_rounded
                       : Icons.cancel_outlined,
-                  color:
-                      request.status == 'Approved' ||
-                          request.status == 'Completed'
+                  color: request.isAccepted || request.isCompleted
                       ? AppTheme.green
                       : _dashText(context),
+                  onTap: canAct ? () => _confirmAndDecline(context) : null,
                 ),
+                if (canAct)
+                  _ActionIcon(
+                    icon: Icons.check_circle_outline_rounded,
+                    color: AppTheme.green,
+                    onTap: () => onAccept(request.id),
+                  ),
               ],
             ),
           ),
@@ -2334,6 +2572,158 @@ class _RequestItem extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _confirmAndDecline(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Decline request?'),
+          content: const Text(
+            'This will mark the installation request as declined.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final reason = await _showDeclineReasonSheet(context);
+    if (reason == null || !context.mounted) return;
+    await onDecline(request.id, reason);
+  }
+
+  Future<String?> _showDeclineReasonSheet(BuildContext context) async {
+    final controller = TextEditingController();
+    try {
+      return await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              final reason = controller.text.trim();
+              final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+              return AnimatedPadding(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                padding: EdgeInsets.only(bottom: bottomInset),
+                child: SafeArea(
+                  top: false,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Reason for declining',
+                                style: TextStyle(
+                                  color: _dashText(context),
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Close',
+                              onPressed: () => Navigator.pop(sheetContext),
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: controller,
+                          minLines: 3,
+                          maxLines: 5,
+                          maxLength: 500,
+                          onChanged: (_) => setSheetState(() {}),
+                          decoration: const InputDecoration(
+                            hintText:
+                                'Example: Area is outside our current coverage',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: reason.isEmpty
+                              ? null
+                              : () => Navigator.pop(sheetContext, reason),
+                          child: const Text('Decline Request'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+}
+
+String _inboxDateLabel(DateTime date) {
+  return '${_inboxShortMonth(date)} ${date.day}, ${date.year}';
+}
+
+String _inboxInitials(String name) {
+  final words = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .toList();
+  if (words.isEmpty) return 'ON';
+  if (words.length == 1) return words.first.substring(0, 1).toUpperCase();
+  return '${words[0][0]}${words[1][0]}'.toUpperCase();
+}
+
+(Color, Color) _inboxStatusColors(String status) {
+  final normalized = status.toLowerCase();
+  if (normalized.contains('accepted') || normalized.contains('complete')) {
+    return (AppTheme.greenLight, AppTheme.green);
+  }
+  if (normalized.contains('cancel') ||
+      normalized.contains('decline') ||
+      normalized.contains('reject')) {
+    return (Colors.red.withValues(alpha: .12), Colors.red.shade700);
+  }
+  return (AppTheme.amberLight.withValues(alpha: .7), AppTheme.amberDark);
+}
+
+String _inboxShortMonth(DateTime date) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return months[date.month - 1];
 }
 
 class _ReviewItem extends StatelessWidget {
@@ -2694,9 +3084,9 @@ class _Cell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       value,
-      maxLines: 1,
-      overflow: full ? TextOverflow.visible : TextOverflow.ellipsis,
-      softWrap: false,
+      maxLines: full ? 3 : 1,
+      overflow: TextOverflow.ellipsis,
+      softWrap: full,
       style: TextStyle(
         color: _dashText(context),
         fontSize: 13,
@@ -2738,14 +3128,24 @@ class _StatusPill extends StatelessWidget {
 }
 
 class _ActionIcon extends StatelessWidget {
-  const _ActionIcon({required this.icon, this.color});
+  const _ActionIcon({required this.icon, this.color, this.onTap});
+
   final IconData icon;
   final Color? color;
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(left: 4),
-      child: Icon(icon, color: color ?? _dashText(context), size: 16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(icon, color: color ?? _dashText(context), size: 16),
+        ),
+      ),
     );
   }
 }
@@ -2832,27 +3232,6 @@ class _LocationRow {
   final String users;
   final String revenue;
   final double progress;
-}
-
-class _RequestRow {
-  const _RequestRow(
-    this.initials,
-    this.customer,
-    this.package,
-    this.location,
-    this.date,
-    this.status,
-    this.background,
-    this.foreground,
-  );
-  final String initials;
-  final String customer;
-  final String package;
-  final String location;
-  final String date;
-  final String status;
-  final Color background;
-  final Color foreground;
 }
 
 class _ReviewRow {

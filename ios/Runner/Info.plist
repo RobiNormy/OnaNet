@@ -26,6 +26,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Ona Net uses the camera to capture verification documents and premises photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Ona Net uses your photo library so you can choose provider logos and verification documents.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

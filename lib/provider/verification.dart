@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -8,6 +9,15 @@ import 'package:ona_net/provider/packages.dart';
 import 'package:ona_net/provider/provider_flow_widgets.dart';
 import 'package:ona_net/provider/provider_registration_data.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+Future<Uint8List?> _readPlatformFileBytes(PlatformFile file) async {
+  try {
+    return await file.readAsBytes();
+  } catch (_) {
+    return null;
+  }
+}
 
 class VerificationScreen extends StatefulWidget {
   const VerificationScreen({
@@ -41,6 +51,11 @@ class _VerificationScreenState extends State<VerificationScreen> {
     String id, {
     List<String> allowedExtensions = const ['jpg', 'jpeg', 'png', 'pdf'],
   }) async {
+    final hasPermission = await _requestFileAccessPermission(
+      allowedExtensions: allowedExtensions,
+    );
+    if (!hasPermission) return;
+
     final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: allowedExtensions,
@@ -54,7 +69,12 @@ class _VerificationScreenState extends State<VerificationScreen> {
       return;
     }
 
-    final bytes = await file.readAsBytes();
+    final bytes = await _readPlatformFileBytes(file);
+    if (bytes == null) {
+      _showSnackBar('Could not read the selected file.');
+      return;
+    }
+
     setState(() {
       _selectedFiles[id] = PlatformFile(
         name: file.name,
@@ -63,6 +83,85 @@ class _VerificationScreenState extends State<VerificationScreen> {
         bytes: bytes,
       );
     });
+  }
+
+  Future<bool> _requestFileAccessPermission({
+    required List<String> allowedExtensions,
+  }) async {
+    if (_usesOnlyImages(allowedExtensions)) {
+      return _requestPhotoAccessPermission();
+    }
+
+    final current = await Permission.storage.status;
+    if (_isAllowedPermission(current)) return true;
+
+    final requested = await Permission.storage.request();
+    if (_isAllowedPermission(requested)) return true;
+
+    if (requested.isPermanentlyDenied || requested.isRestricted) {
+      return _confirmScopedFilePickerAccess();
+    }
+
+    return _confirmScopedFilePickerAccess();
+  }
+
+  Future<bool> _requestPhotoAccessPermission() async {
+    final current = await Permission.photos.status;
+    if (_isAllowedPermission(current)) return true;
+
+    final requested = await Permission.photos.request();
+    if (_isAllowedPermission(requested)) return true;
+
+    if (Platform.isAndroid) {
+      final storage = await Permission.storage.request();
+      if (_isAllowedPermission(storage)) return true;
+    }
+
+    if (requested.isPermanentlyDenied || requested.isRestricted) {
+      _showSnackBar('Allow photo access in settings to choose images.');
+      await openAppSettings();
+      return false;
+    }
+
+    _showSnackBar('Photo access permission is needed to choose images.');
+    return false;
+  }
+
+  Future<bool> _confirmScopedFilePickerAccess() async {
+    if (!mounted) return false;
+
+    final allowed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Allow File Access?'),
+        content: const Text(
+          'Ona Net will open your file picker so you can choose the exact document to share.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    return allowed ?? false;
+  }
+
+  bool _usesOnlyImages(List<String> allowedExtensions) {
+    const imageExtensions = {'jpg', 'jpeg', 'png'};
+    return allowedExtensions.every(
+      (extension) => imageExtensions.contains(extension.toLowerCase()),
+    );
+  }
+
+  bool _isAllowedPermission(PermissionStatus status) {
+    return status.isGranted || status.isLimited;
   }
 
   Future<void> _capturePhoto(String id) async {
@@ -158,7 +257,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
             constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
             child: isImage
                 ? FutureBuilder<Uint8List?>(
-                    future: file.readAsBytes(),
+                    future: _readPlatformFileBytes(file),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(child: CircularProgressIndicator());
@@ -655,7 +754,7 @@ class _SelectedFilePreview extends StatelessWidget {
           ? Center(child: Icon(fallbackIcon, color: AppTheme.amber, size: 42))
           : isImage
           ? FutureBuilder<Uint8List?>(
-              future: selectedFile.readAsBytes(),
+              future: _readPlatformFileBytes(selectedFile),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());

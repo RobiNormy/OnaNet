@@ -26,7 +26,8 @@ InstallationStatus = Literal[
     "pending",
     "accepted",
     "declined",
-    "completed",
+    "complete",
+    "cancelled",
 ]
 
 class InstallationRequestOut(BaseModel):
@@ -34,6 +35,7 @@ class InstallationRequestOut(BaseModel):
     user_id:UUID
     provider_id:UUID
     package_id:UUID
+    package_name: str | None = Field(default=None)
 
     phone_e164: str
     gps_location: str | None = Field(default=None)

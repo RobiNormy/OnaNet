@@ -121,8 +121,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                         )
                       else
                         // ..._dummyReviews.map((r) => _ReviewCard(review: r)),
-
-                      const SizedBox(height: 100),
+                        const SizedBox(height: 100),
                     ],
                   ),
                 ),
@@ -176,8 +175,9 @@ class _HeroSection extends StatelessWidget {
               logoUrl: logoUrl,
               logoScale: logoScale,
               logoOffset: logoOffset,
-              color: Color(provider['color']),
-              initials: provider['initials'],
+              color: Color(provider['color'] ?? 0xFF0D1B2A),
+              initials: (provider['initials'] ?? provider['name']?[0] ?? 'ON')
+                  .toString(),
               size: 80,
               border: Border.all(
                 color: Colors.white.withValues(alpha: 0.3),
@@ -191,7 +191,8 @@ class _HeroSection extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  provider['name'],
+                  (provider['name'] ?? provider['business_name'] ?? 'Provider')
+                      .toString(),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 20,
@@ -584,7 +585,7 @@ class PackageDetailScreen extends StatelessWidget {
         backgroundColor: isDark ? AppTheme.navyMid : AppTheme.white,
         elevation: 0,
         title: Text(
-          package['name'],
+          package['name']?.toString() ?? 'Package Details',
           style: TextStyle(
             color: isDark ? AppTheme.white : AppTheme.navy,
             fontSize: 18,
@@ -615,14 +616,16 @@ class PackageDetailScreen extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _TrustChip(
-                  icon: Icons.trending_up_rounded,
-                  label: package['trustLabel'],
-                ),
-                _TrustChip(
-                  icon: Icons.groups_rounded,
-                  label: package['subscriberCount'],
-                ),
+                if (package['trustLabel'] != null)
+                  _TrustChip(
+                    icon: Icons.trending_up_rounded,
+                    label: package['trustLabel'].toString(),
+                  ),
+                if (package['subscriberCount'] != null)
+                  _TrustChip(
+                    icon: Icons.groups_rounded,
+                    label: package['subscriberCount'].toString(),
+                  ),
               ],
             ),
             const SizedBox(height: 22),
@@ -647,11 +650,11 @@ class PackageDetailScreen extends StatelessWidget {
                 ),
                 _PackageInfoRowData(
                   'Contract Duration',
-                  '${package['contract']}',
+                  package['contract']?.toString() ?? 'No contract',
                 ),
                 _PackageInfoRowData(
                   'Fair Usage Policy',
-                  '${package['fairUsage']}',
+                  package['fairUsage']?.toString() ?? 'None',
                 ),
                 _PackageInfoRowData(
                   'Router Included',
@@ -719,8 +722,9 @@ class _PackageTrustHeader extends StatelessWidget {
             logoUrl: logoUrl,
             logoScale: logoScale,
             logoOffset: logoOffset,
-            color: Color(provider['color']),
-            initials: provider['initials'],
+            color: Color(provider['color'] ?? 0xFF0D1B2A),
+            initials: (provider['initials'] ?? provider['name']?[0] ?? 'ON')
+                .toString(),
             size: 56,
           ),
           const SizedBox(width: 12),
@@ -729,14 +733,15 @@ class _PackageTrustHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  provider['name'],
+                  (provider['name'] ?? provider['business_name'] ?? 'Provider')
+                      .toString(),
                   style: Theme.of(
                     context,
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  package['name'],
+                  package['name']?.toString() ?? 'Package',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: AppTheme.amber,
                     fontWeight: FontWeight.w800,
@@ -744,7 +749,7 @@ class _PackageTrustHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${package['speed']} • KES ${package['price']}/mo',
+                  '${package['speed'] ?? ''} • KES ${package['price'] ?? ''}/mo',
                   style: Theme.of(
                     context,
                   ).textTheme.labelMedium?.copyWith(color: AppTheme.gray),
@@ -989,105 +994,6 @@ class _BottomActionButton extends StatelessWidget {
   }
 }
 
-class _ReviewCard extends StatelessWidget {
-  final Map<String, dynamic> review;
-  const _ReviewCard({required this.review});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.navyMid : AppTheme.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: Color(review['avatarColor']),
-                child: Text(
-                  review['initials'],
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      review['name'],
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    Row(
-                      children: List.generate(5, (i) {
-                        return Icon(
-                          Icons.star_rounded,
-                          size: 13,
-                          color: i < (review['rating'] as num).round()
-                              ? AppTheme.amber
-                              : AppTheme.lightGray,
-                        );
-                      }),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.amber.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        review['package'] ?? 'Standard',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: AppTheme.amber,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                review['date'],
-                style: Theme.of(
-                  context,
-                ).textTheme.labelSmall?.copyWith(color: AppTheme.gray),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-          Text(
-            review['text'],
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.5),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _StickyBottomBar extends StatelessWidget {
   final String providerName;
   const _StickyBottomBar({required this.providerName});
@@ -1202,22 +1108,27 @@ class _ProviderPackagesList extends StatefulWidget {
   State<_ProviderPackagesList> createState() => _ProviderPackagesListState();
 }
 
-class _ProviderPackagesListState extends State<_ProviderPackagesList>{
+class _ProviderPackagesListState extends State<_ProviderPackagesList> {
   late Future<List<ProviderPackage>> _packagesFuture;
   @override
   void initState() {
     super.initState();
-    _packagesFuture = ProviderPackageService().listForProvider(widget.provider['id'] as String);
+    _packagesFuture = ProviderPackageService().listForProvider(
+      widget.provider['id'] as String,
+    );
   }
-  Future <void> _refresh() async {
+
+  Future<void> _refresh() async {
     setState(() {
-      _packagesFuture = ProviderPackageService().listForProvider(widget.provider['id'] as String);
-      
+      _packagesFuture = ProviderPackageService().listForProvider(
+        widget.provider['id'] as String,
+      );
     });
   }
-  Widget _buildPackagesList(List<Map<String, dynamic>> packages) {
+
+  Widget _buildPackagesList(List<Map<String, dynamic>> packagesList) {
     return Column(
-      children: packages.asMap().entries.map((entry) {
+      children: packagesList.asMap().entries.map((entry) {
         return _PackageCard(
           package: entry.value,
           isSelected: entry.key == widget.selectedIndex,
@@ -1226,43 +1137,44 @@ class _ProviderPackagesListState extends State<_ProviderPackagesList>{
       }).toList(),
     );
   }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<ProviderPackage>>(
-        future: _packagesFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done){
-            return
-              const Padding(padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          if (snapshot.hasError) {
-            return Padding(
-              padding: EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  Text('Could not load packages: ${snapshot.error}'),
-                  SizedBox(height: 12,),
-                  OutlinedButton.icon(
-                      onPressed: _refresh,
-                      icon: Icon(Icons.refresh),
-                      label: Text('Try again'),
-
-                  ),
-                ],
-              ),
-            );
-          }
-          final packages = snapshot.data ?? const [];
-          if (packages.isEmpty){
-            return Padding(padding: EdgeInsets.all(20),
-              child: Text("This provider has no packages yet."),
-            );
-          }
-          final uiMaps =packages.map((p)=> p.toUiMap()).toList();
-          return _buildPackagesList(uiMaps);
-        },
-        );
+      future: _packagesFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Text('Could not load packages: ${snapshot.error}'),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _refresh,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Try again'),
+                ),
+              ],
+            ),
+          );
+        }
+        final packages = snapshot.data ?? const [];
+        if (packages.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text('This provider has no packages yet.'),
+          );
+        }
+        final uiMaps = packages.map((p) => p.toUiMap()).toList();
+        return _buildPackagesList(uiMaps);
+      },
+    );
   }
 }

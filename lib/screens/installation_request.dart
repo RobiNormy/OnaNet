@@ -31,7 +31,7 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
   bool _loadingLocation = false;
   bool _consentAccepted = false;
   bool _otpLoading = false;
-  String?  _otpError;
+  String? _otpError;
 
   bool _submitting = false;
   String? _submitError;
@@ -87,8 +87,8 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
     final raw = _phoneController.text.trim();
     if (raw.isEmpty) return;
     final e164 = PhoneVerificationService.normalizeKenyanPhone(raw);
-    if (!e164.startsWith('+') || e164.length < 10){
-      setState(()=> _otpError = 'Enter a Valid phone number.' );
+    if (!e164.startsWith('+') || e164.length < 10) {
+      setState(() => _otpError = 'Enter a Valid phone number.');
       return;
     }
 
@@ -114,7 +114,7 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
     }
   }
 
-  Future <void> _verifyOtp() async {
+  Future<void> _verifyOtp() async {
     final raw = _phoneController.text.trim();
     final otp = _otpController.text.trim();
 
@@ -139,22 +139,32 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
         _otpError = e.toString();
       });
     }
-
   }
-  Future <void> _submit() async {
+
+  Future<void> _submit() async {
     if (!_canSubmit) return;
     final providerId = widget.provider['id']?.toString();
     final packageId = widget.package['id']?.toString();
     debugPrint('SUBMIT: provider keys = ${widget.provider.keys.toList()}');
     debugPrint('SUBMIT: package keys = ${widget.package.keys.toList()}');
     debugPrint('SUBMIT: provider[id] = ${widget.provider['id']}');
-    debugPrint('SUBMIT: provider[provider_id] = ${widget.provider['provider_id']}');
-    debugPrint('SUBMIT: provider[providerId] = ${widget.provider['providerId']}');
+    debugPrint(
+      'SUBMIT: provider[provider_id] = ${widget.provider['provider_id']}',
+    );
+    debugPrint(
+      'SUBMIT: provider[providerId] = ${widget.provider['providerId']}',
+    );
     debugPrint('SUBMIT: package[id] = ${widget.package['id']}');
     debugPrint('SUBMIT: package[package_id] = ${widget.package['package_id']}');
     debugPrint('SUBMIT: package[packageId] = ${widget.package['packageId']}');
-    if(providerId == null || packageId == null) {
-      setState(()=> _submitError = 'Could not read provider or package. Please go back and retry.');
+    if (providerId == null ||
+        providerId.isEmpty ||
+        packageId == null ||
+        packageId.isEmpty) {
+      setState(
+        () => _submitError =
+            'Could not read provider or package. Please go back and retry.',
+      );
       return;
     }
     setState(() {
@@ -166,26 +176,29 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
         _phoneController.text,
       );
       await _installationRequestService.submit(
-          providerId: providerId,
-          packageId: packageId,
-          phoneE164: phone,
-          gpsLocation: _gpsLocation,
-          estateOrBuilding: _estateController.text.trim(),
-          houseOrApartment: _houseController.text.trim().isEmpty ? null : _houseController.text.trim(),
-          landmark:  _landmarkController.text.trim().isEmpty ? null
-              : _landmarkController.text.trim(),
-          preferredTime: _installationTime!,
-          preferredDate: _installationDate!,
-          );
-      if(!mounted) return;
+        providerId: providerId,
+        packageId: packageId,
+        phoneE164: phone,
+        gpsLocation: _gpsLocation,
+        estateOrBuilding: _estateController.text.trim(),
+        houseOrApartment: _houseController.text.trim().isEmpty
+            ? null
+            : _houseController.text.trim(),
+        landmark: _landmarkController.text.trim().isEmpty
+            ? null
+            : _landmarkController.text.trim(),
+        preferredTime: _installationTime!,
+        preferredDate: _installationDate!,
+      );
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Request Submitted. The provider will be in touch."),
-            behavior: SnackBarBehavior.floating,
-      ),
+        SnackBar(
+          content: Text("Request Submitted. The provider will be in touch."),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
       Navigator.pop(context, true);
-    } catch (e){
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _submitting = false;
@@ -196,36 +209,24 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
 
   bool get _canSubmit {
     debugPrint(
-
       'canSubmit: phone=$_phoneVerified '
-
-          'gps=$_gpsLocation '
-
-          'estate="${_estateController.text}" '
-
-          'house="${_houseController.text}" '
-
-          'landmark="${_landmarkController.text}" '
-
-          'date=$_installationDate '
-
-          'time=$_installationTime '
-
-          'consent=$_consentAccepted',
-
+      'gps=$_gpsLocation '
+      'estate="${_estateController.text}" '
+      'house="${_houseController.text}" '
+      'landmark="${_landmarkController.text}" '
+      'date=$_installationDate '
+      'time=$_installationTime '
+      'consent=$_consentAccepted',
     );
-    return  _phoneVerified &&
+    return _phoneVerified &&
         _gpsLocation != null &&
         _estateController.text.trim().isNotEmpty &&
         (_houseController.text.trim().isNotEmpty ||
-            _landmarkController.text.trim().isNotEmpty)&&
+            _landmarkController.text.trim().isNotEmpty) &&
         _installationDate != null &&
         _installationTime != null &&
         _consentAccepted;
-
-
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -257,53 +258,64 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-             children: [
-               if (_submitError != null) ...[
-                 Container(
-                   width: double.infinity,
-                   padding: EdgeInsets.symmetric(horizontal: 12,vertical: 8),
-                   decoration: BoxDecoration(
-                     color: Colors.red.withValues(alpha: 0.12),
-                     borderRadius: BorderRadius.circular(8),
-                     border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
-                   ),
-                   child: Text(
-                     _submitError!,
-                     style: TextStyle(
-                       color: Colors.red,
-                       fontSize: 12,
-                       fontWeight: FontWeight.w600,
-                     ),
-                   ),
-                 ),
-                 SizedBox(height: 8),
-               ],
-               ElevatedButton(
-                   onPressed: (_canSubmit && !_submitting) ? _submit : null,
-                   style: ElevatedButton.styleFrom(
-                     backgroundColor: AppTheme.amber,
-                     disabledBackgroundColor: AppTheme.gray.withValues(alpha: 0.35),
-                     foregroundColor: AppTheme.navy,
-                     padding: const EdgeInsets.symmetric(vertical: 14),
-                     shape: RoundedRectangleBorder(
-                       borderRadius: BorderRadius.circular(10),
-                     ),
-                   ),
-                   child: _submitting ?
-                       SizedBox(
-                         width: 18,
-                           height: 18,
-                         child: CircularProgressIndicator(
-                           strokeWidth: 2,
-                             color: AppTheme.navy,
-                         ),
-                       )
-                       : Text(
-                     "Submit Request",
-                     style: TextStyle(fontWeight: FontWeight.w800,fontSize: 15,),
-                   ),
-               ),
-             ],
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_submitError != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.red.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Text(
+                    _submitError!,
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              ElevatedButton(
+                onPressed: (_canSubmit && !_submitting) ? _submit : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.amber,
+                  disabledBackgroundColor: AppTheme.gray.withValues(
+                    alpha: 0.35,
+                  ),
+                  foregroundColor: AppTheme.navy,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: _submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppTheme.navy,
+                        ),
+                      )
+                    : const Text(
+                        "Submit Request",
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                        ),
+                      ),
+              ),
+            ],
           ),
         ),
       ),
@@ -358,9 +370,9 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                   Text(
                     _otpError!,
                     style: const TextStyle(
-                        color: Colors.red,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600
+                      color: Colors.red,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -369,18 +381,18 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                   alignment: Alignment.centerRight,
                   child: _otpLoading
                       ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : TextButton(
-                    onPressed: _phoneVerified
-                        ? null
-                        : _otpSent
-                        ? _verifyOtp
-                        : _sendOtp,
-                    child: Text(_otpSent ? 'Verify OTP' : 'Send OTP'),
-                  ),
+                          onPressed: _phoneVerified
+                              ? null
+                              : _otpSent
+                              ? _verifyOtp
+                              : _sendOtp,
+                          child: Text(_otpSent ? 'Verify OTP' : 'Send OTP'),
+                        ),
                 ),
               ],
             ),
@@ -544,8 +556,9 @@ class _PackageSummaryCard extends StatelessWidget {
             logoUrl: logoUrl,
             logoScale: logoScale,
             logoOffset: logoOffset,
-            color: Color(provider['color']),
-            initials: provider['initials'],
+            color: Color(provider['color'] ?? 0xFF0D1B2A),
+            initials: (provider['initials'] ?? provider['name']?[0] ?? 'ON')
+                .toString(),
             size: 48,
           ),
           const SizedBox(width: 12),
@@ -554,14 +567,15 @@ class _PackageSummaryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  provider['name'],
+                  (provider['name'] ?? provider['business_name'] ?? 'Provider')
+                      .toString(),
                   style: Theme.of(
                     context,
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${package['speed']} ${package['name']}',
+                  '${package['speed'] ?? ''} ${package['name'] ?? 'Package'}',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: AppTheme.amber,
                     fontWeight: FontWeight.w800,
@@ -569,14 +583,14 @@ class _PackageSummaryCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'KES ${package['price']}/mo',
+                  'KES ${package['price'] ?? ''}/mo',
                   style: Theme.of(
                     context,
                   ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${package['contract']} • Installation: KES ${package['installationFee']}',
+                  '${package['contract'] ?? 'No contract'} • Installation: KES ${package['installationFee'] ?? '0'}',
                   style: Theme.of(
                     context,
                   ).textTheme.labelSmall?.copyWith(color: AppTheme.gray),
@@ -757,8 +771,17 @@ class _PickerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return OutlinedButton.icon(
       onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        side: BorderSide(
+          color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
+        ),
+        foregroundColor: isDark ? AppTheme.white : AppTheme.navy,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
       icon: Icon(icon, size: 18),
       label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
     );

@@ -8,11 +8,22 @@ class ProviderPackageService {
   ProviderPackageService({Dio? dio, String? apiBaseUrl})
       : _dio = dio ?? Dio(),
         _apiBaseUrl = apiBaseUrl ??
-            String.fromEnvironment('ONA_NET_API_BASE_URL');
+            const String.fromEnvironment('ONA_NET_API_BASE_URL');
+
   final Dio _dio;
   final String _apiBaseUrl;
 
-  Future <Options> _authorizedOptions() async {
+  String _url(String path) {
+    if (_apiBaseUrl.isEmpty) return path;
+    final base = Uri.parse(_apiBaseUrl);
+    final normalizedBase =
+        base.path.endsWith('/') ? base : base.replace(path: '${base.path}/');
+    return normalizedBase
+        .resolve(path.replaceFirst(RegExp(r'^/+'), ''))
+        .toString();
+  }
+
+  Future<Options> _authorizedOptions() async {
     final token = await FirebaseAuth.instance.currentUser?.getIdToken();
     return Options(
       headers:  {if (token != null) 'Authorization' : 'Bearer $token'},
@@ -21,7 +32,7 @@ class ProviderPackageService {
   Future <List<ProviderPackage>> listForProvider(String providerId) async {
     try {
       final response = await _dio.get<List<dynamic>>(
-        '$_apiBaseUrl/providers/$providerId/packages',
+        _url('/providers/$providerId/packages'),
         options: await _authorizedOptions(),
       );
       final list = response.data ?? const [];
@@ -30,6 +41,10 @@ class ProviderPackageService {
           .map(ProviderPackage.fromJson)
           .toList();
     } on DioException catch (e) {
+      print('PACKAGE FETCH ERROR: ${e.message}');
+      print('PACKAGE FETCH URL: $_apiBaseUrl/providers/$providerId/packages');
+      print('PACKAGE FETCH RESPONSE: ${e.response?.data}');
+      print('PACKAGE FETCH STATUS: ${e.response?.statusCode}');
       throw PackageServiceException(_errorMessage(e));
     }
   }
@@ -89,10 +104,10 @@ class ProviderPackage {
     return ProviderPackage(
       id: (json['id'] ?? '').toString(),
       providerId: (json['provider_id'] ?? '').toString(),
-      name:(json['name'] ?? '').toString(),
+      name: (json['package_name'] ?? json['name'] ?? '').toString(),
       speed: _speedLabel(json['speed_mbps'], json['speed']),
-      contract: (json['contract'] ?? 'No contract').toString(),
-      price: _formatMoney(json['price']),
+      contract: (json['contract_type'] ?? json['contract'] ?? 'No contract').toString(),
+      price: _formatMoney(json['monthly_price'] ?? json['price']),
       installationFee: _formatMoney(json['installation_fee']),
       fairUsage: json['fair_usage'] as String?,
       routerIncluded: json['router_included'] as bool? ?? false,

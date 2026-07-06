@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -8,6 +9,15 @@ import 'package:ona_net/provider/provider_flow_widgets.dart';
 import 'package:ona_net/provider/provider_registration_data.dart';
 import 'package:ona_net/provider/services_offered.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+Future<Uint8List?> _readPlatformFileBytes(PlatformFile file) async {
+  try {
+    return await file.readAsBytes();
+  } catch (_) {
+    return null;
+  }
+}
 
 class ProviderInfoScreen extends StatefulWidget {
   const ProviderInfoScreen({
@@ -91,6 +101,9 @@ class _ProviderInfoScreenState extends State<ProviderInfoScreen> {
   }
 
   Future<void> _pickLogo() async {
+    final hasPermission = await _requestPhotoAccessPermission();
+    if (!hasPermission) return;
+
     final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['jpg', 'jpeg', 'png'],
@@ -98,7 +111,12 @@ class _ProviderInfoScreenState extends State<ProviderInfoScreen> {
     if (file == null) return;
     if (!_isValidLogoSize(file.size)) return;
 
-    final bytes = await file.readAsBytes();
+    final bytes = await _readPlatformFileBytes(file);
+    if (bytes == null) {
+      _showSnackBar('Could not read the selected image.');
+      return;
+    }
+
     setState(() {
       _logoFile = PlatformFile(
         name: file.name,
@@ -110,6 +128,32 @@ class _ProviderInfoScreenState extends State<ProviderInfoScreen> {
       _logoOffset = Offset.zero;
     });
     await _editLogo();
+  }
+
+  Future<bool> _requestPhotoAccessPermission() async {
+    final current = await Permission.photos.status;
+    if (_isAllowedPermission(current)) return true;
+
+    final requested = await Permission.photos.request();
+    if (_isAllowedPermission(requested)) return true;
+
+    if (Platform.isAndroid) {
+      final storage = await Permission.storage.request();
+      if (_isAllowedPermission(storage)) return true;
+    }
+
+    if (requested.isPermanentlyDenied || requested.isRestricted) {
+      _showSnackBar('Allow photo access in settings to choose a logo.');
+      await openAppSettings();
+      return false;
+    }
+
+    _showSnackBar('Photo access permission is needed to choose a logo.');
+    return false;
+  }
+
+  bool _isAllowedPermission(PermissionStatus status) {
+    return status.isGranted || status.isLimited;
   }
 
   Future<void> _captureLogo() async {
@@ -474,7 +518,7 @@ class _LogoPreview extends StatelessWidget {
       child: file == null
           ? const Icon(Icons.image_outlined, color: AppTheme.amber, size: 28)
           : FutureBuilder<Uint8List?>(
-              future: file!.readAsBytes(),
+              future: _readPlatformFileBytes(file!),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const SizedBox(
@@ -609,7 +653,7 @@ class _LogoEditorScreenState extends State<_LogoEditorScreen> {
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: FutureBuilder<Uint8List?>(
-                    future: widget.file.readAsBytes(),
+                    future: _readPlatformFileBytes(widget.file),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(
