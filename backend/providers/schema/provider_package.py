@@ -1,4 +1,6 @@
 from uuid import UUID
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 class ProviderPackageCreate(BaseModel):
@@ -28,6 +30,12 @@ class ProviderPackageOut(BaseModel):
     installation_period: str | None
 
     router_included: bool
+    trust_label: str | None = None
+    subscriber_count: str | None = None
+    popular: bool = False
+    top_area: str | None = None
+    popularity_level: str | None = None
+    popularity_by_area: list[dict[str, Any]] = []
 
     model_config = ConfigDict(
         from_attributes=True

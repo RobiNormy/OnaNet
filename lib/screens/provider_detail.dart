@@ -5,8 +5,13 @@ import 'package:ona_net/themes/app_theme.dart';
 
 class ProviderDetailScreen extends StatefulWidget {
   final Map<String, dynamic> provider;
+  final String? selectedArea;
 
-  const ProviderDetailScreen({super.key, required this.provider});
+  const ProviderDetailScreen({
+    super.key,
+    required this.provider,
+    this.selectedArea,
+  });
 
   @override
   State<ProviderDetailScreen> createState() => _ProviderDetailScreenState();
@@ -103,6 +108,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                               builder: (context) => PackageDetailScreen(
                                 provider: provider,
                                 package: package,
+                                selectedArea: widget.selectedArea,
                               ),
                             ),
                           );
@@ -397,6 +403,9 @@ class _PackageCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isPopular = package['popular'] as bool;
+    final topArea = (package['topArea'] ?? package['top_area'])
+        ?.toString()
+        .trim();
 
     return GestureDetector(
       onTap: onTap,
@@ -474,6 +483,19 @@ class _PackageCard extends StatelessWidget {
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(color: AppTheme.gray),
                         ),
+                        if (topArea != null && topArea.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Most installed in $topArea',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: AppTheme.green,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -556,11 +578,13 @@ class _PackageCard extends StatelessWidget {
 class PackageDetailScreen extends StatelessWidget {
   final Map<String, dynamic> provider;
   final Map<String, dynamic> package;
+  final String? selectedArea;
 
   const PackageDetailScreen({
     super.key,
     required this.provider,
     required this.package,
+    this.selectedArea,
   });
 
   @override
@@ -628,6 +652,8 @@ class PackageDetailScreen extends StatelessWidget {
                   ),
               ],
             ),
+            const SizedBox(height: 22),
+            _PackagePopularityCard(package: package, userArea: selectedArea),
             const SizedBox(height: 22),
             const _SectionHeader(title: 'Package Details'),
             const SizedBox(height: 12),
@@ -794,6 +820,246 @@ class _TrustChip extends StatelessWidget {
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
               color: isDark ? AppTheme.offWhite : AppTheme.navy,
               fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PackagePopularityCard extends StatelessWidget {
+  const _PackagePopularityCard({required this.package, required this.userArea});
+
+  final Map<String, dynamic> package;
+  final String? userArea;
+
+  @override
+  Widget build(BuildContext context) {
+    final areas = _popularityAreas(package);
+    final topArea = (package['topArea'] ?? package['top_area'])
+        ?.toString()
+        .trim();
+    final userMatch = _areaForUser(areas, userArea);
+    final topInstalls = areas.isEmpty
+        ? 0
+        : areas
+              .map((area) => _asInt(area['installs']))
+              .reduce((a, b) => a > b ? a : b);
+    final userInstalls = userMatch == null ? 0 : _asInt(userMatch['installs']);
+    final level = _popularityLevel(userInstalls, topInstalls);
+    final levelColor = switch (level) {
+      'popular' => AppTheme.green,
+      'mid' => AppTheme.amber,
+      _ => AppTheme.gray,
+    };
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+    final mutedColor = AppTheme.gray;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.navyMid : AppTheme.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: levelColor.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(
+                  Icons.insights_rounded,
+                  color: levelColor,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _levelTitle(level),
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: textColor,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      topArea == null || topArea.isEmpty
+                          ? 'No completed installs tracked yet'
+                          : 'Most installed in $topArea',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: mutedColor,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            userArea?.trim().isNotEmpty == true
+                ? '${_capitalize(level)} in ${userArea!.trim()}'
+                : 'Enable location to compare your area',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: levelColor,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          if (areas.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            ...areas
+                .take(5)
+                .map(
+                  (area) => _PopularityBar(
+                    area: area['area']?.toString() ?? 'Area',
+                    installs: _asInt(area['installs']),
+                    maxInstalls: topInstalls,
+                    highlighted:
+                        _normalize(area['area']) == _normalize(userArea),
+                  ),
+                ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static List<Map<String, dynamic>> _popularityAreas(
+    Map<String, dynamic> package,
+  ) {
+    final value = package['popularityByArea'] ?? package['popularity_by_area'];
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map(
+          (area) => area.map((key, value) => MapEntry(key.toString(), value)),
+        )
+        .toList();
+  }
+
+  static Map<String, dynamic>? _areaForUser(
+    List<Map<String, dynamic>> areas,
+    String? userArea,
+  ) {
+    final normalizedUserArea = _normalize(userArea);
+    if (normalizedUserArea.isEmpty) return null;
+    for (final area in areas) {
+      final normalizedArea = _normalize(area['area']);
+      if (normalizedArea.contains(normalizedUserArea) ||
+          normalizedUserArea.contains(normalizedArea)) {
+        return area;
+      }
+    }
+    return null;
+  }
+
+  static int _asInt(Object? value) {
+    if (value is num) return value.round();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static String _normalize(Object? value) {
+    return (value ?? '')
+        .toString()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  static String _popularityLevel(int installs, int topInstalls) {
+    if (installs <= 0) return 'low';
+    if (topInstalls <= 1) return 'popular';
+    final ratio = installs / topInstalls;
+    if (installs >= 3 || ratio >= .66) return 'popular';
+    if (installs >= 1 || ratio >= .33) return 'mid';
+    return 'low';
+  }
+
+  static String _levelTitle(String level) {
+    return switch (level) {
+      'popular' => 'Popular package',
+      'mid' => 'Growing demand',
+      _ => 'Low demand here',
+    };
+  }
+
+  static String _capitalize(String value) {
+    if (value.isEmpty) return value;
+    return '${value[0].toUpperCase()}${value.substring(1)}';
+  }
+}
+
+class _PopularityBar extends StatelessWidget {
+  const _PopularityBar({
+    required this.area,
+    required this.installs,
+    required this.maxInstalls,
+    required this.highlighted,
+  });
+
+  final String area;
+  final int installs;
+  final int maxInstalls;
+  final bool highlighted;
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = maxInstalls <= 0 ? 0.0 : installs / maxInstalls;
+    final color = highlighted ? AppTheme.amber : AppTheme.green;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  area,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: isDark ? AppTheme.offWhite : AppTheme.navy,
+                  ),
+                ),
+              ),
+              Text(
+                '$installs installs',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppTheme.gray,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: ratio.clamp(0.04, 1),
+              backgroundColor: isDark ? AppTheme.navy : AppTheme.offWhite,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
             ),
           ),
         ],

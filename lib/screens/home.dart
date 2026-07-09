@@ -12,6 +12,7 @@ import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:ona_net/utils/location.dart';
+import 'package:ona_net/utils/provider_filters.dart';
 
 class OnaNet extends StatelessWidget {
   const OnaNet({super.key});
@@ -79,6 +80,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loadingProviders = true;
   String? _providersError;
   List<Map<String, dynamic>> _providers = [];
+  ProviderFilter _selectedFilter = ProviderFilter.all;
+  double? _userLatitude;
+  double? _userLongitude;
 
   @override
   void initState() {
@@ -89,13 +93,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchLocation() async {
     setState(() => _loadingLocation = true);
-    final area = await Location.getCurrentArea().timeout(
+    final location = await Location.getCurrentLocation().timeout(
       Duration(seconds: 10),
       onTimeout: () => null,
     );
     if (mounted) {
       setState(() {
-        _area = area ?? _area;
+        _area = location?.area ?? _area;
+        _userLatitude = location?.latitude ?? _userLatitude;
+        _userLongitude = location?.longitude ?? _userLongitude;
         _loadingLocation = false;
       });
     }
@@ -133,6 +139,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final visibleProviders = filterProviders(
+      _providers,
+      filter: _selectedFilter,
+      userLatitude: _userLatitude,
+      userLongitude: _userLongitude,
+      userArea: _area,
+    );
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
@@ -160,13 +173,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 _SearchBar(),
                 SizedBox(height: 20),
 
-                _FilterChips(),
+                _FilterChips(
+                  selected: _selectedFilter,
+                  onChanged: (filter) {
+                    setState(() => _selectedFilter = filter);
+                  },
+                ),
                 SizedBox(height: 20),
 
                 Row(
                   children: [
                     Text(
-                      "Top Providers",
+                      _area == null
+                          ? "Top Providers"
+                          : "${providerFilterLabel(_selectedFilter)} Providers Near You",
                       style: GoogleFonts.plusJakartaSans(
                         color: isDark ? AppTheme.white : AppTheme.navy,
                         fontSize: 12,
@@ -177,10 +197,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 SizedBox(height: 12),
                 _ProvidersList(
-                  providers: _providers,
+                  providers: visibleProviders,
                   isLoading: _loadingProviders,
                   error: _providersError,
                   onRetry: _fetchProviders,
+                  hasLocation:
+                      _area != null ||
+                      (_userLatitude != null && _userLongitude != null),
+                  selectedFilter: _selectedFilter,
+                  selectedArea: _area,
                 ),
                 SizedBox(height: 110),
               ],
@@ -207,7 +232,11 @@ class _HomeScreenState extends State<HomeScreen> {
           },
           onSelect: (area) {
             Navigator.pop(sheetContext);
-            setState(() => _area = area);
+            setState(() {
+              _area = area;
+              _userLatitude = null;
+              _userLongitude = null;
+            });
           },
         );
       },
@@ -221,12 +250,18 @@ class _ProvidersList extends StatelessWidget {
     required this.isLoading,
     required this.error,
     required this.onRetry,
+    required this.hasLocation,
+    required this.selectedFilter,
+    required this.selectedArea,
   });
 
   final List<Map<String, dynamic>> providers;
   final bool isLoading;
   final String? error;
   final Future<void> Function() onRetry;
+  final bool hasLocation;
+  final ProviderFilter selectedFilter;
+  final String? selectedArea;
 
   @override
   Widget build(BuildContext context) {
@@ -248,16 +283,23 @@ class _ProvidersList extends StatelessWidget {
     }
 
     if (providers.isEmpty) {
-      return const _ProviderStateMessage(
+      return _ProviderStateMessage(
         icon: Icons.wifi_find_rounded,
-        title: 'No providers yet',
-        message: 'Pull down to check again after adding a network.',
+        title: hasLocation
+            ? 'No matching providers nearby'
+            : 'No providers yet',
+        message: hasLocation
+            ? 'No ${providerFilterLabel(selectedFilter).toLowerCase()} providers match this area yet. Try All, change your area, or pull down to refresh.'
+            : 'Pull down to check again after adding a network.',
       );
     }
 
     return Column(
       children: providers
-          .map((provider) => _ProviderCard(provider: provider))
+          .map(
+            (provider) =>
+                _ProviderCard(provider: provider, selectedArea: selectedArea),
+          )
           .toList(),
     );
   }
@@ -775,25 +817,21 @@ class _SearchBarState extends State<_SearchBar> {
   }
 }
 
-class _FilterChips extends StatefulWidget {
-  const _FilterChips();
+class _FilterChips extends StatelessWidget {
+  const _FilterChips({required this.selected, required this.onChanged});
 
-  @override
-  State<_FilterChips> createState() => _FilterChipsState();
-}
+  final ProviderFilter selected;
+  final ValueChanged<ProviderFilter> onChanged;
 
-class _FilterChipsState extends State<_FilterChips> {
-  int _selected = 0;
-  final _filters = ["All", "Budget", "Fast", "Verified", "Fiber"];
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children: List.generate(_filters.length, (i) {
-          final isSelected = _selected == i;
+        children: providerFilterOptions.map((filter) {
+          final isSelected = selected == filter;
           return GestureDetector(
-            onTap: () => setState(() => _selected = i),
+            onTap: () => onChanged(filter),
             child: Container(
               margin: EdgeInsets.only(right: 8),
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -809,7 +847,7 @@ class _FilterChipsState extends State<_FilterChips> {
                 ),
               ),
               child: Text(
-                _filters[i],
+                providerFilterLabel(filter),
                 style: GoogleFonts.plusJakartaSans(
                   color: isSelected
                       ? AppTheme.navy
@@ -822,7 +860,7 @@ class _FilterChipsState extends State<_FilterChips> {
               ),
             ),
           );
-        }),
+        }).toList(),
       ),
     );
   }
@@ -830,11 +868,16 @@ class _FilterChipsState extends State<_FilterChips> {
 
 class _ProviderCard extends StatelessWidget {
   final Map<String, dynamic> provider;
-  const _ProviderCard({required this.provider});
+  final String? selectedArea;
+  const _ProviderCard({required this.provider, this.selectedArea});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final name = providerName(provider);
+    final verified = isVerifiedProvider(provider);
+    final price = providerPrice(provider);
+    final speed = providerSpeed(provider);
     return Container(
       margin: EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
@@ -867,13 +910,13 @@ class _ProviderCard extends StatelessWidget {
                   children: [
                     Flexible(
                       child: Text(
-                        provider['name'],
+                        name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                     ),
-                    if (provider['verified']) ...[
+                    if (verified) ...[
                       SizedBox(width: 5),
                       Container(
                         padding: EdgeInsets.all(2),
@@ -926,7 +969,7 @@ class _ProviderCard extends StatelessWidget {
                             child: _metaItem(
                               context,
                               label: 'From',
-                              value: 'KES ${provider['price']}/mo',
+                              value: price > 0 ? 'KES $price/mo' : 'Ask',
                             ),
                           ),
                           SizedBox(width: 4),
@@ -935,7 +978,7 @@ class _ProviderCard extends StatelessWidget {
                             child: _metaItem(
                               context,
                               label: 'Up to',
-                              value: '${provider['speed']}Mbps',
+                              value: speed > 0 ? '${speed}Mbps' : 'Ask',
                             ),
                           ),
                           SizedBox(width: 4),
@@ -949,8 +992,10 @@ class _ProviderCard extends StatelessWidget {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) =>
-                                ProviderDetailScreen(provider: provider),
+                            builder: (context) => ProviderDetailScreen(
+                              provider: provider,
+                              selectedArea: selectedArea,
+                            ),
                           ),
                         );
                       },
@@ -1032,7 +1077,7 @@ class _ProviderCard extends StatelessWidget {
             SizedBox(width: 2),
             Expanded(
               child: Text(
-                "${provider['distance']}km away",
+                providerDistanceLabel(provider),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(

@@ -56,8 +56,11 @@ class Dashboard extends StatefulWidget {
   State<Dashboard> createState() => _DashboardState();
 }
 
+enum _ProviderDashView { dashboard, installationRequests }
+
 class _DashboardState extends State<Dashboard> {
   bool _showMobileSidebar = false;
+  _ProviderDashView _activeView = _ProviderDashView.dashboard;
   late final Future<Map<String, dynamic>> _providerFuture;
   late DateTimeRange _selectedDateRange;
   late String _selectedMonth;
@@ -65,6 +68,7 @@ class _DashboardState extends State<Dashboard> {
   final _requestsSectionKey = GlobalKey();
   List<ProviderInboxItem> _inboxItems = const [];
   bool _inboxLoading = false;
+  bool _inboxLoaded = false;
   String? _inboxError;
 
   Future<void> _refreshInbox() async {
@@ -77,21 +81,30 @@ class _DashboardState extends State<Dashboard> {
       if (!mounted) return;
       setState(() {
         _inboxItems = items;
+        _inboxLoaded = true;
         _inboxLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _inboxError = e.toString();
+        _inboxLoaded = true;
         _inboxLoading = false;
       });
     }
+  }
+
+  void _refreshProviderDashboard() {
+    setState(() {
+      _providerFuture = AuthService().getProviderDashboardData();
+    });
   }
 
   Future<void> _acceptRequest(String requestId) async {
     try {
       await _inboxService.accept(requestId);
       await _refreshInbox();
+      _refreshProviderDashboard();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -107,6 +120,23 @@ class _DashboardState extends State<Dashboard> {
     try {
       await _inboxService.decline(requestId, reason: reason);
       await _refreshInbox();
+      _refreshProviderDashboard();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _completeRequest(String requestId) async {
+    try {
+      await _inboxService.complete(requestId);
+      await _refreshInbox();
+      _refreshProviderDashboard();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -119,20 +149,66 @@ class _DashboardState extends State<Dashboard> {
   }
 
   void _showInstallationRequests({bool closeSidebar = false}) {
-    if (closeSidebar) {
+    setState(() {
+      _activeView = _ProviderDashView.installationRequests;
+      if (closeSidebar) _showMobileSidebar = false;
+    });
+    _refreshInbox();
+  }
+
+  void _showDashboard({bool closeSidebar = false}) {
+    setState(() {
+      _activeView = _ProviderDashView.dashboard;
+      if (closeSidebar) _showMobileSidebar = false;
+    });
+  }
+
+  Future<void> _logoutProvider({bool closeSidebar = false}) async {
+    if (closeSidebar && mounted) {
       setState(() => _showMobileSidebar = false);
     }
-    _refreshInbox();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final sectionContext = _requestsSectionKey.currentContext;
-      if (sectionContext == null) return;
-      Scrollable.ensureVisible(
-        sectionContext,
-        duration: const Duration(milliseconds: 420),
-        curve: Curves.easeOutCubic,
-        alignment: 0.05,
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Log out?'),
+          content: const Text('Sign out of this provider account?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Log out'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await AuthService().signOut();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Signed out successfully.'),
+        ),
       );
-    });
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+    } catch (error) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Could not sign out: $error'),
+        ),
+      );
+    }
   }
 
   @override
@@ -173,6 +249,9 @@ class _DashboardState extends State<Dashboard> {
                 provider,
                 'pending_installations',
               );
+              final livePendingRequestCount = _inboxLoaded
+                  ? _inboxItems.where((request) => request.isPending).length
+                  : pendingRequestCount;
 
               return DefaultTextStyle(
                 style: _dashFont(color: _dashText(context), fontSize: 14),
@@ -181,44 +260,74 @@ class _DashboardState extends State<Dashboard> {
                   body: LayoutBuilder(
                     builder: (context, constraints) {
                       final wide = constraints.maxWidth >= 1100;
-                      final dashboard = _DashboardContent(
-                        metrics: metrics,
-                        revenue: revenue,
-                        revenueTotal: _moneyValue(provider, 'monthly_revenue'),
-                        dateRangeLabel: _dateRangeLabel(_selectedDateRange),
-                        selectedMonth: _selectedMonth,
-                        onDateRangePressed: _pickDateRange,
-                        onMonthPressed: _pickMonth,
-                        packages: packages,
-                        locations: locations,
-                        requests: _inboxItems,
-                        requestsLoading: _inboxLoading,
-                        requestsError: _inboxError,
-                        onRefreshRequests: _refreshInbox,
-                        onAcceptRequest: _acceptRequest,
-                        onDeclineRequest: _declineRequest,
-                        requestsSectionKey: _requestsSectionKey,
-                        reviews: reviews,
-                        pendingRequestCount: pendingRequestCount,
-                        providerName: providerName,
-                        providerStatus: providerStatus,
-                        providerLoadError: snapshot.hasError
-                            ? snapshot.error.toString()
-                            : null,
-                        isLoadingProvider:
-                            snapshot.connectionState == ConnectionState.waiting,
-                        showMenuButton: !wide,
-                        onMenuPressed: () {
-                          setState(() => _showMobileSidebar = true);
-                        },
-                      );
+                      final content = _activeView == _ProviderDashView.dashboard
+                          ? _DashboardContent(
+                              metrics: metrics,
+                              revenue: revenue,
+                              revenueTotal: _moneyValue(
+                                provider,
+                                'monthly_revenue',
+                              ),
+                              dateRangeLabel: _dateRangeLabel(
+                                _selectedDateRange,
+                              ),
+                              selectedMonth: _selectedMonth,
+                              onDateRangePressed: _pickDateRange,
+                              onMonthPressed: _pickMonth,
+                              packages: packages,
+                              locations: locations,
+                              requests: _inboxItems,
+                              requestsLoading: _inboxLoading,
+                              requestsError: _inboxError,
+                              onRefreshRequests: _refreshInbox,
+                              onAcceptRequest: _acceptRequest,
+                              onDeclineRequest: _declineRequest,
+                              onCompleteRequest: _completeRequest,
+                              onOpenFullRequests: _showInstallationRequests,
+                              requestsSectionKey: _requestsSectionKey,
+                              reviews: reviews,
+                              pendingRequestCount: livePendingRequestCount,
+                              providerName: providerName,
+                              providerStatus: providerStatus,
+                              providerLoadError: snapshot.hasError
+                                  ? snapshot.error.toString()
+                                  : null,
+                              isLoadingProvider:
+                                  snapshot.connectionState ==
+                                  ConnectionState.waiting,
+                              showMenuButton: !wide,
+                              onMenuPressed: () {
+                                setState(() => _showMobileSidebar = true);
+                              },
+                            )
+                          : _InstallationRequestsPage(
+                              providerName: providerName,
+                              providerStatus: providerStatus,
+                              notificationCount: livePendingRequestCount,
+                              dateRangeLabel: _dateRangeLabel(
+                                _selectedDateRange,
+                              ),
+                              requests: _inboxItems,
+                              isLoading: _inboxLoading,
+                              error: _inboxError,
+                              showMenuButton: !wide,
+                              onMenuPressed: () {
+                                setState(() => _showMobileSidebar = true);
+                              },
+                              onDateRangePressed: _pickDateRange,
+                              onBackToDashboard: _showDashboard,
+                              onRefresh: _refreshInbox,
+                              onAccept: _acceptRequest,
+                              onDecline: _declineRequest,
+                              onComplete: _completeRequest,
+                            );
                       if (!wide) {
                         return SafeArea(
                           child: Stack(
                             children: [
                               SingleChildScrollView(
                                 padding: const EdgeInsets.all(16),
-                                child: dashboard,
+                                child: content,
                               ),
                               Positioned(
                                 left: 0,
@@ -273,11 +382,17 @@ class _DashboardState extends State<Dashboard> {
                                       }
                                     },
                                     child: _SideBar(
-                                      pendingRequestCount: pendingRequestCount,
+                                      activeView: _activeView,
+                                      pendingRequestCount:
+                                          livePendingRequestCount,
+                                      onDashboardPressed: () =>
+                                          _showDashboard(closeSidebar: true),
                                       onInstallationRequestsPressed: () =>
                                           _showInstallationRequests(
                                             closeSidebar: true,
                                           ),
+                                      onLogoutPressed: () =>
+                                          _logoutProvider(closeSidebar: true),
                                     ),
                                   ),
                                 ),
@@ -289,9 +404,12 @@ class _DashboardState extends State<Dashboard> {
                       return Row(
                         children: [
                           _SideBar(
-                            pendingRequestCount: pendingRequestCount,
+                            activeView: _activeView,
+                            pendingRequestCount: livePendingRequestCount,
+                            onDashboardPressed: _showDashboard,
                             onInstallationRequestsPressed:
                                 _showInstallationRequests,
+                            onLogoutPressed: _logoutProvider,
                           ),
                           Expanded(
                             child: SafeArea(
@@ -303,7 +421,7 @@ class _DashboardState extends State<Dashboard> {
                                   28,
                                   20,
                                 ),
-                                child: dashboard,
+                                child: content,
                               ),
                             ),
                           ),
@@ -695,6 +813,8 @@ class _DashboardContent extends StatelessWidget {
     required this.onRefreshRequests,
     required this.onAcceptRequest,
     required this.onDeclineRequest,
+    required this.onCompleteRequest,
+    required this.onOpenFullRequests,
     required this.requestsSectionKey,
     required this.reviews,
     required this.pendingRequestCount,
@@ -721,6 +841,8 @@ class _DashboardContent extends StatelessWidget {
   final Future<void> Function(String requestId) onAcceptRequest;
   final Future<void> Function(String requestId, String? reason)
   onDeclineRequest;
+  final Future<void> Function(String requestId) onCompleteRequest;
+  final VoidCallback onOpenFullRequests;
   final GlobalKey requestsSectionKey;
   final List<_ReviewRow> reviews;
   final int pendingRequestCount;
@@ -783,6 +905,8 @@ class _DashboardContent extends StatelessWidget {
             onRefresh: onRefreshRequests,
             onAccept: onAcceptRequest,
             onDecline: onDeclineRequest,
+            onComplete: onCompleteRequest,
+            onViewAll: onOpenFullRequests,
           ),
         ),
         const SizedBox(height: 18),
@@ -1015,24 +1139,35 @@ class _MenuButton extends StatelessWidget {
 
 class _SideBar extends StatelessWidget {
   const _SideBar({
+    required this.activeView,
     required this.pendingRequestCount,
+    required this.onDashboardPressed,
     required this.onInstallationRequestsPressed,
+    required this.onLogoutPressed,
   });
 
+  final _ProviderDashView activeView;
   final int pendingRequestCount;
+  final VoidCallback onDashboardPressed;
   final VoidCallback onInstallationRequestsPressed;
+  final VoidCallback onLogoutPressed;
 
   @override
   Widget build(BuildContext context) {
     final items = [
-      ('Dashboard', Icons.home_rounded, '0', true),
+      (
+        'Dashboard',
+        Icons.home_rounded,
+        '0',
+        activeView == _ProviderDashView.dashboard,
+      ),
       ('Packages', Icons.inventory_2_outlined, '0', false),
       ('Coverage Areas', Icons.location_on_outlined, '0', false),
       (
         'Installation Requests',
         Icons.groups_2_outlined,
         pendingRequestCount.toString(),
-        false,
+        activeView == _ProviderDashView.installationRequests,
       ),
       ('Customers', Icons.people_outline_rounded, '0', false),
       ('Reviews & Ratings', Icons.star_border_rounded, '0', false),
@@ -1109,22 +1244,25 @@ class _SideBar extends StatelessWidget {
                     icon: item.$2,
                     badge: item.$3,
                     selected: item.$4,
-                    onTap: item.$1 == 'Installation Requests'
-                        ? onInstallationRequestsPressed
-                        : null,
+                    onTap: switch (item.$1) {
+                      'Dashboard' => onDashboardPressed,
+                      'Installation Requests' => onInstallationRequestsPressed,
+                      _ => null,
+                    },
                   );
                 },
               ),
             ),
             const _PlanCard(),
             const Divider(color: Colors.white12, height: 34),
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(20, 0, 20, 20),
               child: _NavItem(
                 label: 'Logout',
                 icon: Icons.logout_rounded,
                 badge: '0',
                 selected: false,
+                onTap: onLogoutPressed,
               ),
             ),
           ],
@@ -1904,6 +2042,8 @@ class _RequestsCard extends StatelessWidget {
     required this.onRefresh,
     required this.onAccept,
     required this.onDecline,
+    required this.onComplete,
+    required this.onViewAll,
   });
 
   final List<ProviderInboxItem> requests;
@@ -1912,6 +2052,8 @@ class _RequestsCard extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final Future<void> Function(String requestId) onAccept;
   final Future<void> Function(String requestId, String? reason) onDecline;
+  final Future<void> Function(String requestId) onComplete;
+  final VoidCallback onViewAll;
 
   @override
   Widget build(BuildContext context) {
@@ -1921,12 +2063,26 @@ class _RequestsCard extends StatelessWidget {
         children: [
           _SectionTitle(
             title: 'Installation Requests',
-            trailing: TextButton(
-              onPressed: () => onRefresh(),
-              style: TextButton.styleFrom(
-                foregroundColor: _dashAccentText(context),
-              ),
-              child: Text(isLoading ? 'Refreshing...' : 'Refresh'),
+            trailing: Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: onViewAll,
+                  style: TextButton.styleFrom(
+                    foregroundColor: _dashAccentText(context),
+                  ),
+                  child: const Text('View all'),
+                ),
+                TextButton.icon(
+                  onPressed: () => onRefresh(),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _dashAccentText(context),
+                  ),
+                  icon: const Icon(Icons.refresh_rounded, size: 17),
+                  label: Text(isLoading ? 'Refreshing...' : 'Refresh'),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 10),
@@ -1984,8 +2140,585 @@ class _RequestsCard extends StatelessWidget {
           request: requests[index],
           onAccept: onAccept,
           onDecline: onDecline,
+          onComplete: onComplete,
         );
       },
+    );
+  }
+}
+
+enum _RequestListFilter { all, pending, accepted, completed, declined }
+
+class _InstallationRequestsPage extends StatefulWidget {
+  const _InstallationRequestsPage({
+    required this.providerName,
+    required this.providerStatus,
+    required this.notificationCount,
+    required this.dateRangeLabel,
+    required this.requests,
+    required this.isLoading,
+    required this.error,
+    required this.showMenuButton,
+    required this.onMenuPressed,
+    required this.onDateRangePressed,
+    required this.onBackToDashboard,
+    required this.onRefresh,
+    required this.onAccept,
+    required this.onDecline,
+    required this.onComplete,
+  });
+
+  final String providerName;
+  final String providerStatus;
+  final int notificationCount;
+  final String dateRangeLabel;
+  final List<ProviderInboxItem> requests;
+  final bool isLoading;
+  final String? error;
+  final bool showMenuButton;
+  final VoidCallback onMenuPressed;
+  final VoidCallback onDateRangePressed;
+  final VoidCallback onBackToDashboard;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(String requestId) onAccept;
+  final Future<void> Function(String requestId, String? reason) onDecline;
+  final Future<void> Function(String requestId) onComplete;
+
+  @override
+  State<_InstallationRequestsPage> createState() =>
+      _InstallationRequestsPageState();
+}
+
+class _InstallationRequestsPageState extends State<_InstallationRequestsPage> {
+  _RequestListFilter _filter = _RequestListFilter.all;
+
+  List<ProviderInboxItem> _filteredRequests() {
+    return switch (_filter) {
+      _RequestListFilter.all => widget.requests,
+      _RequestListFilter.pending =>
+        widget.requests
+            .where((request) => request.isPending)
+            .toList(growable: false),
+      _RequestListFilter.accepted =>
+        widget.requests
+            .where((request) => request.isAccepted)
+            .toList(growable: false),
+      _RequestListFilter.completed =>
+        widget.requests
+            .where((request) => request.isCompleted)
+            .toList(growable: false),
+      _RequestListFilter.declined =>
+        widget.requests
+            .where((request) => request.isDeclined)
+            .toList(growable: false),
+    };
+  }
+
+  String _filterLabel() {
+    return switch (_filter) {
+      _RequestListFilter.all => 'installation requests',
+      _RequestListFilter.pending => 'pending requests',
+      _RequestListFilter.accepted => 'accepted requests',
+      _RequestListFilter.completed => 'completed requests',
+      _RequestListFilter.declined => 'declined requests',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = widget.requests
+        .where((request) => request.isPending)
+        .length;
+    final accepted = widget.requests
+        .where((request) => request.isAccepted)
+        .length;
+    final finished = widget.requests
+        .where((request) => request.isCompleted)
+        .length;
+    final declined = widget.requests
+        .where((request) => request.isDeclined)
+        .length;
+    final visibleRequests = _filteredRequests();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TopBar(
+          providerName: widget.providerName,
+          providerStatus: widget.providerStatus,
+          notificationCount: widget.notificationCount,
+          dateRangeLabel: widget.dateRangeLabel,
+          onDateRangePressed: widget.onDateRangePressed,
+          showMenuButton: widget.showMenuButton,
+          onMenuPressed: widget.onMenuPressed,
+        ),
+        const SizedBox(height: 24),
+        _Surface(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 720;
+                  final title = Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Installation Requests',
+                        style: TextStyle(
+                          color: _dashText(context),
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Full customer details and request actions',
+                        style: TextStyle(
+                          color: _dashMuted(context),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  );
+                  final actions = Wrap(
+                    spacing: 10,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: widget.onBackToDashboard,
+                        icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                        label: const Text('Dashboard'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () => widget.onRefresh(),
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        label: Text(
+                          widget.isLoading ? 'Refreshing' : 'Refresh',
+                        ),
+                      ),
+                    ],
+                  );
+                  if (compact) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [title, const SizedBox(height: 14), actions],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: title),
+                      const SizedBox(width: 14),
+                      actions,
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 18),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _RequestSummaryChip(
+                    label: 'Total',
+                    value: widget.requests.length.toString(),
+                    color: AppTheme.amber,
+                    selected: _filter == _RequestListFilter.all,
+                    onTap: () {
+                      setState(() => _filter = _RequestListFilter.all);
+                    },
+                  ),
+                  _RequestSummaryChip(
+                    label: 'Pending',
+                    value: pending.toString(),
+                    color: Colors.orange,
+                    selected: _filter == _RequestListFilter.pending,
+                    onTap: () {
+                      setState(() => _filter = _RequestListFilter.pending);
+                    },
+                  ),
+                  _RequestSummaryChip(
+                    label: 'Accepted',
+                    value: accepted.toString(),
+                    color: Colors.blue,
+                    selected: _filter == _RequestListFilter.accepted,
+                    onTap: () {
+                      setState(() => _filter = _RequestListFilter.accepted);
+                    },
+                  ),
+                  _RequestSummaryChip(
+                    label: 'Completed',
+                    value: finished.toString(),
+                    color: AppTheme.green,
+                    selected: _filter == _RequestListFilter.completed,
+                    onTap: () {
+                      setState(() => _filter = _RequestListFilter.completed);
+                    },
+                  ),
+                  _RequestSummaryChip(
+                    label: 'Declined',
+                    value: declined.toString(),
+                    color: Colors.red,
+                    selected: _filter == _RequestListFilter.declined,
+                    onTap: () {
+                      setState(() => _filter = _RequestListFilter.declined);
+                    },
+                  ),
+                ],
+              ),
+              if (widget.error != null) ...[
+                const SizedBox(height: 14),
+                _DashboardNotice(message: widget.error!),
+              ],
+              const SizedBox(height: 16),
+              if (widget.isLoading && widget.requests.isEmpty)
+                const _InboxLoadingSkeleton()
+              else if (visibleRequests.isEmpty)
+                _InboxEmptyState(
+                  message: widget.error == null
+                      ? 'No ${_filterLabel()} yet.'
+                      : 'No ${_filterLabel()} loaded.',
+                  onRefresh: widget.onRefresh,
+                )
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: visibleRequests.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    return _DetailedRequestItem(
+                      request: visibleRequests[index],
+                      onAccept: widget.onAccept,
+                      onDecline: widget.onDecline,
+                      onComplete: widget.onComplete,
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+}
+
+class _RequestSummaryChip extends StatelessWidget {
+  const _RequestSummaryChip({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = selected ? Colors.white : color;
+    final labelColor = selected ? Colors.white : _dashText(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: selected ? color : color.withValues(alpha: .12),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? color : color.withValues(alpha: .28),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  color: foreground,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: TextStyle(
+                  color: labelColor,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailedRequestItem extends StatelessWidget {
+  const _DetailedRequestItem({
+    required this.request,
+    required this.onAccept,
+    required this.onDecline,
+    required this.onComplete,
+  });
+
+  final ProviderInboxItem request;
+  final Future<void> Function(String requestId) onAccept;
+  final Future<void> Function(String requestId, String? reason) onDecline;
+  final Future<void> Function(String requestId) onComplete;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColors = _inboxStatusColors(request.statusLabel);
+    final customer = _requestCustomerLabel(request);
+    final packageLabel = _requestPackageLabel(request);
+    final preferredDate = request.preferredDate == null
+        ? 'Not set'
+        : _inboxDateLabel(request.preferredDate!);
+    final preferredTime = request.preferredTime == null
+        ? 'Not set'
+        : _inboxTimeLabel(request.preferredTime!);
+    final createdAt = request.createdAt == null
+        ? 'Not set'
+        : _inboxDateLabel(request.createdAt!);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _dashBackground(context),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _dashBorder(context)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 760;
+          final header = Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: _dashSoftAmber(context),
+                child: Text(
+                  _inboxInitials(customer),
+                  style: TextStyle(
+                    color: _dashAccentText(context),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      customer,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _dashText(context),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Customer ID: ${request.userId.isEmpty ? 'Not set' : request.userId}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _dashMuted(context),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              _StatusPill(
+                label: request.statusLabel,
+                background: statusColors.$1,
+                foreground: statusColors.$2,
+              ),
+            ],
+          );
+
+          final details = Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _RequestDetailTile(
+                icon: Icons.inventory_2_outlined,
+                label: 'Package',
+                value: packageLabel,
+              ),
+              _RequestDetailTile(
+                icon: Icons.phone_outlined,
+                label: 'Phone',
+                value: request.phoneE164?.trim().isNotEmpty == true
+                    ? request.phoneE164!.trim()
+                    : 'Not set',
+              ),
+              _RequestDetailTile(
+                icon: Icons.apartment_rounded,
+                label: 'Estate / Building',
+                value: request.estateOrBuilding.trim().isEmpty
+                    ? 'Not set'
+                    : request.estateOrBuilding.trim(),
+              ),
+              _RequestDetailTile(
+                icon: Icons.home_work_outlined,
+                label: 'House / Apartment',
+                value: request.houseOrApartment?.trim().isNotEmpty == true
+                    ? request.houseOrApartment!.trim()
+                    : 'Not set',
+              ),
+              _RequestDetailTile(
+                icon: Icons.place_outlined,
+                label: 'Landmark',
+                value: request.landmark?.trim().isNotEmpty == true
+                    ? request.landmark!.trim()
+                    : 'Not set',
+              ),
+              _RequestDetailTile(
+                icon: Icons.my_location_rounded,
+                label: 'GPS Location',
+                value: request.gpsLocation?.trim().isNotEmpty == true
+                    ? request.gpsLocation!.trim()
+                    : 'Not set',
+              ),
+              _RequestDetailTile(
+                icon: Icons.event_available_outlined,
+                label: 'Preferred Date',
+                value: preferredDate,
+              ),
+              _RequestDetailTile(
+                icon: Icons.schedule_rounded,
+                label: 'Preferred Time',
+                value: preferredTime,
+              ),
+              _RequestDetailTile(
+                icon: Icons.inbox_outlined,
+                label: 'Requested On',
+                value: createdAt,
+              ),
+              if (request.declineReason?.trim().isNotEmpty == true)
+                _RequestDetailTile(
+                  icon: Icons.report_problem_outlined,
+                  label: 'Decline Reason',
+                  value: request.declineReason!.trim(),
+                ),
+            ],
+          );
+
+          final actions = _RequestActionButtons(
+            request: request,
+            onAccept: onAccept,
+            onDecline: onDecline,
+            onComplete: onComplete,
+            compact: false,
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                const SizedBox(height: 14),
+                details,
+                const SizedBox(height: 14),
+                Align(alignment: Alignment.centerRight, child: actions),
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: header),
+                  const SizedBox(width: 16),
+                  actions,
+                ],
+              ),
+              const SizedBox(height: 14),
+              details,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _RequestDetailTile extends StatelessWidget {
+  const _RequestDetailTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 230,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 17, color: _dashAccentText(context)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _dashMuted(context),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  softWrap: true,
+                  style: TextStyle(
+                    color: _dashText(context),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2469,17 +3202,17 @@ class _RequestItem extends StatelessWidget {
     required this.request,
     required this.onAccept,
     required this.onDecline,
+    required this.onComplete,
   });
 
   final ProviderInboxItem request;
   final Future<void> Function(String requestId) onAccept;
   final Future<void> Function(String requestId, String? reason) onDecline;
+  final Future<void> Function(String requestId) onComplete;
 
   @override
   Widget build(BuildContext context) {
-    final customer = request.phoneE164?.isNotEmpty == true
-        ? request.phoneE164!
-        : 'Customer ${request.userId}';
+    final customer = _requestCustomerLabel(request);
     final location = [
       request.estateOrBuilding,
       if (request.houseOrApartment?.isNotEmpty == true)
@@ -2488,12 +3221,7 @@ class _RequestItem extends StatelessWidget {
     final date = request.preferredDate ?? request.createdAt;
     final status = request.statusLabel;
     final colors = _inboxStatusColors(status);
-    final canAct = request.id.isNotEmpty && request.isPending;
-    final packageLabel = request.packageName?.trim().isNotEmpty == true
-        ? request.packageName!.trim()
-        : request.packageId.isEmpty
-        ? 'Package'
-        : request.packageId;
+    final packageLabel = _requestPackageLabel(request);
 
     return _RowShell(
       child: Row(
@@ -2545,33 +3273,34 @@ class _RequestItem extends StatelessWidget {
           ),
           Expanded(
             flex: 2,
-            child: Wrap(
-              alignment: WrapAlignment.end,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                _ActionIcon(icon: Icons.remove_red_eye_outlined),
-                _ActionIcon(
-                  icon: request.isAccepted || request.isCompleted
-                      ? Icons.check_circle_outline_rounded
-                      : Icons.cancel_outlined,
-                  color: request.isAccepted || request.isCompleted
-                      ? AppTheme.green
-                      : _dashText(context),
-                  onTap: canAct ? () => _confirmAndDecline(context) : null,
-                ),
-                if (canAct)
-                  _ActionIcon(
-                    icon: Icons.check_circle_outline_rounded,
-                    color: AppTheme.green,
-                    onTap: () => onAccept(request.id),
-                  ),
-              ],
+            child: _RequestActionButtons(
+              request: request,
+              onAccept: onAccept,
+              onDecline: onDecline,
+              onComplete: onComplete,
+              compact: true,
             ),
           ),
         ],
       ),
     );
   }
+}
+
+class _RequestActionButtons extends StatelessWidget {
+  const _RequestActionButtons({
+    required this.request,
+    required this.onAccept,
+    required this.onDecline,
+    required this.onComplete,
+    required this.compact,
+  });
+
+  final ProviderInboxItem request;
+  final Future<void> Function(String requestId) onAccept;
+  final Future<void> Function(String requestId, String? reason) onDecline;
+  final Future<void> Function(String requestId) onComplete;
+  final bool compact;
 
   Future<void> _confirmAndDecline(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -2678,10 +3407,98 @@ class _RequestItem extends StatelessWidget {
       controller.dispose();
     }
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final canAct = request.id.isNotEmpty && request.isPending;
+    final canComplete = request.id.isNotEmpty && request.isAccepted;
+    if (compact) {
+      return Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          _ActionIcon(icon: Icons.remove_red_eye_outlined),
+          _ActionIcon(
+            icon: request.isAccepted || request.isCompleted
+                ? Icons.check_circle_outline_rounded
+                : Icons.cancel_outlined,
+            color: request.isAccepted || request.isCompleted
+                ? AppTheme.green
+                : _dashText(context),
+            onTap: canAct ? () => _confirmAndDecline(context) : null,
+          ),
+          if (canAct)
+            _ActionIcon(
+              icon: Icons.check_circle_outline_rounded,
+              color: AppTheme.green,
+              onTap: () => onAccept(request.id),
+            ),
+          if (canComplete)
+            _ActionIcon(
+              icon: Icons.task_alt_rounded,
+              color: AppTheme.green,
+              onTap: () => onComplete(request.id),
+            ),
+        ],
+      );
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.end,
+      children: [
+        OutlinedButton.icon(
+          onPressed: canAct ? () => _confirmAndDecline(context) : null,
+          icon: const Icon(Icons.delete_outline_rounded, size: 18),
+          label: const Text('Decline'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.red.shade700,
+            side: BorderSide(color: Colors.red.withValues(alpha: .35)),
+          ),
+        ),
+        FilledButton.icon(
+          onPressed: canAct
+              ? () => onAccept(request.id)
+              : canComplete
+              ? () => onComplete(request.id)
+              : null,
+          icon: Icon(
+            canComplete ? Icons.task_alt_rounded : Icons.check_rounded,
+            size: 18,
+          ),
+          label: Text(canComplete ? 'Complete' : 'Accept'),
+        ),
+      ],
+    );
+  }
 }
 
 String _inboxDateLabel(DateTime date) {
   return '${_inboxShortMonth(date)} ${date.day}, ${date.year}';
+}
+
+String _inboxTimeLabel(TimeOfDay time) {
+  final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+  final minute = time.minute.toString().padLeft(2, '0');
+  final period = time.period == DayPeriod.am ? 'AM' : 'PM';
+  return '$hour:$minute $period';
+}
+
+String _requestCustomerLabel(ProviderInboxItem request) {
+  final phone = request.phoneE164?.trim();
+  if (phone != null && phone.isNotEmpty) return phone;
+  final userId = request.userId.trim();
+  if (userId.isEmpty) return 'Customer';
+  return 'Customer $userId';
+}
+
+String _requestPackageLabel(ProviderInboxItem request) {
+  final packageName = request.packageName?.trim();
+  if (packageName != null && packageName.isNotEmpty) return packageName;
+  final packageId = request.packageId.trim();
+  if (packageId.isEmpty) return 'Package';
+  return packageId;
 }
 
 String _inboxInitials(String name) {

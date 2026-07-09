@@ -10,8 +10,25 @@ class LocationSuggestion {
   String get displayName => subtitle.isEmpty ? title : '$title, $subtitle';
 }
 
+class UserLocation {
+  const UserLocation({
+    required this.latitude,
+    required this.longitude,
+    this.area,
+  });
+
+  final double latitude;
+  final double longitude;
+  final String? area;
+}
+
 class Location {
   static Future<String?> getCurrentArea() async {
+    final location = await getCurrentLocation();
+    return location?.area;
+  }
+
+  static Future<UserLocation?> getCurrentLocation() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return null;
@@ -41,7 +58,11 @@ class Location {
           ? subLocality
           : locality;
 
-      return area;
+      return UserLocation(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        area: area,
+      );
     } catch (_) {
       return null;
     }
@@ -103,7 +124,7 @@ class Location {
 
   static String _withKenyaBias(String query) {
     final lowerQuery = query.toLowerCase();
-    
+
     if (lowerQuery.contains('kenya') || lowerQuery.contains('ke')) {
       return query;
     }

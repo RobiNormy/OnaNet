@@ -116,6 +116,28 @@ async def my_requests(
     return [_result_to_response(r) for r in results]
 
 
+@router.post("/{request_id}/cancel", response_model=InstallationRequestOut)
+async def cancel_my_request(
+    request_id: UUID,
+    authorization: str | None = Header(default=None),
+    service: InstallationRequestService = Depends(get_installation_request_service),
+) -> Any:
+    firebase_user = await _get_current_firebase_user(authorization)
+    user_id = await _resolve_user_id(firebase_user["uid"])
+
+    try:
+        result = await service.cancel_for_user(
+            request_id=request_id,
+            user_id=UUID(user_id),
+        )
+    except InvalidStatusTransition as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except InstallationRequestError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return _result_to_response(result)
+
+
 def _result_to_response(result: InstallationRequestResult) -> InstallationRequestOut:
     return InstallationRequestOut(
         id = result.id,

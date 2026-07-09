@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/provider/registration.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
 class SignUp extends StatefulWidget {
-  const SignUp({super.key});
+  const SignUp({super.key, this.providerMode = false});
+
+  final bool providerMode;
 
   @override
   State<SignUp> createState() => _SignUpState();
@@ -35,6 +38,19 @@ class _SignUpState extends State<SignUp> {
     super.dispose();
   }
 
+  void _goAfterAccountCreated() {
+    if (!mounted) return;
+    if (widget.providerMode) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const ProviderReg()),
+        (route) => false,
+      );
+      return;
+    }
+
+    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+  }
+
   Future<void> _submitEmailSignUp() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -54,7 +70,7 @@ class _SignUpState extends State<SignUp> {
         return;
       }
 
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      _goAfterAccountCreated();
     } catch (e) {
       if (!mounted) {
         return;
@@ -80,7 +96,7 @@ class _SignUpState extends State<SignUp> {
         return;
       }
 
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      _goAfterAccountCreated();
     } catch (e) {
       if (!mounted) {
         return;
@@ -142,7 +158,9 @@ class _SignUpState extends State<SignUp> {
                       _OnaNetLogo(textColor: textColor),
                       const SizedBox(height: 10),
                       Text(
-                        'Create Account',
+                        widget.providerMode
+                            ? 'Create Provider Account'
+                            : 'Create Account',
                         style: GoogleFonts.urbanist(
                           fontSize: 30,
                           fontWeight: FontWeight.w800,
@@ -151,7 +169,9 @@ class _SignUpState extends State<SignUp> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Find better internet near you',
+                        widget.providerMode
+                            ? 'Set up your provider portal access'
+                            : 'Find better internet near you',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.urbanist(
                           fontSize: 15,
@@ -370,7 +390,8 @@ class _SignUpState extends State<SignUp> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => const Login(),
+                                  builder: (context) =>
+                                      Login(providerMode: widget.providerMode),
                                 ),
                               );
                             },

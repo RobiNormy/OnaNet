@@ -6,9 +6,11 @@ from backend.api.provider import router as provider_router
 from backend.db.session import init_db_pool, close_db_pool
 from backend.api.phone_verification import router as phone_router
 from backend.api.installation_requests import router as installation_requests_router
+from backend.api.reviews import ensure_reviews_schema, router as reviews_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db_pool()
+    await ensure_reviews_schema()
     yield
     await close_db_pool()
 
@@ -35,6 +37,7 @@ app.include_router(auth_router)
 app.include_router(provider_router)
 app.include_router(phone_router)
 app.include_router(installation_requests_router)
+app.include_router(reviews_router)
 @app.get("/")
 async def root():
     return {

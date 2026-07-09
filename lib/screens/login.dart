@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/onanet_provider_dash/dashy.dart';
+import 'package:ona_net/provider/registration.dart';
+import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
 class Login extends StatefulWidget {
-  const Login({super.key});
+  const Login({super.key, this.providerMode = false});
+
+  final bool providerMode;
 
   @override
   State<Login> createState() => _LoginState();
@@ -22,6 +27,37 @@ class _LoginState extends State<Login> {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _afterSuccessfulSignIn() async {
+    if (!mounted) return;
+
+    if (!widget.providerMode) {
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      return;
+    }
+
+    final authService = AuthService();
+    try {
+      await authService.getMyProvider();
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const Dashboard()),
+        (route) => false,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Finish provider registration to open your dashboard.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const ProviderReg()),
+        (route) => false,
+      );
+    }
   }
 
   @override
@@ -65,7 +101,9 @@ class _LoginState extends State<Login> {
                       _OnaNetLogo(textColor: textColor),
                       SizedBox(height: 10),
                       Text(
-                        "Welcome Back",
+                        widget.providerMode
+                            ? "Provider Sign In"
+                            : "Welcome Back",
                         style: GoogleFonts.urbanist(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
@@ -73,7 +111,9 @@ class _LoginState extends State<Login> {
                         ),
                       ),
                       Text(
-                        "Sign in to continue",
+                        widget.providerMode
+                            ? "Open your provider dashboard"
+                            : "Sign in to continue",
                         style: GoogleFonts.urbanist(
                           fontSize: 15,
                           color: mutedTextColor,
@@ -198,12 +238,7 @@ class _LoginState extends State<Login> {
                                       return;
                                     }
 
-                                    Navigator.of(
-                                      context,
-                                    ).pushNamedAndRemoveUntil(
-                                      '/',
-                                      (route) => false,
-                                    );
+                                    await _afterSuccessfulSignIn();
                                   } catch (e) {
                                     if (!context.mounted) {
                                       return;
@@ -281,12 +316,7 @@ class _LoginState extends State<Login> {
                                       return;
                                     }
 
-                                    Navigator.of(
-                                      context,
-                                    ).pushNamedAndRemoveUntil(
-                                      '/',
-                                      (route) => false,
-                                    );
+                                    await _afterSuccessfulSignIn();
                                   } catch (e) {
                                     if (!context.mounted) {
                                       return;
@@ -334,7 +364,19 @@ class _LoginState extends State<Login> {
                             ),
                           ),
                           GestureDetector(
-                            onTap: () => Navigator.pop(context),
+                            onTap: () {
+                              if (widget.providerMode) {
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        const SignUp(providerMode: true),
+                                  ),
+                                );
+                              } else {
+                                Navigator.pop(context);
+                              }
+                            },
                             child: Text(
                               "Sign Up",
                               style: GoogleFonts.urbanist(

@@ -3,6 +3,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/provider_detail.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:ona_net/utils/location.dart';
+import 'package:ona_net/utils/provider_filters.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -17,6 +19,10 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _isLoading = true;
   String? _error;
   String _query = '';
+  String? _area;
+  double? _userLatitude;
+  double? _userLongitude;
+  ProviderFilter _selectedFilter = ProviderFilter.all;
 
   static const _quickGoals = [
     _SearchGoal(
@@ -48,6 +54,7 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    _loadLocation();
     _loadProviders();
   }
 
@@ -55,6 +62,19 @@ class _SearchScreenState extends State<SearchScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadLocation() async {
+    final location = await Location.getCurrentLocation().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => null,
+    );
+    if (!mounted || location == null) return;
+    setState(() {
+      _area = location.area;
+      _userLatitude = location.latitude;
+      _userLongitude = location.longitude;
+    });
   }
 
   Future<void> _loadProviders() async {
@@ -79,17 +99,29 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  Future<void> _refreshSearch() async {
+    await Future.wait([_loadLocation(), _loadProviders()]);
+  }
+
   List<Map<String, dynamic>> get _filteredProviders {
     final query = _query.trim().toLowerCase();
-    if (query.isEmpty) return _providers.take(6).toList();
+    final localProviders = filterProviders(
+      _providers,
+      filter: _selectedFilter,
+      userLatitude: _userLatitude,
+      userLongitude: _userLongitude,
+      userArea: _area,
+    );
+    if (query.isEmpty) return localProviders.take(12).toList();
 
-    return _providers.where((provider) {
+    return localProviders.where((provider) {
       final searchable = [
-        _providerName(provider),
-        _providerType(provider),
-        ..._coverageAreas(provider),
-        '${_speed(provider)}mbps',
-        'kes ${_price(provider)}',
+        providerName(provider),
+        providerType(provider),
+        ...providerCoverageAreas(provider),
+        '${providerSpeed(provider)}mbps',
+        'kes ${providerPrice(provider)}',
+        providerDistanceLabel(provider),
       ].join(' ').toLowerCase();
 
       return query
@@ -124,12 +156,23 @@ class _SearchScreenState extends State<SearchScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ProviderDetailScreen(provider: provider),
+        builder: (context) =>
+            ProviderDetailScreen(provider: provider, selectedArea: _area),
       ),
     );
   }
 
   void _applyGoal(_SearchGoal goal) {
+    final title = goal.title.toLowerCase();
+    if (title.contains('budget')) {
+      _selectedFilter = ProviderFilter.budget;
+    } else if (title.contains('verified')) {
+      _selectedFilter = ProviderFilter.verified;
+    } else if (title.contains('fiber')) {
+      _selectedFilter = ProviderFilter.fiber;
+    } else if (title.contains('fast')) {
+      _selectedFilter = ProviderFilter.fast;
+    }
     _searchController.text = goal.title;
     _searchController.selection = TextSelection.collapsed(
       offset: _searchController.text.length,
@@ -152,7 +195,7 @@ class _SearchScreenState extends State<SearchScreen> {
         child: RefreshIndicator(
           color: AppTheme.amber,
           backgroundColor: isDark ? AppTheme.navyMid : AppTheme.white,
-          onRefresh: _loadProviders,
+          onRefresh: _refreshSearch,
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
@@ -186,6 +229,13 @@ class _SearchScreenState extends State<SearchScreen> {
                         onClear: () {
                           _searchController.clear();
                           _onQueryChanged('');
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      _SearchFilterChips(
+                        selected: _selectedFilter,
+                        onChanged: (filter) {
+                          setState(() => _selectedFilter = filter);
                         },
                       ),
                     ],
@@ -363,6 +413,52 @@ class _LiveSearchField extends StatelessWidget {
   }
 }
 
+class _SearchFilterChips extends StatelessWidget {
+  const _SearchFilterChips({required this.selected, required this.onChanged});
+
+  final ProviderFilter selected;
+  final ValueChanged<ProviderFilter> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: providerFilterOptions.map((filter) {
+          final isSelected = selected == filter;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              selected: isSelected,
+              label: Text(providerFilterLabel(filter)),
+              onSelected: (_) => onChanged(filter),
+              selectedColor: AppTheme.amber,
+              backgroundColor: isDark ? AppTheme.navyMid : AppTheme.white,
+              side: BorderSide(
+                color: isSelected
+                    ? AppTheme.amber
+                    : isDark
+                    ? AppTheme.navyLight
+                    : AppTheme.lightGray,
+              ),
+              labelStyle: GoogleFonts.plusJakartaSans(
+                color: isSelected
+                    ? AppTheme.navy
+                    : isDark
+                    ? AppTheme.white
+                    : AppTheme.navy,
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
 class _ResultSummary extends StatelessWidget {
   const _ResultSummary({
     required this.query,
@@ -528,11 +624,12 @@ class _ProviderResultCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
     final mutedColor = isDark ? AppTheme.gray : AppTheme.darkGray;
-    final name = _providerName(provider);
-    final areas = _coverageAreas(provider);
-    final verified = _isVerified(provider);
-    final speed = _speed(provider);
-    final price = _price(provider);
+    final name = providerName(provider);
+    final areas = providerCoverageAreas(provider);
+    final verified = isVerifiedProvider(provider);
+    final speed = providerSpeed(provider);
+    final price = providerPrice(provider);
+    final distance = providerDistanceLabel(provider);
 
     return InkWell(
       onTap: onTap,
@@ -589,7 +686,7 @@ class _ProviderResultCard extends StatelessWidget {
                   const SizedBox(height: 5),
                   Text(
                     areas.isEmpty
-                        ? _providerType(provider)
+                        ? providerType(provider)
                         : 'Covers ${areas.take(2).join(', ')}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -604,8 +701,15 @@ class _ProviderResultCard extends StatelessWidget {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _ProviderMeta(label: 'From', value: 'KES $price'),
-                      _ProviderMeta(label: 'Speed', value: '${speed}Mbps'),
+                      _ProviderMeta(
+                        label: 'From',
+                        value: price > 0 ? 'KES $price' : 'Ask',
+                      ),
+                      _ProviderMeta(
+                        label: 'Speed',
+                        value: speed > 0 ? '${speed}Mbps' : 'Ask',
+                      ),
+                      _ProviderMeta(label: 'Near', value: distance),
                     ],
                   ),
                 ],
@@ -761,52 +865,4 @@ class _SearchGoal {
   final String subtitle;
   final IconData icon;
   final List<String> keywords;
-}
-
-String _providerName(Map<String, dynamic> provider) {
-  return (provider['name'] ??
-          provider['provider_name'] ??
-          provider['business_name'] ??
-          'OnaNet Provider')
-      .toString();
-}
-
-String _providerType(Map<String, dynamic> provider) {
-  return (provider['providerType'] ??
-          provider['provider_type'] ??
-          provider['service_type'] ??
-          'Internet provider')
-      .toString();
-}
-
-List<String> _coverageAreas(Map<String, dynamic> provider) {
-  final value = provider['coverageAreas'] ?? provider['coverage_areas'];
-  if (value is List) {
-    return value
-        .map((area) {
-          if (area is Map) return area['name'] ?? area['area_name'];
-          return area;
-        })
-        .where((area) => area != null && area.toString().trim().isNotEmpty)
-        .map((area) => area.toString())
-        .toList();
-  }
-  return [];
-}
-
-bool _isVerified(Map<String, dynamic> provider) {
-  return provider['verified'] == true || provider['isVerified'] == true;
-}
-
-int _speed(Map<String, dynamic> provider) {
-  final value = provider['speed'] ?? provider['maxSpeed'] ?? provider['speed_mbps'];
-  if (value is num) return value.round();
-  return int.tryParse(value?.toString() ?? '') ?? 0;
-}
-
-int _price(Map<String, dynamic> provider) {
-  final value =
-      provider['price'] ?? provider['startingPrice'] ?? provider['monthly_price'];
-  if (value is num) return value.round();
-  return int.tryParse(value?.toString() ?? '') ?? 0;
 }

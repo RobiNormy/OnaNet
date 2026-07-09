@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/auth/installation_service_request.dart';
 import 'package:ona_net/onanet_provider_dash/dashy.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/screens/sign_up.dart';
@@ -82,6 +83,14 @@ class Profile extends StatelessWidget {
                     textColor: textColor,
                     mutedTextColor: mutedTextColor,
                     isDark: isDark,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const CustomerRequestsScreen(),
+                        ),
+                      );
+                    },
                   ),
                   _SectionDivider(color: mutedTextColor),
                   _SettingsTile(
@@ -100,6 +109,14 @@ class Profile extends StatelessWidget {
                     textColor: textColor,
                     mutedTextColor: mutedTextColor,
                     isDark: isDark,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const CustomerRequestsScreen(),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -147,21 +164,32 @@ class Profile extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 18),
-              _SettingsSection(
-                title: 'Session',
-                children: [
-                  _SettingsTile(
-                    icon: Icons.logout_rounded,
-                    title: 'Logout',
-                    subtitle: 'Sign out of this account',
-                    textColor: AppTheme.amberDark,
-                    mutedTextColor: mutedTextColor,
-                    isDark: isDark,
-                    accentColor: AppTheme.amber,
-                    showChevron: false,
-                    onTap: () => _signOut(context),
-                  ),
-                ],
+              StreamBuilder<User?>(
+                initialData: FirebaseAuth.instance.currentUser,
+                stream: FirebaseAuth.instance.authStateChanges(),
+                builder: (context, snapshot) {
+                  final signedIn = snapshot.data != null;
+                  return _SettingsSection(
+                    title: 'Session',
+                    children: [
+                      _SettingsTile(
+                        icon: Icons.logout_rounded,
+                        title: 'Logout',
+                        subtitle: signedIn
+                            ? 'Sign out of this account'
+                            : 'No account is signed in',
+                        textColor: signedIn
+                            ? AppTheme.amberDark
+                            : mutedTextColor,
+                        mutedTextColor: mutedTextColor,
+                        isDark: isDark,
+                        accentColor: signedIn ? AppTheme.amber : mutedTextColor,
+                        showChevron: false,
+                        onTap: signedIn ? () => _signOut(context) : null,
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -267,7 +295,7 @@ class _AuthLinks extends StatelessWidget {
           },
         ),
         _ProfileTextLink(
-          label: "Ona",
+          label: "Intro screen",
           onTap: () {
             Navigator.push(
               context,
@@ -323,6 +351,716 @@ class _ProfileTextLink extends StatelessWidget {
       ),
     );
   }
+}
+
+class CustomerRequestsScreen extends StatefulWidget {
+  const CustomerRequestsScreen({super.key});
+
+  @override
+  State<CustomerRequestsScreen> createState() => _CustomerRequestsScreenState();
+}
+
+class _CustomerRequestsScreenState extends State<CustomerRequestsScreen> {
+  final _service = InstallationServiceRequest();
+  late Future<List<InstallationRequestResult>> _requestsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _requestsFuture = _service.myRequests();
+  }
+
+  void _reload() {
+    setState(() => _requestsFuture = _service.myRequests());
+  }
+
+  Future<void> _cancelRequest(InstallationRequestResult request) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Cancel request?'),
+          content: const Text(
+            'You can only cancel installation requests within 10 minutes of submitting them.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep request'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Cancel request'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await _service.cancel(request.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Request cancelled.'),
+        ),
+      );
+      _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(error.toString()),
+        ),
+      );
+      _reload();
+    }
+  }
+
+  Future<void> _reviewRequest(InstallationRequestResult request) async {
+    final review = await showModalBottomSheet<_ReviewDraft>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return _ReviewRequestSheet(request: request);
+      },
+    );
+    if (review == null || !mounted) return;
+
+    try {
+      await _service.submitReview(
+        installationRequestId: request.id,
+        rating: review.rating,
+        comment: review.comment,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Review saved. Thanks for keeping OnaNet honest.'),
+        ),
+      );
+      _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(error.toString()),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+    final mutedTextColor = textColor.withValues(alpha: .65);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'My requests',
+          style: GoogleFonts.urbanist(fontWeight: FontWeight.w800),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _reload,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        child: FutureBuilder<List<InstallationRequestResult>>(
+          future: _requestsFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return ListView.separated(
+                padding: const EdgeInsets.all(20),
+                itemCount: 4,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (_, _) => const _CustomerRequestSkeleton(),
+              );
+            }
+
+            if (snapshot.hasError) {
+              return _CustomerRequestsMessage(
+                icon: Icons.error_outline_rounded,
+                title: 'Could not load requests',
+                message: snapshot.error.toString(),
+                actionLabel: 'Try again',
+                onAction: _reload,
+              );
+            }
+
+            final requests = snapshot.data ?? const [];
+            if (requests.isEmpty) {
+              return _CustomerRequestsMessage(
+                icon: Icons.receipt_long_outlined,
+                title: 'No requests yet',
+                message: 'Installation requests you submit will show up here.',
+                actionLabel: 'Refresh',
+                onAction: _reload,
+              );
+            }
+
+            return RefreshIndicator(
+              onRefresh: () async => _reload(),
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+                itemCount: requests.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  return _CustomerRequestCard(
+                    request: requests[index],
+                    textColor: textColor,
+                    mutedTextColor: mutedTextColor,
+                    isDark: isDark,
+                    onCancel: _cancelRequest,
+                    onReview: _reviewRequest,
+                  );
+                },
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _CustomerRequestCard extends StatelessWidget {
+  const _CustomerRequestCard({
+    required this.request,
+    required this.textColor,
+    required this.mutedTextColor,
+    required this.isDark,
+    required this.onCancel,
+    required this.onReview,
+  });
+
+  final InstallationRequestResult request;
+  final Color textColor;
+  final Color mutedTextColor;
+  final bool isDark;
+  final Future<void> Function(InstallationRequestResult request) onCancel;
+  final Future<void> Function(InstallationRequestResult request) onReview;
+
+  bool get _isCompleted {
+    return request.status == 'complete' || request.status == 'completed';
+  }
+
+  bool get _canCancel {
+    final createdAt = request.createdAt;
+    if (createdAt == null || request.status != 'pending') return false;
+    final elapsed = DateTime.now().difference(createdAt.toLocal());
+    return !elapsed.isNegative && elapsed < const Duration(minutes: 10);
+  }
+
+  String get _cancelWindowLabel {
+    final createdAt = request.createdAt;
+    if (createdAt == null) return 'Cancellation window unavailable';
+    final remaining =
+        const Duration(minutes: 10) -
+        DateTime.now().difference(createdAt.toLocal());
+    if (remaining.isNegative || request.status != 'pending') {
+      return 'Cancellation window closed';
+    }
+    final minutes = remaining.inMinutes;
+    final seconds = remaining.inSeconds.remainder(60);
+    return 'Cancel available for ${minutes}m ${seconds}s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColors = _customerRequestStatusColors(request.status);
+    final packageName = request.packageName?.trim().isNotEmpty == true
+        ? request.packageName!.trim()
+        : 'Package ${_shortId(request.packageId)}';
+    final locationParts = [
+      request.estateOrBuilding,
+      if (request.houseOrApartment?.trim().isNotEmpty == true)
+        request.houseOrApartment!.trim(),
+      if (request.landmark?.trim().isNotEmpty == true) request.landmark!.trim(),
+    ].where((part) => part.trim().isNotEmpty).join(', ');
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.navyLight : AppTheme.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark
+              ? AppTheme.navyLight.withValues(alpha: .7)
+              : AppTheme.lightGray,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? .16 : .06),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _IconBadge(
+                icon: Icons.wifi_rounded,
+                color: AppTheme.amber,
+                isDark: isDark,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      packageName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.urbanist(
+                        color: textColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _customerRequestDateLine(request),
+                      style: GoogleFonts.urbanist(
+                        color: mutedTextColor,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _CustomerStatusPill(
+                label: _statusLabel(request.status),
+                background: statusColors.$1,
+                foreground: statusColors.$2,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _CustomerRequestDetail(
+            icon: Icons.place_outlined,
+            label: 'Location',
+            value: locationParts.isEmpty ? 'Not set' : locationParts,
+            mutedTextColor: mutedTextColor,
+            textColor: textColor,
+          ),
+          const SizedBox(height: 8),
+          _CustomerRequestDetail(
+            icon: Icons.phone_outlined,
+            label: 'Phone',
+            value: request.phoneE164?.trim().isNotEmpty == true
+                ? request.phoneE164!.trim()
+                : 'Not set',
+            mutedTextColor: mutedTextColor,
+            textColor: textColor,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _isCompleted
+                      ? 'Installation fulfilled. Share your experience.'
+                      : _cancelWindowLabel,
+                  style: GoogleFonts.urbanist(
+                    color: _isCompleted || _canCancel
+                        ? AppTheme.amberDark
+                        : mutedTextColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              if (_isCompleted)
+                FilledButton.icon(
+                  onPressed: () => onReview(request),
+                  icon: const Icon(Icons.star_rounded, size: 18),
+                  label: const Text('Review'),
+                )
+              else
+                OutlinedButton.icon(
+                  onPressed: _canCancel ? () => onCancel(request) : null,
+                  icon: const Icon(Icons.cancel_outlined, size: 18),
+                  label: const Text('Cancel'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CustomerRequestDetail extends StatelessWidget {
+  const _CustomerRequestDetail({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.mutedTextColor,
+    required this.textColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color mutedTextColor;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: AppTheme.amber),
+        const SizedBox(width: 8),
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              text: '$label: ',
+              style: GoogleFonts.urbanist(
+                color: mutedTextColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+              children: [
+                TextSpan(
+                  text: value,
+                  style: GoogleFonts.urbanist(
+                    color: textColor,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReviewDraft {
+  const _ReviewDraft({required this.rating, required this.comment});
+
+  final int rating;
+  final String comment;
+}
+
+class _ReviewRequestSheet extends StatefulWidget {
+  const _ReviewRequestSheet({required this.request});
+
+  final InstallationRequestResult request;
+
+  @override
+  State<_ReviewRequestSheet> createState() => _ReviewRequestSheetState();
+}
+
+class _ReviewRequestSheetState extends State<_ReviewRequestSheet> {
+  final _commentController = TextEditingController();
+  int _rating = 5;
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.pop(
+      context,
+      _ReviewDraft(rating: _rating, comment: _commentController.text.trim()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+    final mutedColor = textColor.withValues(alpha: .64);
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final packageName = widget.request.packageName?.trim().isNotEmpty == true
+        ? widget.request.packageName!.trim()
+        : 'Package ${_shortId(widget.request.packageId)}';
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(14, 0, 14, bottomInset + 14),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+          decoration: BoxDecoration(
+            color: isDark ? AppTheme.navyMid : AppTheme.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.center,
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: mutedColor.withValues(alpha: .4),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Rate the service',
+                style: GoogleFonts.urbanist(
+                  color: textColor,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                packageName,
+                style: GoogleFonts.urbanist(
+                  color: mutedColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (index) {
+                  final star = index + 1;
+                  return IconButton(
+                    tooltip: '$star stars',
+                    onPressed: () => setState(() => _rating = star),
+                    icon: Icon(
+                      star <= _rating
+                          ? Icons.star_rounded
+                          : Icons.star_border_rounded,
+                      color: AppTheme.amber,
+                      size: 34,
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _commentController,
+                minLines: 3,
+                maxLines: 5,
+                textInputAction: TextInputAction.newline,
+                style: GoogleFonts.urbanist(
+                  color: textColor,
+                  fontWeight: FontWeight.w700,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'How was installation, support, and connection?',
+                  hintStyle: GoogleFonts.urbanist(color: mutedColor),
+                  filled: true,
+                  fillColor: isDark ? AppTheme.navy : AppTheme.offWhite,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _submit,
+                icon: const Icon(Icons.check_rounded),
+                label: const Text('Save review'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CustomerStatusPill extends StatelessWidget {
+  const _CustomerStatusPill({
+    required this.label,
+    required this.background,
+    required this.foreground,
+  });
+
+  final String label;
+  final Color background;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.urbanist(
+          color: foreground,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _CustomerRequestSkeleton extends StatelessWidget {
+  const _CustomerRequestSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.outline.withValues(alpha: .16);
+    return Container(
+      height: 132,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(14),
+      ),
+    );
+  }
+}
+
+class _CustomerRequestsMessage extends StatelessWidget {
+  const _CustomerRequestsMessage({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.offWhite
+        : AppTheme.navy;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: AppTheme.amber, size: 42),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.urbanist(
+                color: textColor,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.urbanist(
+                color: textColor.withValues(alpha: .65),
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: onAction,
+              icon: const Icon(Icons.refresh_rounded),
+              label: Text(actionLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _customerRequestDateLine(InstallationRequestResult request) {
+  final preferredDate = request.preferredDate;
+  final preferredTime = request.preferredTime;
+  final date = preferredDate == null
+      ? 'Preferred date not set'
+      : '${_monthName(preferredDate.month)} ${preferredDate.day}, ${preferredDate.year}';
+  final time = preferredTime == null
+      ? ''
+      : ' at ${preferredTime.hour.toString().padLeft(2, '0')}:${preferredTime.minute.toString().padLeft(2, '0')}';
+  return '$date$time';
+}
+
+(Color, Color) _customerRequestStatusColors(String status) {
+  return switch (status) {
+    'accepted' => (Colors.blue.withValues(alpha: .12), Colors.blue.shade700),
+    'complete' ||
+    'completed' => (Colors.green.withValues(alpha: .12), Colors.green.shade700),
+    'declined' => (Colors.red.withValues(alpha: .12), Colors.red.shade700),
+    'cancelled' => (Colors.grey.withValues(alpha: .18), Colors.grey.shade700),
+    _ => (AppTheme.amberLight.withValues(alpha: .65), AppTheme.amberDark),
+  };
+}
+
+String _statusLabel(String status) {
+  return switch (status) {
+    'pending' => 'Pending',
+    'accepted' => 'Accepted',
+    'complete' || 'completed' => 'Completed',
+    'declined' => 'Declined',
+    'cancelled' => 'Cancelled',
+    _ =>
+      status.isEmpty
+          ? 'Unknown'
+          : '${status[0].toUpperCase()}${status.substring(1)}',
+  };
+}
+
+String _shortId(String id) => id.length <= 8 ? id : id.substring(0, 8);
+
+String _monthName(int month) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  if (month < 1 || month > 12) return '';
+  return months[month - 1];
 }
 
 class _ProfileHeaderCard extends StatelessWidget {

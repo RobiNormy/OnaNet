@@ -1,6 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:ona_net/provider/account_details.dart';
 import 'package:ona_net/provider/provider_registration_data.dart';
+import 'package:ona_net/screens/login.dart';
+import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -16,6 +19,10 @@ class _ProviderRegState extends State<ProviderReg> {
 
   @override
   Widget build(BuildContext context) {
+    if (FirebaseAuth.instance.currentUser == null) {
+      return const _ProviderAuthGate();
+    }
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       body: SafeArea(
@@ -84,6 +91,111 @@ class _ProviderRegState extends State<ProviderReg> {
                         },
                       );
                     }),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProviderAuthGate extends StatelessWidget {
+  const _ProviderAuthGate();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+    final mutedColor = textColor.withValues(alpha: .68);
+
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 430),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppTheme.navy.withValues(alpha: 0.5)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isDark ? Colors.white10 : Colors.grey.shade200,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? .25 : .08),
+                      blurRadius: 28,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const HomeHeader(),
+                    const SizedBox(height: 22),
+                    Text(
+                      'Provider Portal',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.plusJakartaSans(
+                        color: textColor,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Create a provider account or sign in to manage requests, packages, and coverage.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: mutedColor,
+                        fontSize: 14,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton.icon(
+                      onPressed: () {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SignUp(providerMode: true),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.business_center_outlined),
+                      label: const Text('Create Provider Account'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.amber,
+                        foregroundColor: AppTheme.navy,
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const Login(providerMode: true),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.login_rounded),
+                      label: const Text('Sign In To Provider Account'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: textColor,
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                    ),
                   ],
                 ),
               ),

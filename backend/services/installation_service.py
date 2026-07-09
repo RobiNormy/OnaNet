@@ -194,15 +194,67 @@ class InstallationRequestService:
     ) -> list[InstallationRequestResult]:
         async with get_db_connection() as conn:
             rows = await conn.fetch(
-                f"""
-                SELECT {REQUEST_COLUMNS}
-                FROM installation_requests
-                WHERE user_id = $1
-                ORDER BY created_at DESC
+                """
+                SELECT
+                    ir.id, ir.user_id, ir.provider_id, ir.package_id,
+                    pp.package_name,
+                    ir.phone_e164, ir.gps_location,
+                    ir.estate_or_building, ir.house_or_apartment, ir.landmark,
+                    ir.preferred_date, ir.preferred_time,
+                    ir.status, ir.decline_reason, ir.completed_at,
+                    ir.created_at, ir.updated_at
+                FROM installation_requests ir
+                LEFT JOIN provider_packages pp ON pp.id = ir.package_id
+                WHERE ir.user_id = $1
+                ORDER BY ir.created_at DESC
                 """,
                 user_id,
             )
         return [_row_to_result(dict(r)) for r in rows]
+
+    async def cancel_for_user(
+        self, *, request_id: UUID, user_id: UUID
+    ) -> InstallationRequestResult:
+        async with get_db_connection() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT user_id, status, created_at
+                    FROM installation_requests
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    request_id,
+                )
+                if row is None:
+                    raise InstallationRequestError(
+                        f"Installation request {request_id} not found."
+                    )
+                if row["user_id"] != user_id:
+                    raise InstallationRequestError(
+                        "This request does not belong to your account."
+                    )
+                if row["status"] != "pending":
+                    raise InvalidStatusTransition(
+                        f"Cannot cancel a request with status {row['status']!r}."
+                    )
+
+                updated = await conn.fetchrow(
+                    f"""
+                    UPDATE installation_requests
+                    SET status = 'cancelled',
+                        updated_at = now()
+                    WHERE id = $1
+                      AND created_at >= now() - interval '10 minutes'
+                    RETURNING {REQUEST_COLUMNS}
+                    """,
+                    request_id,
+                )
+                if updated is None:
+                    raise InvalidStatusTransition(
+                        "Requests can only be cancelled within 10 minutes of submission."
+                    )
+        return _row_to_result(dict(updated))
 
     async def list_for_provider(
         self,

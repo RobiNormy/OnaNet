@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/onanet_provider_dash/dashy.dart';
 import 'package:ona_net/provider/provider_flow_widgets.dart';
 import 'package:ona_net/provider/provider_registration_data.dart';
 
@@ -208,7 +209,7 @@ class _PackagesScreenState extends State<PackagesScreen> {
 
   Future<void> _finishRegistration() async {
     if (_savedProviderId != null && !_hasPackageInput) {
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      _openProviderDashboard();
       return;
     }
 
@@ -221,7 +222,14 @@ class _PackagesScreenState extends State<PackagesScreen> {
         behavior: SnackBarBehavior.floating,
       ),
     );
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    _openProviderDashboard();
+  }
+
+  void _openProviderDashboard() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const Dashboard()),
+      (route) => false,
+    );
   }
 
   Future<void> _saveAndAddAnother() async {

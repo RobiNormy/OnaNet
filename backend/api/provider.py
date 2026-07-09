@@ -110,9 +110,16 @@ async def list_public_providers() -> list[dict[str, Any]]:
         packages_by_provider: dict[UUID, list[dict[str, Any]]] = {
             provider_id: [] for provider_id in provider_ids
         }
-        coverage_by_provider: dict[UUID, list[str]] = {
+        coverage_by_provider: dict[UUID, list[dict[str, Any]]] = {
             provider_id: [] for provider_id in provider_ids
         }
+        ratings_by_provider: dict[UUID, dict[str, Any]] = {
+            provider_id: {"rating": 0.0, "reviews": 0} for provider_id in provider_ids
+        }
+        recent_reviews_by_provider: dict[UUID, list[dict[str, Any]]] = {
+            provider_id: [] for provider_id in provider_ids
+        }
+        popularity_by_package = {}
 
         if provider_ids:
             package_rows = await db.fetch(
@@ -157,7 +164,12 @@ async def list_public_providers() -> list[dict[str, Any]]:
 
             coverage_rows = await db.fetch(
                 """
-                SELECT provider_id, area_name
+                SELECT
+                    provider_id,
+                    area_name,
+                    latitude,
+                    longitude,
+                    radius_km
                 FROM provider_coverage_areas
                 WHERE provider_id = ANY($1::uuid[])
                 ORDER BY created_at ASC;
@@ -165,15 +177,96 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 provider_ids,
             )
             for row in coverage_rows:
-                coverage_by_provider[row["provider_id"]].append(row["area_name"])
+                coverage_by_provider[row["provider_id"]].append(
+                    {
+                        "name": row["area_name"],
+                        "area_name": row["area_name"],
+                        "latitude": float(row["latitude"]),
+                        "longitude": float(row["longitude"]),
+                        "radius_km": float(row["radius_km"]),
+                    }
+                )
+
+            rating_rows = await db.fetch(
+                """
+                SELECT
+                    provider_id,
+                    round(avg(rating)::numeric, 1) AS rating,
+                    count(*) AS reviews
+                FROM provider_reviews
+                WHERE provider_id = ANY($1::uuid[])
+                GROUP BY provider_id
+                """,
+                provider_ids,
+            )
+            for row in rating_rows:
+                ratings_by_provider[row["provider_id"]] = {
+                    "rating": float(row["rating"] or 0),
+                    "reviews": int(row["reviews"] or 0),
+                }
+
+            review_rows = await db.fetch(
+                """
+                SELECT *
+                FROM (
+                    SELECT
+                        pr.provider_id,
+                        pr.rating,
+                        pr.comment,
+                        pr.updated_at,
+                        pp.package_name,
+                        u.first_name,
+                        u.last_name,
+                        row_number() OVER (
+                            PARTITION BY pr.provider_id
+                            ORDER BY pr.updated_at DESC
+                        ) AS row_number
+                    FROM provider_reviews pr
+                    LEFT JOIN provider_packages pp ON pp.id = pr.package_id
+                    LEFT JOIN users u ON u.id = pr.user_id
+                    WHERE pr.provider_id = ANY($1::uuid[])
+                ) ranked_reviews
+                WHERE row_number <= 5
+                ORDER BY provider_id, updated_at DESC
+                """,
+                provider_ids,
+            )
+            for row in review_rows:
+                first_name = (row["first_name"] or "").strip()
+                last_name = (row["last_name"] or "").strip()
+                customer_name = " ".join(
+                    part for part in [first_name, last_name] if part
+                )
+                recent_reviews_by_provider[row["provider_id"]].append(
+                    {
+                        "customer_name": customer_name or "Customer",
+                        "package_name": row["package_name"] or "Package",
+                        "rating": int(row["rating"] or 0),
+                        "stars": int(row["rating"] or 0),
+                        "comment": row["comment"] or "",
+                        "updated_at": row["updated_at"].isoformat(),
+                    }
+                )
+
+            popularity_by_package = await _load_package_popularity(
+                db,
+                provider_ids=provider_ids,
+            )
 
     public_providers = []
     for provider in providers:
         provider_id = provider["id"]
         packages = packages_by_provider[provider_id]
         coverage_areas = coverage_by_provider[provider_id]
+        coverage_names = [area["name"] for area in coverage_areas]
+        rating_summary = ratings_by_provider[provider_id]
         for package in packages:
-            package["coverageAreas"] = coverage_areas
+            package["coverageAreas"] = coverage_names
+            package.update(
+                _public_package_popularity(
+                    popularity_by_package.get(UUID(package["id"]), []),
+                )
+            )
 
         starting_price = min(
             (_money_to_float(package["price"]) for package in packages),
@@ -190,8 +283,8 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 "name": provider["provider_name"],
                 "initials": _provider_initials(provider["provider_name"]),
                 "color": _provider_color(str(provider_id)),
-                "rating": 0.0,
-                "reviews": "0",
+                "rating": rating_summary["rating"],
+                "reviews": str(rating_summary["reviews"]),
                 "price": _format_money(starting_price),
                 "speed": max_speed,
                 "distance": 0.0,
@@ -203,8 +296,10 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 "logoScale": float(provider["logo_display_size"] or 1),
                 "logoOffsetX": float(provider["logo_offset_x"] or 0),
                 "logoOffsetY": float(provider["logo_offset_y"] or 0),
-                "coverageAreas": coverage_areas,
+                "coverageAreas": coverage_names,
+                "coverageAreaDetails": coverage_areas,
                 "packages": packages,
+                "recent_reviews": recent_reviews_by_provider[provider_id],
             }
         )
 
@@ -738,7 +833,104 @@ async def get_provider_packages(
             provider_id,
         )
 
-        return [dict(row) for row in rows]
+        popularity_by_package = await _load_package_popularity(
+            db,
+            provider_ids=[provider_id],
+        )
+
+        packages = []
+        for row in rows:
+            package = dict(row)
+            package.update(
+                _api_package_popularity(
+                    popularity_by_package.get(package["id"], []),
+                )
+            )
+            packages.append(package)
+
+        return packages
+
+
+async def _load_package_popularity(
+    db: Any,
+    *,
+    provider_ids: list[UUID],
+) -> dict[UUID, list[dict[str, Any]]]:
+    rows = await db.fetch(
+        """
+        SELECT
+            package_id,
+            estate_or_building,
+            count(*) AS installs
+        FROM installation_requests
+        WHERE provider_id = ANY($1::uuid[])
+          AND status IN ('complete', 'completed')
+        GROUP BY package_id, estate_or_building
+        ORDER BY package_id, installs DESC, estate_or_building ASC
+        """,
+        provider_ids,
+    )
+    popularity: dict[UUID, list[dict[str, Any]]] = {}
+    for row in rows:
+        area = (row["estate_or_building"] or "").strip() or "Unknown area"
+        popularity.setdefault(row["package_id"], []).append(
+            {
+                "area": area,
+                "installs": int(row["installs"] or 0),
+            }
+        )
+    return popularity
+
+
+def _popularity_level(installs: int, top_installs: int) -> str:
+    if installs <= 0:
+        return "low"
+    if top_installs <= 1:
+        return "popular"
+    ratio = installs / top_installs
+    if installs >= 3 or ratio >= 0.66:
+        return "popular"
+    if installs >= 1 or ratio >= 0.33:
+        return "mid"
+    return "low"
+
+
+def _api_package_popularity(areas: list[dict[str, Any]]) -> dict[str, Any]:
+    top = areas[0] if areas else None
+    top_installs = int(top["installs"]) if top else 0
+    level = _popularity_level(top_installs, top_installs)
+    return {
+        "top_area": top["area"] if top else None,
+        "popularity_level": level,
+        "popularity_by_area": [
+            {
+                "area": area["area"],
+                "installs": area["installs"],
+                "level": _popularity_level(int(area["installs"]), top_installs),
+            }
+            for area in areas[:8]
+        ],
+        "trust_label": "Popular in your area" if level == "popular" else "Live installs",
+        "subscriber_count": f"{top_installs} completed installs"
+        if top_installs
+        else "No installs yet",
+        "popular": level == "popular",
+    }
+
+
+def _public_package_popularity(areas: list[dict[str, Any]]) -> dict[str, Any]:
+    api_payload = _api_package_popularity(areas)
+    return {
+        "topArea": api_payload["top_area"],
+        "top_area": api_payload["top_area"],
+        "popularityLevel": api_payload["popularity_level"],
+        "popularity_level": api_payload["popularity_level"],
+        "popularityByArea": api_payload["popularity_by_area"],
+        "popularity_by_area": api_payload["popularity_by_area"],
+        "trustLabel": api_payload["trust_label"],
+        "subscriberCount": api_payload["subscriber_count"],
+        "popular": api_payload["popular"],
+    }
 
 
 def _provider_initials(name: str) -> str:
@@ -850,13 +1042,124 @@ async def get_dashboard(
             provider_id,
         )
 
+        pending_installations = await db.fetchval(
+            """
+            SELECT count(*)
+            FROM installation_requests
+            WHERE provider_id = $1
+              AND status = 'pending'
+            """,
+            provider_id,
+        )
+
+        active_customers = await db.fetchval(
+            """
+            SELECT count(DISTINCT user_id)
+            FROM installation_requests
+            WHERE provider_id = $1
+              AND status IN ('complete', 'completed')
+            """,
+            provider_id,
+        )
+
+        monthly_revenue = await db.fetchval(
+            """
+            SELECT COALESCE(sum(pp.monthly_price), 0)
+            FROM installation_requests ir
+            JOIN provider_packages pp ON pp.id = ir.package_id
+            WHERE ir.provider_id = $1
+              AND ir.status IN ('complete', 'completed')
+            """,
+            provider_id,
+        )
+
         packages = await db.fetch(
             """
-            SELECT package_name, speed_mbps, monthly_price
-            FROM provider_packages
-            WHERE provider_id = $1
-            ORDER BY monthly_price ASC
+            SELECT
+                pp.package_name,
+                pp.speed_mbps,
+                pp.monthly_price,
+                count(ir.id) FILTER (
+                    WHERE ir.status IN ('complete', 'completed')
+                ) AS users,
+                COALESCE(sum(pp.monthly_price) FILTER (
+                    WHERE ir.status IN ('complete', 'completed')
+                ), 0) AS revenue
+            FROM provider_packages pp
+            LEFT JOIN installation_requests ir ON ir.package_id = pp.id
+            WHERE pp.provider_id = $1
+            GROUP BY pp.id
+            ORDER BY revenue DESC, pp.monthly_price ASC
+            """,
+            provider_id,
+        )
 
+        top_locations = await db.fetch(
+            """
+            SELECT
+                COALESCE(NULLIF(trim(ir.estate_or_building), ''), 'Unknown area')
+                    AS area,
+                count(DISTINCT ir.user_id) AS users,
+                COALESCE(sum(pp.monthly_price), 0) AS revenue
+            FROM installation_requests ir
+            JOIN provider_packages pp ON pp.id = ir.package_id
+            WHERE ir.provider_id = $1
+              AND ir.status IN ('complete', 'completed')
+            GROUP BY area
+            ORDER BY users DESC, revenue DESC, area ASC
+            LIMIT 8
+            """,
+            provider_id,
+        )
+
+        top_location_users = max(
+            (int(row["users"] or 0) for row in top_locations),
+            default=0,
+        )
+
+        recent_requests = await db.fetch(
+            """
+            SELECT
+                ir.id,
+                ir.status,
+                ir.estate_or_building,
+                ir.created_at,
+                ir.completed_at,
+                pp.package_name,
+                pp.monthly_price
+            FROM installation_requests ir
+            LEFT JOIN provider_packages pp ON pp.id = ir.package_id
+            WHERE ir.provider_id = $1
+            ORDER BY ir.updated_at DESC
+            LIMIT 6
+            """,
+            provider_id,
+        )
+        rating_summary = await db.fetchrow(
+            """
+            SELECT
+                round(avg(rating)::numeric, 1) AS rating,
+                count(*) AS reviews
+            FROM provider_reviews
+            WHERE provider_id = $1
+            """,
+            provider_id,
+        )
+        recent_reviews = await db.fetch(
+            """
+            SELECT
+                pr.rating,
+                pr.comment,
+                pr.updated_at,
+                pp.package_name,
+                u.first_name,
+                u.last_name
+            FROM provider_reviews pr
+            LEFT JOIN provider_packages pp ON pp.id = pr.package_id
+            LEFT JOIN users u ON u.id = pr.user_id
+            WHERE pr.provider_id = $1
+            ORDER BY pr.updated_at DESC
+            LIMIT 5
             """,
             provider_id,
         )
@@ -865,23 +1168,95 @@ async def get_dashboard(
             "status": provider["status"],
             "is_verified": provider["is_verified"],
             "joined_at": provider["created_at"].isoformat(),
-            "active_customers": 0,
-            "pending_installations": 0,
-            "monthly_revenue": 0,
+            "active_customers": int(active_customers or 0),
+            "pending_installations": int(pending_installations or 0),
+            "monthly_revenue": float(monthly_revenue or 0),
             "commission_due": 0,
             "packages_count": packages_count,
             "coverage_count": coverage_count,
-            "coverage_areas": [row["area_name"] for row in coverage_areas],
+            "coverage_areas": [
+                {
+                    "name": row["area"],
+                    "area": row["area"],
+                    "users": int(row["users"] or 0),
+                    "customer_count": int(row["users"] or 0),
+                    "revenue": float(row["revenue"] or 0),
+                    "monthly_revenue": float(row["revenue"] or 0),
+                    "progress": (
+                        (int(row["users"] or 0) / top_location_users) * 100
+                        if top_location_users
+                        else 0
+                    ),
+                }
+                for row in top_locations
+            ]
+            or [row["area_name"] for row in coverage_areas],
             "pending_documents": pending_docs,
             "packages": [
                 {
                     "package_name": row["package_name"],
                     "speed_mbps": row["speed_mbps"],
                     "monthly_price": float(row["monthly_price"] or 0),
+                    "users": int(row["users"] or 0),
+                    "active_users": int(row["users"] or 0),
+                    "customer_count": int(row["users"] or 0),
+                    "revenue": float(row["revenue"] or 0),
+                    "monthly_revenue": float(row["revenue"] or 0),
+                    "growth": 0,
                 }
                 for row in packages
             ],
-            "top_packages": [],
-            "top_locations": [],
-            "recent_requests": [],
+            "top_packages": [
+                {
+                    "package_name": row["package_name"],
+                    "users": int(row["users"] or 0),
+                    "revenue": float(row["revenue"] or 0),
+                }
+                for row in packages[:5]
+            ],
+            "top_locations": [
+                {
+                    "area": row["area"],
+                    "users": int(row["users"] or 0),
+                    "revenue": float(row["revenue"] or 0),
+                }
+                for row in top_locations
+            ],
+            "rating": float(rating_summary["rating"] or 0)
+            if rating_summary
+            else 0.0,
+            "reviews_count": int(rating_summary["reviews"] or 0)
+            if rating_summary
+            else 0,
+            "recent_reviews": [
+                {
+                    "customer_name": _review_customer_name(row),
+                    "package_name": row["package_name"] or "Package",
+                    "rating": int(row["rating"] or 0),
+                    "stars": int(row["rating"] or 0),
+                    "comment": row["comment"] or "",
+                    "updated_at": row["updated_at"].isoformat(),
+                }
+                for row in recent_reviews
+            ],
+            "recent_requests": [
+                {
+                    "id": str(row["id"]),
+                    "status": row["status"],
+                    "area": row["estate_or_building"],
+                    "package_name": row["package_name"],
+                    "monthly_price": float(row["monthly_price"] or 0),
+                    "created_at": row["created_at"].isoformat(),
+                    "completed_at": row["completed_at"].isoformat()
+                    if row["completed_at"]
+                    else None,
+                }
+                for row in recent_requests
+            ],
         }
+
+
+def _review_customer_name(row: Any) -> str:
+    first_name = (row["first_name"] or "").strip()
+    last_name = (row["last_name"] or "").strip()
+    return " ".join(part for part in [first_name, last_name] if part) or "Customer"
