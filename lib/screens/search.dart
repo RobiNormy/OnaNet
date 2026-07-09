@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/provider_detail.dart';
+import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
 import 'package:ona_net/utils/provider_filters.dart';
+import 'package:provider/provider.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -630,6 +632,8 @@ class _ProviderResultCard extends StatelessWidget {
     final speed = providerSpeed(provider);
     final price = providerPrice(provider);
     final distance = providerDistanceLabel(provider);
+    final savedProviders = context.watch<SavedProvidersStore>();
+    final isSaved = savedProviders.isSaved(provider);
 
     return InkWell(
       onTap: onTap,
@@ -716,6 +720,20 @@ class _ProviderResultCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
+            IconButton(
+              tooltip: isSaved ? 'Remove saved provider' : 'Save provider',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints.tightFor(width: 34, height: 34),
+              onPressed: () => savedProviders.toggle(provider),
+              icon: Icon(
+                isSaved
+                    ? Icons.bookmark_rounded
+                    : Icons.bookmark_border_rounded,
+                color: isSaved ? AppTheme.amber : mutedColor,
+                size: 20,
+              ),
+            ),
             const Icon(Icons.chevron_right_rounded, color: AppTheme.amber),
           ],
         ),
