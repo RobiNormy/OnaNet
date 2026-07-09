@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:ona_net/auth/package_service.dart';
 import 'package:ona_net/screens/installation_request.dart';
+import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:provider/provider.dart';
 
 class ProviderDetailScreen extends StatefulWidget {
   final Map<String, dynamic> provider;
@@ -45,6 +47,31 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                   ),
                 ),
                 actions: [
+                  Consumer<SavedProvidersStore>(
+                    builder: (context, savedProviders, _) {
+                      final isSaved = savedProviders.isSaved(provider);
+                      return Container(
+                        margin: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: IconButton(
+                          tooltip: isSaved
+                              ? 'Remove saved provider'
+                              : 'Save provider',
+                          icon: Icon(
+                            isSaved
+                                ? Icons.bookmark_rounded
+                                : Icons.bookmark_border_rounded,
+                            color: isSaved ? AppTheme.amber : Colors.white,
+                            size: 20,
+                          ),
+                          onPressed: () => savedProviders.toggle(provider),
+                        ),
+                      );
+                    },
+                  ),
                   Container(
                     margin: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -127,12 +154,6 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                 ),
               ),
             ],
-          ),
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: _StickyBottomBar(providerName: provider['name']),
           ),
         ],
       ),
@@ -923,16 +944,6 @@ class _PackageBottomBar extends StatelessWidget {
               },
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _BottomActionButton(
-              label: 'Chat on WhatsApp',
-              color: const Color(0xFF25D366),
-              textColor: Colors.white,
-              imageAsset: 'lib/images/whatsapp.webp',
-              onTap: () {},
-            ),
-          ),
         ],
       ),
     );
@@ -943,16 +954,14 @@ class _BottomActionButton extends StatelessWidget {
   final String label;
   final Color color;
   final Color textColor;
-  final IconData? icon;
-  final String? imageAsset;
+  final IconData icon;
   final VoidCallback onTap;
 
   const _BottomActionButton({
     required this.label,
     required this.color,
     required this.textColor,
-    this.icon,
-    this.imageAsset,
+    required this.icon,
     required this.onTap,
   });
 
@@ -970,10 +979,7 @@ class _BottomActionButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (imageAsset != null)
-              Image.asset(imageAsset!, width: 18, height: 18)
-            else
-              Icon(icon, color: textColor, size: 18),
+            Icon(icon, color: textColor, size: 18),
             const SizedBox(width: 7),
             Flexible(
               child: Text(
@@ -989,105 +995,6 @@ class _BottomActionButton extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _StickyBottomBar extends StatelessWidget {
-  final String providerName;
-  const _StickyBottomBar({required this.providerName});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        12,
-        20,
-        MediaQuery.of(context).padding.bottom + 12,
-      ),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.navyMid : AppTheme.white,
-        border: Border(
-          top: BorderSide(
-            color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
-          ),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.navy.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, -4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () {},
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF25D366),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Image.asset(
-                      'lib/images/whatsapp.webp',
-                      width: 18,
-                      height: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'WhatsApp',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: GestureDetector(
-              onTap: () {},
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppTheme.navy,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.phone, color: Colors.white, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Request Callback',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

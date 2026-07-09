@@ -8,6 +8,7 @@ import 'package:ona_net/screens/profile.dart';
 import 'package:ona_net/screens/provider_detail.dart';
 import 'package:ona_net/screens/saved.dart';
 import 'package:ona_net/screens/search.dart';
+import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
 import 'package:provider/provider.dart';
@@ -835,6 +836,8 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final savedProviders = context.watch<SavedProvidersStore>();
+    final isSaved = savedProviders.isSaved(provider);
     return Container(
       margin: EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
@@ -888,6 +891,26 @@ class _ProviderCard extends StatelessWidget {
                         ),
                       ),
                     ],
+                    SizedBox(width: 4),
+                    IconButton(
+                      tooltip: isSaved
+                          ? 'Remove saved provider'
+                          : 'Save provider',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: BoxConstraints.tightFor(
+                        width: 30,
+                        height: 30,
+                      ),
+                      onPressed: () => savedProviders.toggle(provider),
+                      icon: Icon(
+                        isSaved
+                            ? Icons.bookmark_rounded
+                            : Icons.bookmark_border_rounded,
+                        color: isSaved ? AppTheme.amber : AppTheme.gray,
+                        size: 19,
+                      ),
+                    ),
                   ],
                 ),
                 SizedBox(height: 4),

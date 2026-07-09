@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from backend.api.auth import router as auth_router
 from backend.api.provider import router as provider_router
+from backend.api.subscription import router as subscription_router
 from backend.db.session import init_db_pool, close_db_pool
 from backend.api.phone_verification import router as phone_router
 from backend.api.installation_requests import router as installation_requests_router
@@ -35,6 +36,7 @@ app.include_router(auth_router)
 app.include_router(provider_router)
 app.include_router(phone_router)
 app.include_router(installation_requests_router)
+app.include_router(subscription_router)
 @app.get("/")
 async def root():
     return {
