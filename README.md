@@ -1,4 +1,4 @@
-# ona_net
+# OnaNet
 
 Ona Net wifi discovery
 
@@ -28,14 +28,5 @@ computer must be on the same network, and your firewall must allow port `8000`.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+This is a wifi discovery market place where you can find better internet around you and compare packages to find the best deals it uses fastapi for the backend supabase for database and flutter for ui
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
