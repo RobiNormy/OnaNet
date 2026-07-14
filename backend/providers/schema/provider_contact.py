@@ -17,9 +17,7 @@ class ProviderContactCreate(BaseModel):
     def clean_optional_string(cls, value: str | None) -> str | None:
         if value is None:
             return None
-
-        cleaned = str(value).strip()
-        return cleaned or None
+        return str(value).strip() or None
 
 
 class ProviderContactsCreate(BaseModel):

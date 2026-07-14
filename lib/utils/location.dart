@@ -4,8 +4,15 @@ import 'package:geocoding/geocoding.dart' as geocoding;
 class LocationSuggestion {
   final String title;
   final String subtitle;
+  final double latitude;
+  final double longitude;
 
-  const LocationSuggestion({required this.title, required this.subtitle});
+  const LocationSuggestion({
+    required this.title,
+    required this.subtitle,
+    required this.latitude,
+    required this.longitude,
+  });
 
   String get displayName => subtitle.isEmpty ? title : '$title, $subtitle';
 }
@@ -106,7 +113,14 @@ class Location {
         final key = '$title|$subtitle'.toLowerCase();
         if (!seen.add(key)) continue;
 
-        suggestions.add(LocationSuggestion(title: title, subtitle: subtitle));
+        suggestions.add(
+          LocationSuggestion(
+            title: title,
+            subtitle: subtitle,
+            latitude: location.latitude,
+            longitude: location.longitude,
+          ),
+        );
       }
 
       return suggestions;

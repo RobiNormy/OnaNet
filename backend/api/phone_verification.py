@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter,Depends,Header,HTTPException,status
 
@@ -47,9 +48,9 @@ class VerifyResponse(BaseModel):
 class StatusResponse(BaseModel):
     phone_number: str | None = None
 
-    is_phone_verifiedd: bool = False
+    is_phone_verified: bool = False
 
-async def _resolver_user_id(firebase_uid: str) -> str:
+async def _resolver_user_id(firebase_uid: str) -> UUID:
     async with get_db_connection() as conn:
         row = await conn.fetchrow(
             "SELECT id FROM users WHERE firebase_uid = $1",
@@ -62,7 +63,7 @@ async def _resolver_user_id(firebase_uid: str) -> str:
             detail="User Profile not found"
 
         )
-    return str(row["id"])
+    return UUID(str(row["id"]))
 
 
 @router.post("/start",response_model=StartResponse)
@@ -151,7 +152,8 @@ async def phone_status(
                 detail="User profile not found",
             )
         
+        is_verified = bool(row["is_phone_verified"])
         return StatusResponse(
-            phone_number=row["phone_number"],
-            is_phone_verifiedd=bool(row["is_phone_verified"]),
+            phone_number=row["phone_number"] if is_verified else None,
+            is_phone_verified=is_verified,
         )

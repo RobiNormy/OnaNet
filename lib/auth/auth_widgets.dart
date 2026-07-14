@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
-
 class OnaNetLogo extends StatelessWidget {
   const OnaNetLogo({super.key});
 
@@ -9,12 +8,7 @@ class OnaNetLogo extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // WiFi icon
-        const Icon(
-          Icons.wifi_rounded,
-          color: AppTheme.amber,
-          size: 42,
-        ),
+        const Icon(Icons.wifi_rounded, color: AppTheme.amber, size: 42),
         const SizedBox(height: 4),
         RichText(
           text: const TextSpan(
@@ -45,10 +39,6 @@ class OnaNetLogo extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// AUTH FIELD
-// ─────────────────────────────────────────────
-
 class AuthField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
@@ -59,7 +49,8 @@ class AuthField extends StatelessWidget {
   final TextInputType keyboardType;
   final String? Function(String?)? validator;
 
-  const AuthField({super.key, 
+  const AuthField({
+    super.key,
     required this.controller,
     required this.hint,
     required this.icon,
@@ -91,15 +82,15 @@ class AuthField extends StatelessWidget {
         prefixIcon: Icon(icon, color: AppTheme.gray, size: 20),
         suffixIcon: isPassword
             ? GestureDetector(
-          onTap: onTogglePassword,
-          child: Icon(
-            showPassword
-                ? Icons.visibility_outlined
-                : Icons.visibility_off_outlined,
-            color: AppTheme.gray,
-            size: 20,
-          ),
-        )
+                onTap: onTogglePassword,
+                child: Icon(
+                  showPassword
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  color: AppTheme.gray,
+                  size: 20,
+                ),
+              )
             : null,
         filled: true,
         fillColor: AppTheme.white,
@@ -109,54 +100,36 @@ class AuthField extends StatelessWidget {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: AppTheme.lightGray,
-            width: 1,
-          ),
+          borderSide: const BorderSide(color: AppTheme.lightGray, width: 1),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: AppTheme.lightGray,
-            width: 1,
-          ),
+          borderSide: const BorderSide(color: AppTheme.lightGray, width: 1),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: AppTheme.amber,
-            width: 1.5,
-          ),
+          borderSide: const BorderSide(color: AppTheme.amber, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-              color: Colors.red,
-            width: 1,
-          ),
+          borderSide: const BorderSide(color: Colors.red, width: 1),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: Colors.red,
-            width: 1.5,
-          ),
+          borderSide: const BorderSide(color: Colors.red, width: 1.5),
         ),
       ),
     );
   }
 }
 
-// ─────────────────────────────────────────────
-// PRIMARY BUTTON
-// ─────────────────────────────────────────────
-
 class PrimaryButton extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final bool isLoading;
 
-  const PrimaryButton({super.key, 
+  const PrimaryButton({
+    super.key,
     required this.label,
     required this.onTap,
     this.isLoading = false,
@@ -180,29 +153,25 @@ class PrimaryButton extends StatelessWidget {
         ),
         child: isLoading
             ? const SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(
-            color: AppTheme.white,
-            strokeWidth: 2.5,
-          ),
-        )
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  color: AppTheme.white,
+                  strokeWidth: 2.5,
+                ),
+              )
             : Text(
-          label,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.white,
-          ),
-        ),
+                label,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.white,
+                ),
+              ),
       ),
     );
   }
 }
-
-// ─────────────────────────────────────────────
-// OR DIVIDER
-// ─────────────────────────────────────────────
 
 class OrDivider extends StatelessWidget {
   const OrDivider({super.key});
@@ -211,35 +180,21 @@ class OrDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(
-          child: Container(
-            height: 1,
-            color: AppTheme.lightGray,
-          ),
-        ),
+        Expanded(child: Container(height: 1, color: AppTheme.lightGray)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text(
             'or',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppTheme.gray,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppTheme.gray),
           ),
         ),
-        Expanded(
-          child: Container(
-            height: 1,
-            color: AppTheme.lightGray,
-          ),
-        ),
+        Expanded(child: Container(height: 1, color: AppTheme.lightGray)),
       ],
     );
   }
 }
-
-// ─────────────────────────────────────────────
-// GOOGLE BUTTON
-// ─────────────────────────────────────────────
 
 class GoogleButton extends StatelessWidget {
   const GoogleButton({super.key});
@@ -250,9 +205,7 @@ class GoogleButton extends StatelessWidget {
       width: double.infinity,
       height: 54,
       child: OutlinedButton(
-        onPressed: () {
-          // TODO: Google sign in
-        },
+        onPressed: () {},
         style: OutlinedButton.styleFrom(
           side: const BorderSide(color: AppTheme.lightGray, width: 1.5),
           shape: RoundedRectangleBorder(
@@ -263,7 +216,6 @@ class GoogleButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Google G logo using colored circles
             _GoogleIcon(),
             const SizedBox(width: 12),
             Text(
@@ -304,16 +256,13 @@ class _GoogleIcon extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// AUTH REDIRECT TEXT
-// ─────────────────────────────────────────────
-
 class AuthRedirectText extends StatelessWidget {
   final String text;
   final String actionText;
   final VoidCallback onTap;
 
-  const AuthRedirectText({super.key, 
+  const AuthRedirectText({
+    super.key,
     required this.text,
     required this.actionText,
     required this.onTap,
@@ -323,9 +272,9 @@ class AuthRedirectText extends StatelessWidget {
   Widget build(BuildContext context) {
     return RichText(
       text: TextSpan(
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: AppTheme.darkGray,
-        ),
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(color: AppTheme.darkGray),
         children: [
           TextSpan(text: text),
           WidgetSpan(

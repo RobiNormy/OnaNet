@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/provider_detail.dart';
+import 'package:ona_net/services/pro_analytics_service.dart';
 import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
@@ -25,6 +28,7 @@ class _SearchScreenState extends State<SearchScreen> {
   double? _userLatitude;
   double? _userLongitude;
   ProviderFilter _selectedFilter = ProviderFilter.all;
+  Timer? _analyticsDebounce;
 
   static const _quickGoals = [
     _SearchGoal(
@@ -62,6 +66,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _analyticsDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -77,6 +82,7 @@ class _SearchScreenState extends State<SearchScreen> {
       _userLatitude = location.latitude;
       _userLongitude = location.longitude;
     });
+    _scheduleSearchAnalytics();
   }
 
   Future<void> _loadProviders() async {
@@ -92,6 +98,7 @@ class _SearchScreenState extends State<SearchScreen> {
         _providers = providers;
         _isLoading = false;
       });
+      _scheduleSearchAnalytics();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -107,20 +114,49 @@ class _SearchScreenState extends State<SearchScreen> {
 
   List<Map<String, dynamic>> get _filteredProviders {
     final query = _query.trim().toLowerCase();
-    final localProviders = filterProviders(
-      _providers,
-      filter: _selectedFilter,
-      userLatitude: _userLatitude,
-      userLongitude: _userLongitude,
-      userArea: _area,
-    );
-    if (query.isEmpty) return localProviders.take(12).toList();
+    final directoryProviders =
+        filterProviders(
+          _providers,
+          filter: _selectedFilter,
+          userLatitude: _userLatitude,
+          userLongitude: _userLongitude,
+          userArea: _area,
+          restrictToUserArea: false,
+        )..sort((a, b) {
+          final aNearby = providerMatchesUserLocation(
+            a,
+            userLatitude: _userLatitude,
+            userLongitude: _userLongitude,
+            userArea: _area,
+          );
+          final bNearby = providerMatchesUserLocation(
+            b,
+            userLatitude: _userLatitude,
+            userLongitude: _userLongitude,
+            userArea: _area,
+          );
+          if (aNearby != bNearby) return aNearby ? -1 : 1;
+          return providerName(a).compareTo(providerName(b));
+        });
+    if (query.isEmpty) return directoryProviders.take(12).toList();
 
-    return localProviders.where((provider) {
+    return directoryProviders.where((provider) {
       final searchable = [
         providerName(provider),
         providerType(provider),
         ...providerCoverageAreas(provider),
+        ...providerPackages(provider).expand(
+          (package) => [
+            package['name'],
+            package['package_name'],
+            package['speed'],
+            package['speed_mbps'],
+            package['price'],
+            package['monthly_price'],
+            package['connectionType'],
+            package['connection_type'],
+          ],
+        ),
         '${providerSpeed(provider)}mbps',
         'kes ${providerPrice(provider)}',
         providerDistanceLabel(provider),
@@ -152,6 +188,46 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _onQueryChanged(String value) {
     setState(() => _query = value);
+    _scheduleSearchAnalytics();
+  }
+
+  void _scheduleSearchAnalytics() {
+    _analyticsDebounce?.cancel();
+    final hasSearch =
+        _query.trim().isNotEmpty || _selectedFilter != ProviderFilter.all;
+    if (!hasSearch || _isLoading) return;
+
+    _analyticsDebounce = Timer(const Duration(milliseconds: 800), () {
+      final speedMatch = RegExp(
+        r'(\d{1,4})\s*(?:mbps|mb)',
+      ).firstMatch(_query.toLowerCase());
+      final speedMbps = int.tryParse(speedMatch?.group(1) ?? '');
+      ProAnalyticsService().logSearch(
+        providers: _filteredProviders.take(100).toList(),
+        queryText: _query.trim(),
+        area: _searchedArea ?? _area,
+        latitude: _userLatitude,
+        longitude: _userLongitude,
+        speedMbps: speedMbps,
+        filterName: providerFilterLabel(_selectedFilter),
+      );
+    });
+  }
+
+  String? get _searchedArea {
+    final query = _query.trim().toLowerCase();
+    if (query.isEmpty) return null;
+    final areas =
+        _providers
+            .expand(providerCoverageAreas)
+            .where((area) => area.trim().isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort((a, b) => b.length.compareTo(a.length));
+    for (final area in areas) {
+      if (query.contains(area.toLowerCase())) return area;
+    }
+    return null;
   }
 
   void _openProvider(Map<String, dynamic> provider) {
@@ -238,6 +314,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         selected: _selectedFilter,
                         onChanged: (filter) {
                           setState(() => _selectedFilter = filter);
+                          _scheduleSearchAnalytics();
                         },
                       ),
                     ],

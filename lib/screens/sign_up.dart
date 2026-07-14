@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
-import 'package:ona_net/provider/registration.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
@@ -27,91 +26,6 @@ class _SignUpState extends State<SignUp> {
   final RegExp _passwordRegex = RegExp(
     r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$',
   );
-
-  @override
-  void dispose() {
-    _firstname.dispose();
-    _lastname.dispose();
-    _email.dispose();
-    _password.dispose();
-    _confirmPassword.dispose();
-    super.dispose();
-  }
-
-  void _goAfterAccountCreated() {
-    if (!mounted) return;
-    if (widget.providerMode) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const ProviderReg()),
-        (route) => false,
-      );
-      return;
-    }
-
-    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-  }
-
-  Future<void> _submitEmailSignUp() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
-    setState(() => _isLoading = true);
-    try {
-      final authService = AuthService();
-      await authService.signUpWithEmail(
-        email: _email.text.trim(),
-        password: _password.text,
-        firstName: _firstname.text.trim(),
-        lastName: _lastname.text.trim(),
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      _goAfterAccountCreated();
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _submitGoogleSignIn() async {
-    setState(() => _isLoading = true);
-    try {
-      final authService = AuthService();
-      await authService.signInWithGoogle();
-
-      if (!mounted) {
-        return;
-      }
-
-      _goAfterAccountCreated();
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -158,9 +72,7 @@ class _SignUpState extends State<SignUp> {
                       _OnaNetLogo(textColor: textColor),
                       const SizedBox(height: 10),
                       Text(
-                        widget.providerMode
-                            ? 'Create Provider Account'
-                            : 'Create Account',
+                        'Create Account',
                         style: GoogleFonts.urbanist(
                           fontSize: 30,
                           fontWeight: FontWeight.w800,
@@ -169,9 +81,7 @@ class _SignUpState extends State<SignUp> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        widget.providerMode
-                            ? 'Set up your provider portal access'
-                            : 'Find better internet near you',
+                        'Find better internet near you',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.urbanist(
                           fontSize: 15,
@@ -186,7 +96,7 @@ class _SignUpState extends State<SignUp> {
                         borderColor: borderColor,
                         controller: _firstname,
                         validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
+                          if (value == null || value.isEmpty) {
                             return 'Please enter your first name';
                           }
                           return null;
@@ -199,7 +109,7 @@ class _SignUpState extends State<SignUp> {
                         borderColor: borderColor,
                         controller: _lastname,
                         validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
+                          if (value == null || value.isEmpty) {
                             return 'Please enter your last name';
                           }
                           return null;
@@ -213,11 +123,9 @@ class _SignUpState extends State<SignUp> {
                         keyboardType: TextInputType.emailAddress,
                         controller: _email,
                         validator: (value) {
-                          final email = value?.trim() ?? '';
-                          if (email.isEmpty ||
-                              !RegExp(
-                                r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$',
-                              ).hasMatch(email)) {
+                          if (value == null ||
+                              value.isEmpty ||
+                              !value.contains('@')) {
                             return 'Please enter a valid email address';
                           }
                           return null;
@@ -243,11 +151,10 @@ class _SignUpState extends State<SignUp> {
                           },
                         ),
                         validator: (value) {
-                          final password = value ?? '';
-                          if (password.isEmpty) {
+                          if (value == null || value.isEmpty) {
                             return 'Please enter a password';
                           }
-                          if (!_passwordRegex.hasMatch(password)) {
+                          if (!_passwordRegex.hasMatch(value)) {
                             return 'Password must be 8+ chars with uppercase, lowercase, number & symbol';
                           }
                           return null;
@@ -261,11 +168,10 @@ class _SignUpState extends State<SignUp> {
                         obscureText: _obscureConfirmPassword,
                         controller: _confirmPassword,
                         validator: (value) {
-                          final confirmPassword = value ?? '';
-                          if (confirmPassword.isEmpty) {
+                          if (value == null || value.isEmpty) {
                             return 'Please confirm your password';
                           }
-                          if (confirmPassword != _password.text) {
+                          if (value != _password.text) {
                             return 'Passwords do not match';
                           }
                           return null;
@@ -289,7 +195,42 @@ class _SignUpState extends State<SignUp> {
                         width: double.infinity,
                         height: 54,
                         child: ElevatedButton(
-                          onPressed: _isLoading ? null : _submitEmailSignUp,
+                          onPressed: _isLoading
+                              ? null
+                              : () async {
+                                  if (_formKey.currentState!.validate()) {
+                                    setState(() => _isLoading = true);
+                                    try {
+                                      final authService = AuthService();
+                                      await authService.signUpWithEmail(
+                                        email: _email.text.trim(),
+                                        password: _password.text.trim(),
+                                        firstName: _firstname.text.trim(),
+                                        lastName: _lastname.text.trim(),
+                                      );
+                                      if (context.mounted) {
+                                        Navigator.of(
+                                          context,
+                                        ).pushNamedAndRemoveUntil(
+                                          '/',
+                                          (route) => false,
+                                        );
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(content: Text(e.toString())),
+                                        );
+                                      }
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => _isLoading = false);
+                                      }
+                                    }
+                                  }
+                                },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppTheme.amber,
                             foregroundColor: AppTheme.navy,
@@ -351,7 +292,35 @@ class _SignUpState extends State<SignUp> {
                         width: double.infinity,
                         height: 55,
                         child: OutlinedButton.icon(
-                          onPressed: _isLoading ? null : _submitGoogleSignIn,
+                          onPressed: _isLoading
+                              ? null
+                              : () async {
+                                  setState(() => _isLoading = true);
+                                  try {
+                                    final authService = AuthService();
+                                    await authService.signInWithGoogle();
+                                    if (context.mounted) {
+                                      Navigator.of(
+                                        context,
+                                      ).pushNamedAndRemoveUntil(
+                                        '/',
+                                        (route) => false,
+                                      );
+                                    }
+                                  } catch (e) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(content: Text(e.toString())),
+                                      );
+                                    }
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() => _isLoading = false);
+                                    }
+                                  }
+                                },
                           icon: Image.asset(
                             'lib/images/noback.png',
                             height: 22,
@@ -445,7 +414,8 @@ class _OnaNetLogo extends StatelessWidget {
             ),
             Positioned(
               top: -15,
-              child: Icon(Icons.wifi_rounded, color: AppTheme.amber, size: 18),
+              height: -1,
+              child: Icon(Icons.wifi_rounded, color: Colors.amber),
             ),
           ],
         ),

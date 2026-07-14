@@ -29,4 +29,3 @@ computer must be on the same network, and your firewall must allow port `8000`.
 ## Getting Started
 
 This is a wifi discovery market place where you can find better internet around you and compare packages to find the best deals it uses fastapi for the backend supabase for database and flutter for ui
-

@@ -51,7 +51,6 @@ env/
 
 # Environment Variables & Credentials
 .env
-random
 *.json
 
 # Python Cache & Compiled Files
@@ -63,3 +62,4 @@ __pycache__/
 # Operating System Files
 .DS_Store
 Thumbs.db
+

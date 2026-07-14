@@ -17,6 +17,7 @@ class InstallationRequestCreate(BaseModel):
     estate_or_building: str = Field(...,min_length=1,max_length=200)
     house_or_apartment: str | None = Field(default=None,max_length=120)
     landmark: str | None = Field(default=None,max_length=500)
+    customer_message: str | None = Field(default=None, max_length=1000)
 
     preferred_date: date
     preferred_time: time
@@ -36,6 +37,7 @@ class InstallationRequestOut(BaseModel):
     provider_id:UUID
     package_id:UUID
     package_name: str | None = Field(default=None)
+    provider_name: str | None = Field(default=None)
 
     phone_e164: str
     gps_location: str | None = Field(default=None)
@@ -43,11 +45,7 @@ class InstallationRequestOut(BaseModel):
     estate_or_building: str
     house_or_apartment: str | None = Field(default=None)
     landmark:str | None = Field(default=None)
-    gps_location: str | None = None
-
-    estate_or_building: str
-    house_or_apartment: str
-    landmark:str | None = None
+    customer_message: str | None = Field(default=None)
 
     preferred_date: date
     preferred_time: time
@@ -55,9 +53,9 @@ class InstallationRequestOut(BaseModel):
     status: InstallationStatus
     decline_reason: str | None = Field(default=None)
     completed_at: datetime | None = Field(default=None)
-
-    decline_reason: str | None = None
-    completed_at: datetime | None = None
+    review_id: UUID | None = Field(default=None)
+    review_rating: int | None = Field(default=None)
+    review_comment: str | None = Field(default=None)
     
     created_at: datetime
     updated_at: datetime

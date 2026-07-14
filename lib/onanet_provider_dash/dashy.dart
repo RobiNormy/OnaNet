@@ -1,29 +1,52 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/onanet_provider_dash/pro_analytics.dart';
+import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/services/provider_inbox.dart';
+import 'package:ona_net/services/subscription_service.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+Future<void> _openMapLocation(BuildContext context, String url) async {
+  final parsed = Uri.tryParse(url);
+  final uri =
+      parsed != null && (parsed.scheme == 'https' || parsed.scheme == 'http')
+      ? parsed
+      : Uri.https('www.google.com', '/maps/search/', {
+          'api': '1',
+          'query': url,
+        });
+  final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open Google Maps.')),
+    );
+  }
+}
 
 bool _isDark(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark;
 
 Color _dashBackground(BuildContext context) =>
-    Theme.of(context).scaffoldBackgroundColor;
+    _isDark(context) ? const Color(0xFF06131E) : const Color(0xFFF4F7FB);
 
 Color _dashSurface(BuildContext context) =>
-    _isDark(context) ? AppTheme.navyMid : AppTheme.white;
+    _isDark(context) ? const Color(0xFF0D2231) : AppTheme.white;
 
 Color _dashText(BuildContext context) =>
     _isDark(context) ? AppTheme.offWhite : AppTheme.navy;
 
 Color _dashMuted(BuildContext context) =>
-    _isDark(context) ? AppTheme.gray : AppTheme.darkGray;
+    _isDark(context) ? const Color(0xFF8FA6B5) : const Color(0xFF64748B);
 
-Color _dashBorder(BuildContext context) =>
-    _isDark(context) ? AppTheme.navyLight : AppTheme.lightGray;
+Color _dashBorder(BuildContext context) => _isDark(context)
+    ? Colors.white.withValues(alpha: .075)
+    : const Color(0xFFE5EAF1);
 
 Color _dashSoftAmber(BuildContext context) => _isDark(context)
     ? AppTheme.amber.withValues(alpha: .14)
@@ -33,7 +56,9 @@ Color _dashAccentText(BuildContext context) =>
     _isDark(context) ? AppTheme.amberLight : AppTheme.amberDark;
 
 Color _dashShadow(BuildContext context) =>
-    (_isDark(context) ? Colors.black : AppTheme.navy).withValues(alpha: .08);
+    (_isDark(context) ? Colors.black : const Color(0xFF16324A)).withValues(
+      alpha: _isDark(context) ? .2 : .065,
+    );
 
 TextStyle _dashFont({
   Color? color,
@@ -56,12 +81,21 @@ class Dashboard extends StatefulWidget {
   State<Dashboard> createState() => _DashboardState();
 }
 
-enum _ProviderDashView { dashboard, installationRequests }
+enum _ProviderDashView {
+  dashboard,
+  packages,
+  coverage,
+  installationRequests,
+  customers,
+  reviews,
+  messages,
+  analytics,
+}
 
 class _DashboardState extends State<Dashboard> {
   bool _showMobileSidebar = false;
   _ProviderDashView _activeView = _ProviderDashView.dashboard;
-  late final Future<Map<String, dynamic>> _providerFuture;
+  late Future<Map<String, dynamic>> _providerFuture;
   late DateTimeRange _selectedDateRange;
   late String _selectedMonth;
   final _inboxService = ProviderInbox();
@@ -70,6 +104,34 @@ class _DashboardState extends State<Dashboard> {
   bool _inboxLoading = false;
   bool _inboxLoaded = false;
   String? _inboxError;
+  bool _isTestUpgradeRunning = false;
+
+  Future<void> _activateTestUpgrade() async {
+    if (_isTestUpgradeRunning) return;
+    setState(() => _isTestUpgradeRunning = true);
+
+    try {
+      await SubscriptionService().upgradeToProForTesting();
+      if (!mounted) return;
+      _refreshProviderDashboard();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Test Pro plan activated for 30 days.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(error.toString()),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isTestUpgradeRunning = false);
+    }
+  }
 
   Future<void> _refreshInbox() async {
     setState(() {
@@ -137,6 +199,13 @@ class _DashboardState extends State<Dashboard> {
       await _inboxService.complete(requestId);
       await _refreshInbox();
       _refreshProviderDashboard();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Installation completed. Customer added to Customers.'),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -161,6 +230,18 @@ class _DashboardState extends State<Dashboard> {
       _activeView = _ProviderDashView.dashboard;
       if (closeSidebar) _showMobileSidebar = false;
     });
+  }
+
+  void _showView(_ProviderDashView view, {bool closeSidebar = false}) {
+    setState(() {
+      _activeView = view;
+      if (closeSidebar) _showMobileSidebar = false;
+    });
+    if (view == _ProviderDashView.installationRequests ||
+        view == _ProviderDashView.customers ||
+        view == _ProviderDashView.messages) {
+      _refreshInbox();
+    }
   }
 
   Future<void> _logoutProvider({bool closeSidebar = false}) async {
@@ -199,7 +280,10 @@ class _DashboardState extends State<Dashboard> {
           content: Text('Signed out successfully.'),
         ),
       );
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const Login(providerMode: true)),
+        (route) => false,
+      );
     } catch (error) {
       if (!mounted) return;
       messenger.showSnackBar(
@@ -229,6 +313,17 @@ class _DashboardState extends State<Dashboard> {
     final baseTheme = Theme.of(context);
     final dashboardTheme = baseTheme.copyWith(
       textTheme: GoogleFonts.urbanistTextTheme(baseTheme.textTheme),
+      cardTheme: CardThemeData(
+        color: _dashSurface(context),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: _dashBorder(context)),
+        ),
+      ),
+      dividerColor: _dashBorder(context),
     );
     return Theme(
       data: dashboardTheme,
@@ -260,144 +355,183 @@ class _DashboardState extends State<Dashboard> {
                   body: LayoutBuilder(
                     builder: (context, constraints) {
                       final wide = constraints.maxWidth >= 1100;
-                      final content = _activeView == _ProviderDashView.dashboard
-                          ? _DashboardContent(
-                              metrics: metrics,
-                              revenue: revenue,
-                              revenueTotal: _moneyValue(
-                                provider,
-                                'monthly_revenue',
-                              ),
-                              dateRangeLabel: _dateRangeLabel(
-                                _selectedDateRange,
-                              ),
-                              selectedMonth: _selectedMonth,
-                              onDateRangePressed: _pickDateRange,
-                              onMonthPressed: _pickMonth,
-                              packages: packages,
-                              locations: locations,
-                              requests: _inboxItems,
-                              requestsLoading: _inboxLoading,
-                              requestsError: _inboxError,
-                              onRefreshRequests: _refreshInbox,
-                              onAcceptRequest: _acceptRequest,
-                              onDeclineRequest: _declineRequest,
-                              onCompleteRequest: _completeRequest,
-                              onOpenFullRequests: _showInstallationRequests,
-                              requestsSectionKey: _requestsSectionKey,
-                              reviews: reviews,
-                              pendingRequestCount: livePendingRequestCount,
-                              providerName: providerName,
-                              providerStatus: providerStatus,
-                              providerLoadError: snapshot.hasError
-                                  ? snapshot.error.toString()
-                                  : null,
-                              isLoadingProvider:
-                                  snapshot.connectionState ==
-                                  ConnectionState.waiting,
-                              showMenuButton: !wide,
-                              onMenuPressed: () {
-                                setState(() => _showMobileSidebar = true);
-                              },
-                            )
-                          : _InstallationRequestsPage(
-                              providerName: providerName,
-                              providerStatus: providerStatus,
-                              notificationCount: livePendingRequestCount,
-                              dateRangeLabel: _dateRangeLabel(
-                                _selectedDateRange,
-                              ),
-                              requests: _inboxItems,
-                              isLoading: _inboxLoading,
-                              error: _inboxError,
-                              showMenuButton: !wide,
-                              onMenuPressed: () {
-                                setState(() => _showMobileSidebar = true);
-                              },
-                              onDateRangePressed: _pickDateRange,
-                              onBackToDashboard: _showDashboard,
-                              onRefresh: _refreshInbox,
-                              onAccept: _acceptRequest,
-                              onDecline: _declineRequest,
-                              onComplete: _completeRequest,
-                            );
+                      final content = switch (_activeView) {
+                        _ProviderDashView.dashboard => _DashboardContent(
+                          metrics: metrics,
+                          revenue: revenue,
+                          revenueTotal: _moneyValue(
+                            provider,
+                            'monthly_revenue',
+                          ),
+                          dateRangeLabel: _dateRangeLabel(_selectedDateRange),
+                          selectedMonth: _selectedMonth,
+                          onDateRangePressed: _pickDateRange,
+                          onMonthPressed: _pickMonth,
+                          packages: packages,
+                          locations: locations,
+                          requests: _inboxItems,
+                          requestsLoading: _inboxLoading,
+                          requestsError: _inboxError,
+                          onRefreshRequests: _refreshInbox,
+                          onAcceptRequest: _acceptRequest,
+                          onDeclineRequest: _declineRequest,
+                          onCompleteRequest: _completeRequest,
+                          onOpenFullRequests: _showInstallationRequests,
+                          requestsSectionKey: _requestsSectionKey,
+                          reviews: reviews,
+                          pendingRequestCount: livePendingRequestCount,
+                          providerName: providerName,
+                          providerStatus: providerStatus,
+                          providerLoadError: snapshot.hasError
+                              ? snapshot.error.toString()
+                              : null,
+                          isLoadingProvider:
+                              snapshot.connectionState ==
+                              ConnectionState.waiting,
+                          showMenuButton: !wide,
+                          onMenuPressed: () {
+                            setState(() => _showMobileSidebar = true);
+                          },
+                        ),
+                        _ProviderDashView.installationRequests =>
+                          _InstallationRequestsPage(
+                            providerName: providerName,
+                            providerStatus: providerStatus,
+                            notificationCount: livePendingRequestCount,
+                            dateRangeLabel: _dateRangeLabel(_selectedDateRange),
+                            requests: _inboxItems,
+                            isLoading: _inboxLoading,
+                            error: _inboxError,
+                            showMenuButton: !wide,
+                            onMenuPressed: () {
+                              setState(() => _showMobileSidebar = true);
+                            },
+                            onDateRangePressed: _pickDateRange,
+                            onBackToDashboard: _showDashboard,
+                            onRefresh: _refreshInbox,
+                            onAccept: _acceptRequest,
+                            onDecline: _declineRequest,
+                            onComplete: _completeRequest,
+                          ),
+                        _ProviderDashView.analytics => ProAnalyticsPage(
+                          isPro:
+                              provider?['subscription_tier']
+                                  ?.toString()
+                                  .trim()
+                                  .toLowerCase() ==
+                              'pro',
+                          isUpgradeRunning: _isTestUpgradeRunning,
+                          onUpgradePressed: _activateTestUpgrade,
+                          showMenuButton: !wide,
+                          onMenuPressed: () =>
+                              setState(() => _showMobileSidebar = true),
+                        ),
+                        _ => _ProviderSectionPage(
+                          view: _activeView,
+                          providerId: provider?['id']?.toString() ?? '',
+                          providerName: providerName,
+                          providerStatus: providerStatus,
+                          requests: _inboxItems,
+                          showMenuButton: !wide,
+                          onMenuPressed: () =>
+                              setState(() => _showMobileSidebar = true),
+                          onChanged: () {
+                            _refreshProviderDashboard();
+                            _refreshInbox();
+                          },
+                        ),
+                      };
                       if (!wide) {
-                        return SafeArea(
-                          child: Stack(
-                            children: [
-                              SingleChildScrollView(
-                                padding: const EdgeInsets.all(16),
-                                child: content,
-                              ),
-                              Positioned(
-                                left: 0,
-                                top: 0,
-                                bottom: 0,
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.translucent,
-                                  onTap: () =>
-                                      setState(() => _showMobileSidebar = true),
-                                  onHorizontalDragEnd: (details) {
-                                    if ((details.primaryVelocity ?? 0) > 0) {
-                                      setState(() => _showMobileSidebar = true);
-                                    }
-                                  },
-                                  child: const SizedBox(width: 24),
-                                ),
-                              ),
-                              if (_showMobileSidebar)
+                        return SizedBox.expand(
+                          child: SafeArea(
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
                                 Positioned.fill(
+                                  child: SingleChildScrollView(
+                                    padding: const EdgeInsets.all(16),
+                                    child: content,
+                                  ),
+                                ),
+                                Positioned(
+                                  left: 0,
+                                  top: 0,
+                                  bottom: 0,
                                   child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () {
-                                      setState(
-                                        () => _showMobileSidebar = false,
-                                      );
+                                    behavior: HitTestBehavior.translucent,
+                                    onTap: () => setState(
+                                      () => _showMobileSidebar = true,
+                                    ),
+                                    onHorizontalDragEnd: (details) {
+                                      if ((details.primaryVelocity ?? 0) > 0) {
+                                        setState(
+                                          () => _showMobileSidebar = true,
+                                        );
+                                      }
                                     },
-                                    child: Container(
-                                      color: Colors.black.withValues(
-                                        alpha: .35,
+                                    child: const SizedBox(width: 24),
+                                  ),
+                                ),
+                                if (_showMobileSidebar)
+                                  Positioned.fill(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () {
+                                        setState(
+                                          () => _showMobileSidebar = false,
+                                        );
+                                      },
+                                      child: Container(
+                                        color: Colors.black.withValues(
+                                          alpha: .35,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                AnimatedPositioned(
+                                  duration: const Duration(milliseconds: 240),
+                                  curve: Curves.easeOutCubic,
+                                  left: _showMobileSidebar ? 0 : -280,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: 280,
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    elevation: _showMobileSidebar ? 18 : 0,
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () {},
+                                      onHorizontalDragEnd: (details) {
+                                        if ((details.primaryVelocity ?? 0) <
+                                            0) {
+                                          setState(
+                                            () => _showMobileSidebar = false,
+                                          );
+                                        }
+                                      },
+                                      child: _SideBar(
+                                        activeView: _activeView,
+                                        providerName: providerName,
+                                        providerStatus: providerStatus,
+                                        subscriptionTier:
+                                            provider?['subscription_tier']
+                                                ?.toString() ??
+                                            'free',
+                                        packageCount: packages.length,
+                                        isUpgradeRunning: _isTestUpgradeRunning,
+                                        pendingRequestCount:
+                                            livePendingRequestCount,
+                                        onViewPressed: (view) =>
+                                            _showView(view, closeSidebar: true),
+                                        onUpgradePressed: _activateTestUpgrade,
+                                        onLogoutPressed: () =>
+                                            _logoutProvider(closeSidebar: true),
                                       ),
                                     ),
                                   ),
                                 ),
-                              AnimatedPositioned(
-                                duration: const Duration(milliseconds: 240),
-                                curve: Curves.easeOutCubic,
-                                left: _showMobileSidebar ? 0 : -280,
-                                top: 0,
-                                bottom: 0,
-                                width: 280,
-                                child: Material(
-                                  color: Colors.transparent,
-                                  elevation: _showMobileSidebar ? 18 : 0,
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () {},
-                                    onHorizontalDragEnd: (details) {
-                                      if ((details.primaryVelocity ?? 0) < 0) {
-                                        setState(
-                                          () => _showMobileSidebar = false,
-                                        );
-                                      }
-                                    },
-                                    child: _SideBar(
-                                      activeView: _activeView,
-                                      pendingRequestCount:
-                                          livePendingRequestCount,
-                                      onDashboardPressed: () =>
-                                          _showDashboard(closeSidebar: true),
-                                      onInstallationRequestsPressed: () =>
-                                          _showInstallationRequests(
-                                            closeSidebar: true,
-                                          ),
-                                      onLogoutPressed: () =>
-                                          _logoutProvider(closeSidebar: true),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         );
                       }
@@ -405,10 +539,16 @@ class _DashboardState extends State<Dashboard> {
                         children: [
                           _SideBar(
                             activeView: _activeView,
+                            providerName: providerName,
+                            providerStatus: providerStatus,
+                            subscriptionTier:
+                                provider?['subscription_tier']?.toString() ??
+                                'free',
+                            packageCount: packages.length,
+                            isUpgradeRunning: _isTestUpgradeRunning,
                             pendingRequestCount: livePendingRequestCount,
-                            onDashboardPressed: _showDashboard,
-                            onInstallationRequestsPressed:
-                                _showInstallationRequests,
+                            onViewPressed: _showView,
+                            onUpgradePressed: _activateTestUpgrade,
                             onLogoutPressed: _logoutProvider,
                           ),
                           Expanded(
@@ -580,15 +720,17 @@ class _DashboardState extends State<Dashboard> {
   }
 
   List<_RevenuePoint> _revenueFromProvider(Map<String, dynamic>? provider) {
-    final monthlyRevenue = _moneyValue(provider, 'monthly_revenue');
-    return [
-      const _RevenuePoint('Jan', 0),
-      const _RevenuePoint('Feb', 0),
-      const _RevenuePoint('Mar', 0),
-      const _RevenuePoint('Apr', 0),
-      const _RevenuePoint('May', 0),
-      _RevenuePoint('Now', monthlyRevenue),
-    ];
+    final history = provider?['revenue_history'];
+    if (history is! List) return const [];
+    return _mapList(history)
+        .map(
+          (point) => _RevenuePoint(
+            point['month']?.toString() ?? '',
+            _moneyFromObject(point['amount']),
+          ),
+        )
+        .where((point) => point.month.isNotEmpty)
+        .toList();
   }
 
   List<_PackageRow> _packagesFromProvider(Map<String, dynamic>? provider) {
@@ -636,6 +778,7 @@ class _DashboardState extends State<Dashboard> {
             final map = Map<String, dynamic>.from(area);
             final name =
                 _stringValue(map, 'name') ??
+                _stringValue(map, 'area_name') ??
                 _stringValue(map, 'area') ??
                 _stringValue(map, 'location') ??
                 'Coverage area';
@@ -653,6 +796,9 @@ class _DashboardState extends State<Dashboard> {
               '${_formatInt(users)} users',
               'KES ${_formatMoney(revenue)}',
               users > 0 ? progress : .08,
+              latitude: _nullableDouble(map['latitude']),
+              longitude: _nullableDouble(map['longitude']),
+              radiusKm: _nullableDouble(map['radius_km']),
             );
           }
 
@@ -722,6 +868,11 @@ class _DashboardState extends State<Dashboard> {
   double _moneyFromObject(Object? value) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  double? _nullableDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 
   String _formatInt(int value) {
@@ -944,58 +1095,80 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final mobile = constraints.maxWidth < 760;
-        final welcome = _WelcomeBlock(
-          providerName: providerName,
-          showMenuButton: showMenuButton,
-          onMenuPressed: onMenuPressed,
-        );
+    final dark = _isDark(context);
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: dark
+              ? const [Color(0xFF102D3E), Color(0xFF0A1E2B)]
+              : const [Color(0xFFFFFFFF), Color(0xFFFFF8E8)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: _dashBorder(context)),
+        boxShadow: [
+          BoxShadow(
+            color: _dashShadow(context),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final mobile = constraints.maxWidth < 760;
+          final welcome = _WelcomeBlock(
+            providerName: providerName,
+            showMenuButton: showMenuButton,
+            onMenuPressed: onMenuPressed,
+          );
 
-        if (mobile) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              welcome,
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: _DateButton(
-                      label: dateRangeLabel,
-                      onPressed: onDateRangePressed,
+          if (mobile) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                welcome,
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DateButton(
+                        label: dateRangeLabel,
+                        onPressed: onDateRangePressed,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  _NotificationButton(count: notificationCount),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _ProfileChip(
-                expanded: true,
+                    const SizedBox(width: 10),
+                    _NotificationButton(count: notificationCount),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _ProfileChip(
+                  expanded: true,
+                  providerName: providerName,
+                  providerStatus: providerStatus,
+                ),
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: welcome),
+              const SizedBox(width: 20),
+              _HeaderActions(
                 providerName: providerName,
                 providerStatus: providerStatus,
+                notificationCount: notificationCount,
+                dateRangeLabel: dateRangeLabel,
+                onDateRangePressed: onDateRangePressed,
               ),
             ],
           );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: welcome),
-            const SizedBox(width: 20),
-            _HeaderActions(
-              providerName: providerName,
-              providerStatus: providerStatus,
-              notificationCount: notificationCount,
-              dateRangeLabel: dateRangeLabel,
-              onDateRangePressed: onDateRangePressed,
-            ),
-          ],
-        );
-      },
+        },
+      ),
     );
   }
 }
@@ -1025,12 +1198,23 @@ class _WelcomeBlock extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Welcome back, $providerName!',
+                'BUSINESS OVERVIEW',
+                style: TextStyle(
+                  color: _dashAccentText(context),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.3,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                'Good to see you, $providerName',
                 softWrap: true,
                 style: TextStyle(
                   color: _dashText(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 27,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.5,
                 ),
               ),
               const SizedBox(height: 5),
@@ -1140,132 +1324,298 @@ class _MenuButton extends StatelessWidget {
 class _SideBar extends StatelessWidget {
   const _SideBar({
     required this.activeView,
+    required this.providerName,
+    required this.providerStatus,
+    required this.subscriptionTier,
+    required this.packageCount,
+    required this.isUpgradeRunning,
     required this.pendingRequestCount,
-    required this.onDashboardPressed,
-    required this.onInstallationRequestsPressed,
+    required this.onViewPressed,
+    required this.onUpgradePressed,
     required this.onLogoutPressed,
   });
 
   final _ProviderDashView activeView;
+  final String providerName;
+  final String providerStatus;
+  final String subscriptionTier;
+  final int packageCount;
+  final bool isUpgradeRunning;
   final int pendingRequestCount;
-  final VoidCallback onDashboardPressed;
-  final VoidCallback onInstallationRequestsPressed;
+  final void Function(_ProviderDashView view) onViewPressed;
+  final VoidCallback onUpgradePressed;
   final VoidCallback onLogoutPressed;
 
   @override
   Widget build(BuildContext context) {
-    final items = [
+    final operateItems = <(String, IconData, String, _ProviderDashView)>[
+      ('Dashboard', Icons.home_rounded, '0', _ProviderDashView.dashboard),
       (
-        'Dashboard',
-        Icons.home_rounded,
-        '0',
-        activeView == _ProviderDashView.dashboard,
+        'Packages',
+        Icons.router_outlined,
+        packageCount.toString(),
+        _ProviderDashView.packages,
       ),
-      ('Packages', Icons.inventory_2_outlined, '0', false),
-      ('Coverage Areas', Icons.location_on_outlined, '0', false),
+      ('Coverage', Icons.map_outlined, '0', _ProviderDashView.coverage),
       (
         'Installation Requests',
         Icons.groups_2_outlined,
         pendingRequestCount.toString(),
-        activeView == _ProviderDashView.installationRequests,
+        _ProviderDashView.installationRequests,
       ),
-      ('Customers', Icons.people_outline_rounded, '0', false),
-      ('Reviews & Ratings', Icons.star_border_rounded, '0', false),
-      ('Analytics', Icons.bar_chart_rounded, '0', false),
-      ('Reports', Icons.article_outlined, '0', false),
-      ('Messages', Icons.mail_outline_rounded, '0', false),
-      ('Settings', Icons.settings_outlined, '0', false),
-      ('Profile', Icons.person_outline_rounded, '0', false),
+      (
+        'Customers',
+        Icons.people_outline_rounded,
+        '0',
+        _ProviderDashView.customers,
+      ),
     ];
-    return Container(
-      width: 280,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF061A27), Color(0xFF092F42), Color(0xFF061622)],
-        ),
+    final growItems = <(String, IconData, String, _ProviderDashView?)>[
+      ('Reviews', Icons.star_border_rounded, '0', _ProviderDashView.reviews),
+      (
+        'Analytics',
+        Icons.bar_chart_rounded,
+        'PRO',
+        _ProviderDashView.analytics,
       ),
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 24, 22, 26),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.wifi_rounded,
-                    color: AppTheme.amber,
-                    size: 44,
-                  ),
-                  const SizedBox(width: 10),
-                  RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: 'Ona',
-                          style: _dashFont(
-                            color: Colors.white,
-                            fontSize: 33,
-                            fontWeight: FontWeight.w800,
-                          ),
+      ('Messages', Icons.mail_outline_rounded, '0', _ProviderDashView.messages),
+    ];
+    return SizedBox(
+      width: 280,
+      height: double.infinity,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF071D2B), Color(0xFF04131E)],
+          ),
+        ),
+        child: SafeArea(
+          child: ListView(
+            key: const PageStorageKey<String>('provider-sidebar'),
+            primary: false,
+            physics: const ClampingScrollPhysics(),
+            padding: EdgeInsets.zero,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppTheme.amberLight, AppTheme.amber],
                         ),
-                        TextSpan(
-                          text: 'Net',
-                          style: _dashFont(
-                            color: AppTheme.amber,
-                            fontSize: 33,
-                            fontWeight: FontWeight.w800,
+                        borderRadius: BorderRadius.circular(13),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.amber.withValues(alpha: .24),
+                            blurRadius: 16,
+                            offset: const Offset(0, 7),
                           ),
-                        ),
-                        TextSpan(
-                          text: '\nProvider Dashboard',
-                          style: _dashFont(
-                            color: Colors.white70,
-                            fontSize: 13,
-                            height: 1.2,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.wifi_rounded,
+                        color: Colors.white,
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 10),
+                    RichText(
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: 'Ona',
+                            style: _dashFont(
+                              color: Colors.white,
+                              fontSize: 25,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          TextSpan(
+                            text: 'Net',
+                            style: _dashFont(
+                              color: AppTheme.amber,
+                              fontSize: 25,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '\nProvider workspace',
+                            style: _dashFont(
+                              color: Colors.white70,
+                              fontSize: 13,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                itemCount: items.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  return _NavItem(
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _ProviderIdentity(
+                  name: providerName,
+                  status: providerStatus,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: _NavSectionLabel('OPERATE'),
+              ),
+              for (final item in operateItems)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                  child: _NavItem(
                     label: item.$1,
                     icon: item.$2,
                     badge: item.$3,
-                    selected: item.$4,
-                    onTap: switch (item.$1) {
-                      'Dashboard' => onDashboardPressed,
-                      'Installation Requests' => onInstallationRequestsPressed,
-                      _ => null,
-                    },
-                  );
-                },
+                    selected: activeView == item.$4,
+                    onTap: () => onViewPressed(item.$4),
+                  ),
+                ),
+              const SizedBox(height: 12),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: _NavSectionLabel('GROW'),
+              ),
+              for (final item in growItems)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                  child: _NavItem(
+                    label: item.$1,
+                    icon: item.$2,
+                    badge: item.$3,
+                    selected: item.$4 != null && activeView == item.$4,
+                    onTap: item.$4 == null
+                        ? null
+                        : () => onViewPressed(item.$4!),
+                  ),
+                ),
+              const SizedBox(height: 12),
+              _PlanCard(
+                tier: subscriptionTier,
+                packageCount: packageCount,
+                isUpgradeRunning: isUpgradeRunning,
+                onUpgradePressed: onUpgradePressed,
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: _NavItem(
+                  label: 'Sign out',
+                  icon: Icons.logout_rounded,
+                  badge: '0',
+                  selected: false,
+                  onTap: onLogoutPressed,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProviderIdentity extends StatelessWidget {
+  const _ProviderIdentity({required this.name, required this.status});
+
+  final String name;
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.trim().isEmpty ? 'P' : name.trim()[0].toUpperCase();
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: .08)),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 17,
+            backgroundColor: Colors.white.withValues(alpha: .1),
+            child: Text(
+              initial,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            const _PlanCard(),
-            const Divider(color: Colors.white12, height: 34),
-            Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: _NavItem(
-                label: 'Logout',
-                icon: Icons.logout_rounded,
-                badge: '0',
-                selected: false,
-                onTap: onLogoutPressed,
-              ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: AppTheme.green,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        status,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavSectionLabel extends StatelessWidget {
+  const _NavSectionLabel(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 7),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white38,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );
@@ -1287,24 +1637,38 @@ class _NavItem extends StatelessWidget {
   final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) {
-    final foreground = selected ? AppTheme.navy : Colors.white;
+    final enabled = onTap != null;
+    final foreground = selected
+        ? Colors.white
+        : enabled
+        ? Colors.white.withValues(alpha: .84)
+        : Colors.white.withValues(alpha: .42);
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(13),
         onTap: onTap,
         child: Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: selected ? AppTheme.amber : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+            color: selected
+                ? AppTheme.amber.withValues(alpha: .18)
+                : Colors.transparent,
+            border: selected
+                ? Border.all(color: AppTheme.amber.withValues(alpha: .38))
+                : null,
+            borderRadius: BorderRadius.circular(13),
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Icon(icon, color: foreground, size: 23),
-              const SizedBox(width: 14),
+              Icon(
+                icon,
+                color: selected ? AppTheme.amber : foreground,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   label,
@@ -1312,23 +1676,26 @@ class _NavItem extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: foreground,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                     fontSize: 14,
                   ),
                 ),
               ),
               if (badge != '0')
                 Container(
+                  constraints: const BoxConstraints(minWidth: 24),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 5,
+                    horizontal: 7,
+                    vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: selected ? AppTheme.navy : AppTheme.amber,
-                    shape: BoxShape.circle,
+                    color: AppTheme.amber,
+                    borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     badge,
+                    maxLines: 1,
+                    textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 11,
@@ -1345,22 +1712,31 @@ class _NavItem extends StatelessWidget {
 }
 
 class _PlanCard extends StatelessWidget {
-  const _PlanCard();
+  const _PlanCard({
+    required this.tier,
+    required this.packageCount,
+    required this.isUpgradeRunning,
+    required this.onUpgradePressed,
+  });
+  final String tier;
+  final int packageCount;
+  final bool isUpgradeRunning;
+  final VoidCallback onUpgradePressed;
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.symmetric(horizontal: 22),
-      padding: const EdgeInsets.all(18),
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        border: Border.all(color: Colors.white.withValues(alpha: .18)),
-        borderRadius: BorderRadius.circular(8),
+        color: AppTheme.amber.withValues(alpha: .09),
+        border: Border.all(color: AppTheme.amber.withValues(alpha: .22)),
+        borderRadius: BorderRadius.circular(16),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
               Icon(
                 Icons.workspace_premium_rounded,
@@ -1369,37 +1745,80 @@ class _PlanCard extends StatelessWidget {
               ),
               SizedBox(width: 12),
               Text(
-                'Current Plan',
-                style: TextStyle(color: Colors.white, fontSize: 14),
+                'SUBSCRIPTION',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
-          SizedBox(height: 12),
+          const SizedBox(height: 10),
           Text(
-            'Verified Provider',
-            style: TextStyle(
+            '${_titleCase(tier)} plan',
+            style: const TextStyle(
               color: AppTheme.amber,
               fontWeight: FontWeight.w800,
               fontSize: 14,
             ),
           ),
-          SizedBox(height: 26),
+          const SizedBox(height: 5),
           Text(
-            'Provider Since',
-            style: TextStyle(color: Colors.white70, fontSize: 12),
+            '$packageCount of 10 packages used',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
-          SizedBox(height: 7),
-          Text(
-            'March 12, 2025',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
+          if (tier.toLowerCase() != 'pro') ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: isUpgradeRunning ? null : onUpgradePressed,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.amber,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (isUpgradeRunning)
+                      const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    else
+                      const Icon(Icons.bolt_rounded, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        isUpgradeRunning
+                            ? 'UPGRADING...'
+                            : 'TEST UPGRADE TO PRO',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
+  }
+
+  String _titleCase(String value) {
+    final clean = value.trim().isEmpty ? 'free' : value.trim();
+    return '${clean[0].toUpperCase()}${clean.substring(1)}';
   }
 }
 
@@ -1644,69 +2063,82 @@ class _MetricCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _Surface(
-      height: 140,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _IconTile(icon: metric.icon),
-          const SizedBox(width: 22),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  metric.title,
-                  maxLines: 1,
+          Row(
+            children: [
+              _IconTile(icon: metric.icon),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  metric.title.toUpperCase(),
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: _dashText(context),
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
+                    color: _dashMuted(context),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
+                    letterSpacing: .65,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  metric.value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _dashText(context),
-                    fontWeight: FontWeight.w900,
-                    fontSize: 25,
-                  ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            metric.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _dashText(context),
+              fontWeight: FontWeight.w900,
+              fontSize: 28,
+              letterSpacing: -.7,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: (metric.positive ? AppTheme.green : Colors.red)
+                      .withValues(alpha: .1),
+                  borderRadius: BorderRadius.circular(999),
                 ),
-                const SizedBox(height: 9),
-                Row(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       metric.positive
-                          ? Icons.arrow_upward_rounded
-                          : Icons.arrow_downward_rounded,
+                          ? Icons.trending_up_rounded
+                          : Icons.trending_down_rounded,
                       color: metric.positive ? AppTheme.green : Colors.red,
-                      size: 14,
+                      size: 13,
                     ),
+                    const SizedBox(width: 3),
                     Text(
-                      ' ${metric.trend}',
+                      metric.trend,
                       style: TextStyle(
                         color: metric.positive ? AppTheme.green : Colors.red,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                    Flexible(
-                      child: Text(
-                        ' ${metric.helper}',
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _dashMuted(context),
-                          fontSize: 12,
-                        ),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 11,
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  metric.helper,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: _dashMuted(context), fontSize: 11),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1914,7 +2346,10 @@ class _LocationsCard extends StatelessWidget {
           LayoutBuilder(
             builder: (context, constraints) {
               final stacked = constraints.maxWidth < 620;
-              final map = const SizedBox(height: 230, child: _CoverageMap());
+              final map = SizedBox(
+                height: 230,
+                child: _CoverageMap(locations: locations),
+              );
               final list = Column(
                 children: [
                   if (locations.isEmpty)
@@ -1960,17 +2395,32 @@ class _LocationsCard extends StatelessWidget {
 }
 
 class _CoverageMap extends StatelessWidget {
-  const _CoverageMap();
-  static const _center = LatLng(-1.2576, 36.8173);
+  const _CoverageMap({required this.locations});
+
+  final List<_LocationRow> locations;
+
   @override
   Widget build(BuildContext context) {
+    final mapped = locations
+        .where(
+          (location) => location.latitude != null && location.longitude != null,
+        )
+        .toList();
+    if (mapped.isEmpty) {
+      return const Center(
+        child: _EmptyDashboardText(
+          message: 'Add coverage coordinates to see the live map.',
+        ),
+      );
+    }
+    final center = LatLng(mapped.first.latitude!, mapped.first.longitude!);
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
       child: FlutterMap(
-        options: const MapOptions(
-          initialCenter: _center,
-          initialZoom: 11.1,
-          interactionOptions: InteractionOptions(
+        options: MapOptions(
+          initialCenter: center,
+          initialZoom: 11,
+          interactionOptions: const InteractionOptions(
             flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
           ),
         ),
@@ -1980,35 +2430,33 @@ class _CoverageMap extends StatelessWidget {
             userAgentPackageName: 'com.onanet.provider.dashboard',
           ),
           CircleLayer(
-            circles: [
-              _hotspot(const LatLng(-1.2676, 36.8065), 62),
-              _hotspot(const LatLng(-1.2921, 36.7896), 44),
-              _hotspot(const LatLng(-1.2060, 36.7798), 38),
-              _hotspot(const LatLng(-1.1453, 36.9633), 30),
-            ],
+            circles: mapped
+                .map(
+                  (location) => CircleMarker(
+                    point: LatLng(location.latitude!, location.longitude!),
+                    radius: math.max(1, location.radiusKm ?? 1) * 1000,
+                    useRadiusInMeter: true,
+                    color: AppTheme.amber.withValues(alpha: .2),
+                    borderColor: AppTheme.amber,
+                    borderStrokeWidth: 2,
+                  ),
+                )
+                .toList(),
           ),
           MarkerLayer(
-            markers: const [
-              Marker(
-                point: LatLng(-1.2921, 36.7896),
-                width: 92,
-                height: 24,
-                child: _MapLabel(label: 'Nairobi'),
-              ),
-            ],
+            markers: mapped
+                .map(
+                  (location) => Marker(
+                    point: LatLng(location.latitude!, location.longitude!),
+                    width: 120,
+                    height: 28,
+                    child: _MapLabel(label: location.name),
+                  ),
+                )
+                .toList(),
           ),
         ],
       ),
-    );
-  }
-
-  static CircleMarker _hotspot(LatLng point, double radius) {
-    return CircleMarker(
-      point: point,
-      radius: radius,
-      useRadiusInMeter: false,
-      color: AppTheme.amber.withValues(alpha: .28),
-      borderStrokeWidth: 0,
     );
   }
 }
@@ -2598,10 +3046,14 @@ class _DetailedRequestItem extends StatelessWidget {
               ),
               _RequestDetailTile(
                 icon: Icons.my_location_rounded,
-                label: 'GPS Location',
+                label: 'Map Location',
                 value: request.gpsLocation?.trim().isNotEmpty == true
-                    ? request.gpsLocation!.trim()
+                    ? 'Open in Google Maps'
                     : 'Not set',
+                onTap: request.gpsLocation?.trim().isNotEmpty == true
+                    ? () =>
+                          _openMapLocation(context, request.gpsLocation!.trim())
+                    : null,
               ),
               _RequestDetailTile(
                 icon: Icons.event_available_outlined,
@@ -2623,6 +3075,12 @@ class _DetailedRequestItem extends StatelessWidget {
                   icon: Icons.report_problem_outlined,
                   label: 'Decline Reason',
                   value: request.declineReason!.trim(),
+                ),
+              if (request.customerMessage?.trim().isNotEmpty == true)
+                _RequestDetailTile(
+                  icon: Icons.message_outlined,
+                  label: 'Customer Message',
+                  value: request.customerMessage!.trim(),
                 ),
             ],
           );
@@ -2674,11 +3132,13 @@ class _RequestDetailTile extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -2704,14 +3164,26 @@ class _RequestDetailTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  value,
-                  softWrap: true,
-                  style: TextStyle(
-                    color: _dashText(context),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    height: 1.25,
+                InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text(
+                      value,
+                      softWrap: true,
+                      style: TextStyle(
+                        color: onTap == null
+                            ? _dashText(context)
+                            : _dashAccentText(context),
+                        decoration: onTap == null
+                            ? TextDecoration.none
+                            : TextDecoration.underline,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        height: 1.25,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -2902,23 +3374,21 @@ class _ResponsivePair extends StatelessWidget {
 }
 
 class _Surface extends StatelessWidget {
-  const _Surface({required this.child, this.height});
+  const _Surface({required this.child});
   final Widget child;
-  final double? height;
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: height,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: _dashSurface(context),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: _dashBorder(context)),
         boxShadow: [
           BoxShadow(
             color: _dashShadow(context),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
           ),
         ],
       ),
@@ -3332,80 +3802,12 @@ class _RequestActionButtons extends StatelessWidget {
   }
 
   Future<String?> _showDeclineReasonSheet(BuildContext context) async {
-    final controller = TextEditingController();
-    try {
-      return await showModalBottomSheet<String>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        builder: (sheetContext) {
-          return StatefulBuilder(
-            builder: (context, setSheetState) {
-              final reason = controller.text.trim();
-              final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-              return AnimatedPadding(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                padding: EdgeInsets.only(bottom: bottomInset),
-                child: SafeArea(
-                  top: false,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Reason for declining',
-                                style: TextStyle(
-                                  color: _dashText(context),
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Close',
-                              onPressed: () => Navigator.pop(sheetContext),
-                              icon: const Icon(Icons.close_rounded),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: controller,
-                          minLines: 3,
-                          maxLines: 5,
-                          maxLength: 500,
-                          onChanged: (_) => setSheetState(() {}),
-                          decoration: const InputDecoration(
-                            hintText:
-                                'Example: Area is outside our current coverage',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton(
-                          onPressed: reason.isEmpty
-                              ? null
-                              : () => Navigator.pop(sheetContext, reason),
-                          child: const Text('Decline Request'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      controller.dispose();
-    }
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => const _DeclineReasonSheet(),
+    );
   }
 
   @override
@@ -3470,6 +3872,650 @@ class _RequestActionButtons extends StatelessWidget {
           label: Text(canComplete ? 'Complete' : 'Accept'),
         ),
       ],
+    );
+  }
+}
+
+class _PackageEditorDialog extends StatefulWidget {
+  const _PackageEditorDialog({this.package});
+
+  final Map<String, dynamic>? package;
+
+  @override
+  State<_PackageEditorDialog> createState() => _PackageEditorDialogState();
+}
+
+class _PackageEditorDialogState extends State<_PackageEditorDialog> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.package?['package_name']?.toString(),
+  );
+  late final TextEditingController _speed = TextEditingController(
+    text: widget.package?['speed_mbps']?.toString(),
+  );
+  late final TextEditingController _price = TextEditingController(
+    text: widget.package?['monthly_price']?.toString(),
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _speed.dispose();
+    _price.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final speedValue = int.tryParse(_speed.text.trim());
+    final priceValue = double.tryParse(_price.text.trim());
+    if (_name.text.trim().isEmpty || speedValue == null || priceValue == null) {
+      setState(() => _error = 'Enter a valid name, speed, and monthly price.');
+      return;
+    }
+    Navigator.pop(context, <String, dynamic>{
+      'package_name': _name.text.trim(),
+      'speed_mbps': speedValue,
+      'monthly_price': priceValue,
+      if (widget.package == null) ...{
+        'installation_fee': 0,
+        'billing_cycle': 'monthly',
+        'contract_type': 'no_contract',
+        'router_included': false,
+      },
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.package == null ? 'Add package' : 'Edit package'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _name,
+              decoration: const InputDecoration(labelText: 'Package name'),
+            ),
+            TextField(
+              controller: _speed,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Speed (Mbps)'),
+            ),
+            TextField(
+              controller: _price,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Monthly price'),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+class _ProviderSectionPage extends StatefulWidget {
+  const _ProviderSectionPage({
+    required this.view,
+    required this.providerId,
+    required this.providerName,
+    required this.providerStatus,
+    required this.requests,
+    required this.showMenuButton,
+    required this.onMenuPressed,
+    required this.onChanged,
+  });
+
+  final _ProviderDashView view;
+  final String providerId;
+  final String providerName;
+  final String providerStatus;
+  final List<ProviderInboxItem> requests;
+  final bool showMenuButton;
+  final VoidCallback onMenuPressed;
+  final VoidCallback onChanged;
+
+  @override
+  State<_ProviderSectionPage> createState() => _ProviderSectionPageState();
+}
+
+class _ProviderSectionPageState extends State<_ProviderSectionPage> {
+  final _service = AuthService();
+  late Future<List<Map<String, dynamic>>> _items = _load();
+
+  Future<List<Map<String, dynamic>>> _load() {
+    return switch (widget.view) {
+      _ProviderDashView.packages => _service.getProviderPackages(
+        widget.providerId,
+      ),
+      _ProviderDashView.coverage => _service.getProviderCoverageAreas(
+        widget.providerId,
+      ),
+      _ProviderDashView.customers => _service.getProviderCustomers(),
+      _ProviderDashView.reviews => _service.getProviderReviews(),
+      _ProviderDashView.messages => Future.value(
+        widget.requests
+            .where((r) => r.customerMessage?.trim().isNotEmpty == true)
+            .map(
+              (r) => {
+                'id': r.id,
+                'customer': r.phoneE164 ?? 'Customer',
+                'message': r.customerMessage,
+                'package_name': r.packageName,
+                'created_at': r.createdAt?.toIso8601String(),
+              },
+            )
+            .toList(),
+      ),
+      _ => Future.value(const []),
+    };
+  }
+
+  void _reload() {
+    setState(() => _items = _load());
+    widget.onChanged();
+  }
+
+  String get _title => switch (widget.view) {
+    _ProviderDashView.packages => 'Packages',
+    _ProviderDashView.coverage => 'Coverage Areas',
+    _ProviderDashView.customers => 'Customers',
+    _ProviderDashView.reviews => 'Reviews',
+    _ProviderDashView.messages => 'Messages',
+    _ => 'Provider Workspace',
+  };
+
+  Future<void> _packageDialog([Map<String, dynamic>? item]) async {
+    final payload = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => _PackageEditorDialog(package: item),
+    );
+    if (payload == null) return;
+    try {
+      if (item == null) {
+        await _service.submitProviderPackage(
+          providerId: widget.providerId,
+          payload: payload,
+        );
+      } else {
+        await _service.updateProviderPackage(
+          widget.providerId,
+          item['id'].toString(),
+          payload,
+        );
+      }
+      _reload();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    }
+  }
+
+  Future<void> _deletePackage(Map<String, dynamic> item) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete package?'),
+        content: Text(
+          'Delete ${item['package_name']}? Existing requests will prevent deletion.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    try {
+      await _service.deleteProviderPackage(
+        widget.providerId,
+        item['id'].toString(),
+      );
+      _reload();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    }
+  }
+
+  Future<void> _addCoverage(List<Map<String, dynamic>> existing) async {
+    final name = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add coverage area'),
+        content: TextField(
+          controller: name,
+          decoration: const InputDecoration(labelText: 'Area name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, name.text.trim()),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    name.dispose();
+    if (value == null || value.isEmpty) return;
+    final areas = [
+      ...existing.map(
+        (e) => {
+          'area_name': e['area_name'],
+          'latitude': e['latitude'],
+          'longitude': e['longitude'],
+          'radius_km': e['radius_km'],
+        },
+      ),
+      {'area_name': value, 'latitude': 0.0, 'longitude': 0.0, 'radius_km': 5.0},
+    ];
+    try {
+      await _service.submitProviderCoverageAreas(
+        providerId: widget.providerId,
+        payload: {'coverage_areas': areas},
+      );
+      _reload();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TopBar(
+          providerName: widget.providerName,
+          providerStatus: widget.providerStatus,
+          notificationCount: 0,
+          dateRangeLabel: _title,
+          onDateRangePressed: () {},
+          showMenuButton: widget.showMenuButton,
+          onMenuPressed: widget.onMenuPressed,
+        ),
+        const SizedBox(height: 24),
+        _Surface(
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _items,
+            builder: (context, snapshot) {
+              final items = snapshot.data ?? const <Map<String, dynamic>>[];
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _title,
+                          style: TextStyle(
+                            color: _dashText(context),
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (widget.view == _ProviderDashView.packages)
+                        FilledButton.icon(
+                          onPressed: () => _packageDialog(),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add package'),
+                        ),
+                      if (widget.view == _ProviderDashView.coverage)
+                        FilledButton.icon(
+                          onPressed: () => _addCoverage(items),
+                          icon: const Icon(Icons.add_location_alt),
+                          label: const Text('Add area'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (snapshot.connectionState == ConnectionState.waiting)
+                    const Center(child: CircularProgressIndicator())
+                  else if (snapshot.hasError)
+                    Text(
+                      snapshot.error.toString(),
+                      style: const TextStyle(color: Colors.red),
+                    )
+                  else if (items.isEmpty)
+                    Text(
+                      'No ${_title.toLowerCase()} yet.',
+                      style: TextStyle(color: _dashMuted(context)),
+                    )
+                  else
+                    ...items.map(
+                      (item) => widget.view == _ProviderDashView.customers
+                          ? _ProviderCustomerCard(item: item)
+                          : Card(
+                              child: ListTile(
+                                leading: Icon(
+                                  widget.view == _ProviderDashView.reviews
+                                      ? Icons.star
+                                      : widget.view ==
+                                            _ProviderDashView.messages
+                                      ? Icons.message
+                                      : Icons.circle_outlined,
+                                  color: AppTheme.amber,
+                                ),
+                                title: Text(_itemTitle(item)),
+                                subtitle: Text(_itemSubtitle(item)),
+                                trailing:
+                                    widget.view == _ProviderDashView.packages
+                                    ? Wrap(
+                                        children: [
+                                          IconButton(
+                                            onPressed: () =>
+                                                _packageDialog(item),
+                                            icon: const Icon(
+                                              Icons.edit_outlined,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            onPressed: () =>
+                                                _deletePackage(item),
+                                            icon: const Icon(
+                                              Icons.delete_outline,
+                                            ),
+                                          ),
+                                        ],
+                                      )
+                                    : null,
+                              ),
+                            ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _itemTitle(Map<String, dynamic> item) => switch (widget.view) {
+    _ProviderDashView.packages => item['package_name']?.toString() ?? 'Package',
+    _ProviderDashView.coverage => item['area_name']?.toString() ?? 'Area',
+    _ProviderDashView.customers =>
+      '${item['first_name'] ?? ''} ${item['last_name'] ?? ''}'.trim(),
+    _ProviderDashView.reviews =>
+      '${item['rating'] ?? 0}/5 · ${item['first_name'] ?? ''} ${item['last_name'] ?? ''}',
+    _ProviderDashView.messages => item['customer']?.toString() ?? 'Customer',
+    _ => '',
+  };
+
+  String _itemSubtitle(Map<String, dynamic> item) => switch (widget.view) {
+    _ProviderDashView.packages =>
+      '${item['speed_mbps']} Mbps · KES ${item['monthly_price']}/month',
+    _ProviderDashView.coverage => '${item['radius_km']} km radius',
+    _ProviderDashView.customers =>
+      '${item['email'] ?? item['phone_number'] ?? ''} · ${item['request_count']} request(s) · ${(item['packages'] as List?)?.join(', ') ?? ''}',
+    _ProviderDashView.reviews =>
+      '${item['package_name'] ?? 'Package'} · ${item['comment'] ?? 'No comment'}',
+    _ProviderDashView.messages =>
+      '${item['package_name'] ?? 'Package'} · ${item['message']}',
+    _ => '',
+  };
+}
+
+class _ProviderCustomerCard extends StatelessWidget {
+  const _ProviderCustomerCard({required this.item});
+
+  final Map<String, dynamic> item;
+
+  @override
+  Widget build(BuildContext context) {
+    final firstName = (item['first_name'] ?? '').toString().trim();
+    final lastName = (item['last_name'] ?? '').toString().trim();
+    final name = '$firstName $lastName'.trim();
+    final phone = (item['phone_number'] ?? '').toString().trim();
+    final email = (item['email'] ?? '').toString().trim();
+    final estate = (item['latest_estate_or_building'] ?? '').toString().trim();
+    final house = (item['latest_house_or_apartment'] ?? '').toString().trim();
+    final landmark = (item['latest_landmark'] ?? '').toString().trim();
+    final gpsLocation = (item['latest_gps_location'] ?? '').toString().trim();
+    final addressParts = [
+      estate,
+      house,
+      landmark,
+    ].where((part) => part.isNotEmpty).toList(growable: false);
+    final address = addressParts.join(', ');
+    final packages =
+        (item['packages'] as List?)
+            ?.where((value) => value != null)
+            .map((value) => value.toString())
+            .join(', ') ??
+        '';
+    final requestCount = item['request_count'] ?? 0;
+    final initials = [
+      if (firstName.isNotEmpty) firstName[0],
+      if (lastName.isNotEmpty) lastName[0],
+    ].join().toUpperCase();
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: AppTheme.amber.withValues(alpha: 0.16),
+                  child: Text(
+                    initials.isEmpty ? 'C' : initials,
+                    style: const TextStyle(
+                      color: AppTheme.amberDark,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name.isEmpty ? 'Customer' : name,
+                        style: TextStyle(
+                          color: _dashText(context),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (email.isNotEmpty)
+                        Text(
+                          email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: _dashMuted(context)),
+                        ),
+                    ],
+                  ),
+                ),
+                if (item['is_phone_verified'] == true)
+                  const Tooltip(
+                    message: 'Verified phone',
+                    child: Icon(Icons.verified_rounded, color: AppTheme.green),
+                  ),
+              ],
+            ),
+            if (phone.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _CustomerContactRow(icon: Icons.phone_outlined, text: phone),
+            ],
+            if (address.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _CustomerContactRow(
+                icon: Icons.location_on_outlined,
+                text: address,
+              ),
+            ],
+            if (packages.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _CustomerContactRow(
+                icon: Icons.wifi_rounded,
+                text: '$packages · $requestCount completed installation(s)',
+              ),
+            ],
+            if (gpsLocation.isNotEmpty || address.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (gpsLocation.isNotEmpty || address.isNotEmpty)
+                    OutlinedButton.icon(
+                      onPressed: () => _openMapLocation(
+                        context,
+                        gpsLocation.isNotEmpty ? gpsLocation : address,
+                      ),
+                      icon: const Icon(Icons.map_outlined, size: 18),
+                      label: const Text('Open location'),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CustomerContactRow extends StatelessWidget {
+  const _CustomerContactRow({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Icon(icon, size: 18, color: AppTheme.amber),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          text,
+          style: TextStyle(
+            color: _dashMuted(context),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+class _DeclineReasonSheet extends StatefulWidget {
+  const _DeclineReasonSheet();
+
+  @override
+  State<_DeclineReasonSheet> createState() => _DeclineReasonSheetState();
+}
+
+class _DeclineReasonSheetState extends State<_DeclineReasonSheet> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reason = _controller.text.trim();
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Reason for declining',
+                      style: TextStyle(
+                        color: _dashText(context),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _controller,
+                minLines: 3,
+                maxLines: 5,
+                maxLength: 500,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  hintText: 'Example: Area is outside our current coverage',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: reason.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, reason),
+                child: const Text('Decline Request'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -3659,7 +4705,9 @@ class _RevenueChartPainter extends CustomPainter {
     }
     final offsets = <Offset>[];
     for (var i = 0; i < points.length; i++) {
-      final x = chart.left + (chart.width * i / (points.length - 1));
+      final x = points.length == 1
+          ? chart.center.dx
+          : chart.left + (chart.width * i / (points.length - 1));
       final normalizedAmount = (points[i].amount / maxY).clamp(0.0, 1.0);
       final y = chart.bottom - (chart.height * normalizedAmount);
       offsets.add(Offset(x, y));
@@ -3680,6 +4728,7 @@ class _RevenueChartPainter extends CustomPainter {
         align: TextAlign.center,
       );
     }
+    if (offsets.isEmpty) return;
     final fillPath = ui.Path()
       ..moveTo(offsets.first.dx, chart.bottom)
       ..lineTo(offsets.first.dx, offsets.first.dy);
@@ -3828,9 +4877,10 @@ class _IconTile extends StatelessWidget {
       width: 58,
       decoration: BoxDecoration(
         color: _dashSoftAmber(context),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: AppTheme.amber.withValues(alpha: .16)),
       ),
-      child: Icon(icon, color: AppTheme.amber, size: 30),
+      child: Icon(icon, color: AppTheme.amber, size: 27),
     );
   }
 }
@@ -4044,11 +5094,22 @@ class _PackageRow {
 }
 
 class _LocationRow {
-  const _LocationRow(this.name, this.users, this.revenue, this.progress);
+  const _LocationRow(
+    this.name,
+    this.users,
+    this.revenue,
+    this.progress, {
+    this.latitude,
+    this.longitude,
+    this.radiusKm,
+  });
   final String name;
   final String users;
   final String revenue;
   final double progress;
+  final double? latitude;
+  final double? longitude;
+  final double? radiusKm;
 }
 
 class _ReviewRow {

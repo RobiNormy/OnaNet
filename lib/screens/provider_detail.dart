@@ -1,7 +1,10 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:ona_net/auth/package_service.dart';
 import 'package:ona_net/screens/installation_request.dart';
+import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/services/saved_providers_store.dart';
+import 'package:ona_net/services/pro_analytics_service.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:provider/provider.dart';
 
@@ -23,9 +26,23 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
   int? _selectedPackageIndex;
 
   @override
+  void initState() {
+    super.initState();
+    final providerId = widget.provider['id']?.toString();
+    if (providerId != null && providerId.isNotEmpty) {
+      ProAnalyticsService().logView(
+        providerId: providerId,
+        viewType: 'profile',
+        area: widget.selectedArea,
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final provider = widget.provider;
+    final customerReviews = _providerCustomerReviews(provider);
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
@@ -129,6 +146,14 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                         selectedIndex: _selectedPackageIndex,
                         onSelected: (index, package) {
                           setState(() => _selectedPackageIndex = index);
+                          final providerId = provider['id']?.toString();
+                          if (providerId != null && providerId.isNotEmpty) {
+                            ProAnalyticsService().logView(
+                              providerId: providerId,
+                              viewType: 'package',
+                              area: widget.selectedArea,
+                            );
+                          }
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -146,15 +171,16 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
 
                       const _SectionHeader(title: 'Reviews'),
                       const SizedBox(height: 12),
-                      if ((provider['reviews']?.toString() ?? '0') == '0')
+                      if (customerReviews.isEmpty)
                         Text(
                           'No reviews yet for this provider.',
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(color: AppTheme.gray),
                         )
                       else
-                        // ..._dummyReviews.map((r) => _ReviewCard(review: r)),
-                        const SizedBox(height: 100),
+                        ...customerReviews.map(
+                          (review) => _CustomerReviewCard(review: review),
+                        ),
                     ],
                   ),
                 ),
@@ -316,8 +342,8 @@ class _ProviderLogoMark extends StatelessWidget {
           ? _LogoInitials(initials: initials, size: size)
           : Transform(
               transform: Matrix4.identity()
-                ..translate(displayOffset.dx, displayOffset.dy, 0)
-                ..scale(displayScale, displayScale, displayScale),
+                ..translateByDouble(displayOffset.dx, displayOffset.dy, 0, 1)
+                ..scaleByDouble(displayScale, displayScale, displayScale, 1),
               child: Image.network(
                 url,
                 width: size,
@@ -408,6 +434,148 @@ class _SectionHeader extends StatelessWidget {
       ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
     );
   }
+}
+
+List<Map<String, dynamic>> _providerCustomerReviews(
+  Map<String, dynamic> provider,
+) {
+  final value =
+      provider['customerReviews'] ??
+      provider['customer_reviews'] ??
+      provider['recent_reviews'];
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((review) {
+        return review.map((key, value) => MapEntry(key.toString(), value));
+      })
+      .toList(growable: false);
+}
+
+class _CustomerReviewCard extends StatelessWidget {
+  const _CustomerReviewCard({required this.review});
+
+  final Map<String, dynamic> review;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+    final muted = isDark ? AppTheme.gray : AppTheme.darkGray;
+    final name =
+        (review['customer_name'] ?? review['customerName'] ?? 'OnaNet customer')
+            .toString();
+    final packageName =
+        (review['package_name'] ?? review['packageName'] ?? 'Internet package')
+            .toString();
+    final rating = int.tryParse((review['rating'] ?? '0').toString()) ?? 0;
+    final comment = (review['comment'] ?? '').toString().trim();
+    final updatedAt = DateTime.tryParse(
+      (review['updated_at'] ?? review['updatedAt'] ?? '').toString(),
+    );
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.navyMid : AppTheme.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 19,
+                backgroundColor: AppTheme.amber.withValues(alpha: 0.16),
+                child: Text(
+                  name.trim().isEmpty ? 'O' : name.trim()[0].toUpperCase(),
+                  style: const TextStyle(
+                    color: AppTheme.amberDark,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$packageName${updatedAt == null ? '' : ' · ${_shortReviewDate(updatedAt.toLocal())}'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: muted, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppTheme.amber.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.star_rounded,
+                      color: AppTheme.amber,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      '$rating/5',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (comment.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(comment, style: TextStyle(color: textColor, height: 1.4)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _shortReviewDate(DateTime value) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${value.day} ${months[value.month - 1]} ${value.year}';
 }
 
 class _PackageCard extends StatelessWidget {
@@ -611,9 +779,13 @@ class PackageDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // final reviews = _dummyReviews
-    //     .where((review) => review['packageName'] == package['name'])
-    //     .toList();
+    final reviews = _providerCustomerReviews(provider)
+        .where(
+          (review) =>
+              (review['package_name'] ?? review['packageName'])?.toString() ==
+              package['name']?.toString(),
+        )
+        .toList(growable: false);
     final coverageAreas = List<String>.from(
       provider['coverageAreas'] ??
           package['coverageAreas'] ??
@@ -720,15 +892,15 @@ class PackageDetailScreen extends StatelessWidget {
             const SizedBox(height: 22),
             _SectionHeader(title: 'Reviews for ${package['name']}'),
             const SizedBox(height: 12),
-            // if (reviews.isEmpty)
-            //   Text(
-            //     'No reviews yet for this package.',
-            //     style: Theme.of(
-            //       context,
-            //     ).textTheme.bodySmall?.copyWith(color: AppTheme.gray),
-            //   )
-            // else
-            //   ...reviews.map((review) => _ReviewCard(review: review)),
+            if (reviews.isEmpty)
+              Text(
+                'No reviews yet for this package.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppTheme.gray),
+              )
+            else
+              ...reviews.map((review) => _CustomerReviewCard(review: review)),
           ],
         ),
       ),
@@ -1197,7 +1369,36 @@ class _PackageBottomBar extends StatelessWidget {
               color: AppTheme.amber,
               textColor: AppTheme.navy,
               icon: Icons.handyman_rounded,
-              onTap: () {
+              onTap: () async {
+                if (FirebaseAuth.instance.currentUser == null) {
+                  final signIn = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('Account required'),
+                      content: const Text(
+                        'Sign in or create an account before requesting an installation.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('Sign in'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (signIn == true && context.mounted) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const Login()),
+                    );
+                  }
+                  return;
+                }
+                if (!context.mounted) return;
                 Navigator.push(
                   context,
                   MaterialPageRoute(

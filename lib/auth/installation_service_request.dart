@@ -72,6 +72,8 @@ class InstallationServiceRequest {
 
     String? landmark,
 
+    String? customerMessage,
+
     required DateTime preferredDate,
 
     required TimeOfDay preferredTime,
@@ -88,6 +90,8 @@ class InstallationServiceRequest {
         'house_or_apartment': houseOrApartment.trim(),
       if (landmark != null && landmark.trim().isNotEmpty)
         'landmark': landmark.trim(),
+      if (customerMessage != null && customerMessage.trim().isNotEmpty)
+        'customer_message': customerMessage.trim(),
 
       'preferred_date':
           '${preferredDate.year.toString().padLeft(4, '0')}-'
@@ -168,39 +172,53 @@ class InstallationRequestResult {
     required this.status,
     required this.estateOrBuilding,
     this.packageName,
+    this.providerName,
     this.houseOrApartment,
     this.landmark,
     this.gpsLocation,
     this.phoneE164,
+    this.declineReason,
+    this.reviewId,
+    this.reviewRating,
+    this.reviewComment,
     DateTime? preferredDate,
     DateTime? preferredTime,
     DateTime? createdAt,
     DateTime? updatedAt,
+    DateTime? completedAt,
   }) : _preferredDate = preferredDate,
        _preferredTime = preferredTime,
        _createdAt = createdAt,
-       _updatedAt = updatedAt;
+       _updatedAt = updatedAt,
+       _completedAt = completedAt;
 
   final String id;
   final String providerId;
   final String packageId;
   final String? packageName;
+  final String? providerName;
   final String status;
   final String estateOrBuilding;
   final String? houseOrApartment;
   final String? landmark;
   final String? gpsLocation;
   final String? phoneE164;
+  final String? declineReason;
+  final String? reviewId;
+  final int? reviewRating;
+  final String? reviewComment;
 
   final DateTime? _preferredDate;
   final DateTime? _preferredTime;
   final DateTime? _createdAt;
   final DateTime? _updatedAt;
+  final DateTime? _completedAt;
 
   DateTime? get preferredDate => _preferredDate;
   DateTime? get preferredTime => _preferredTime;
   DateTime? get createdAt => _createdAt;
   DateTime? get updatedAt => _updatedAt;
+  DateTime? get completedAt => _completedAt;
 
   factory InstallationRequestResult.fromJson(Map<String, dynamic> json) {
     DateTime? parseDate(dynamic v) => v is String ? DateTime.tryParse(v) : null;
@@ -219,16 +237,22 @@ class InstallationRequestResult {
       providerId: (json['provider_id'] ?? '').toString(),
       packageId: (json['package_id'] ?? '').toString(),
       packageName: json['package_name']?.toString(),
+      providerName: json['provider_name']?.toString(),
       status: (json['status'] ?? 'pending').toString(),
       estateOrBuilding: (json['estate_or_building'] ?? '').toString(),
       houseOrApartment: json['house_or_apartment'] as String?,
       landmark: json['landmark'] as String?,
       gpsLocation: json['gps_location'] as String?,
       phoneE164: json['phone_e164'] as String?,
+      declineReason: json['decline_reason']?.toString(),
+      reviewId: json['review_id']?.toString(),
+      reviewRating: int.tryParse((json['review_rating'] ?? '').toString()),
+      reviewComment: json['review_comment']?.toString(),
       preferredDate: parseDate(json['preferred_date']),
       preferredTime: parseTime(json['preferred_time']),
       createdAt: parseDate(json['created_at']),
       updatedAt: parseDate(json['updated_at']),
+      completedAt: parseDate(json['completed_at']),
     );
   }
 }

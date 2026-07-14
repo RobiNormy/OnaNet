@@ -30,6 +30,11 @@ dependencies:
   http_parser: ^4.1.2
   mime: ^2.0.0
   permission_handler: ^12.0.3
+  url_launcher: ^6.3.2
+  pdf: ^3.12.0
+  csv: ^8.0.0
+  path_provider: ^2.1.6
+  share_plus: ^13.2.0
 
 dev_dependencies:
   flutter_test:

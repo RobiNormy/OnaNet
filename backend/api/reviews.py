@@ -85,7 +85,7 @@ async def submit_review(
                 JOIN users u ON u.id = ir.user_id
                 WHERE ir.id = $1
                   AND u.firebase_uid = $2
-                FOR UPDATE
+                FOR UPDATE OF ir
                 """,
                 body.installation_request_id,
                 firebase_user["uid"],

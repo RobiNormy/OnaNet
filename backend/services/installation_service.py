@@ -45,12 +45,14 @@ class InstallationRequestResult:
     provider_id: UUID
     package_id: UUID
     package_name: str | None
+    provider_name: str | None
 
     phone_e164: str
     gps_location: str | None
     estate_or_building: str
     house_or_apartment: str | None
     landmark: str | None
+    customer_message: str | None
 
     preferred_date: date
     preferred_time: time
@@ -58,6 +60,9 @@ class InstallationRequestResult:
     status: str
     decline_reason: str | None
     completed_at: datetime | None
+    review_id: UUID | None
+    review_rating: int | None
+    review_comment: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -65,7 +70,7 @@ class InstallationRequestResult:
 REQUEST_COLUMNS = """
     id, user_id, provider_id, package_id,
     phone_e164, gps_location,
-    estate_or_building, house_or_apartment, landmark,
+    estate_or_building, house_or_apartment, landmark, customer_message,
     preferred_date, preferred_time,
     status, decline_reason, completed_at, created_at, updated_at
 """
@@ -78,16 +83,21 @@ def _row_to_result(row: dict[str, Any]) -> InstallationRequestResult:
         provider_id=row["provider_id"],
         package_id=row["package_id"],
         package_name=row.get("package_name"),
+        provider_name=row.get("provider_name"),
         phone_e164=row["phone_e164"],
         gps_location=row["gps_location"],
         estate_or_building=row["estate_or_building"],
         house_or_apartment=row["house_or_apartment"],
         landmark=row["landmark"],
+        customer_message=row["customer_message"],
         preferred_date=row["preferred_date"],
         preferred_time=row["preferred_time"],
         status=row["status"],
         decline_reason=row["decline_reason"],
         completed_at=row["completed_at"],
+        review_id=row.get("review_id"),
+        review_rating=row.get("review_rating"),
+        review_comment=row.get("review_comment"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -105,6 +115,7 @@ class InstallationRequestService:
         estate_or_building: str,
         house_or_apartment: str | None,
         landmark: str | None,
+        customer_message: str | None,
         preferred_date: date,
         preferred_time: time,
     ) -> InstallationRequestResult:
@@ -161,10 +172,11 @@ class InstallationRequestService:
                     estate_or_building,
                     house_or_apartment,
                     landmark,
+                    customer_message,
                     preferred_date,
                     preferred_time
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 RETURNING {REQUEST_COLUMNS}
                 """,
                 user_id,
@@ -175,6 +187,7 @@ class InstallationRequestService:
                 estate,
                 unit,
                 land,
+                (customer_message or "").strip() or None,
                 preferred_date,
                 preferred_time,
             )
@@ -197,14 +210,21 @@ class InstallationRequestService:
                 """
                 SELECT
                     ir.id, ir.user_id, ir.provider_id, ir.package_id,
-                    pp.package_name,
+                    pp.package_name, p.provider_name,
                     ir.phone_e164, ir.gps_location,
                     ir.estate_or_building, ir.house_or_apartment, ir.landmark,
+                    ir.customer_message,
                     ir.preferred_date, ir.preferred_time,
                     ir.status, ir.decline_reason, ir.completed_at,
+                    pr.id AS review_id,
+                    pr.rating AS review_rating,
+                    pr.comment AS review_comment,
                     ir.created_at, ir.updated_at
                 FROM installation_requests ir
                 LEFT JOIN provider_packages pp ON pp.id = ir.package_id
+                LEFT JOIN providers p ON p.id = ir.provider_id
+                LEFT JOIN provider_reviews pr
+                  ON pr.installation_request_id = ir.id
                 WHERE ir.user_id = $1
                 ORDER BY ir.created_at DESC
                 """,
@@ -278,6 +298,7 @@ class InstallationRequestService:
                         pp.package_name,
                         ir.phone_e164, ir.gps_location,
                         ir.estate_or_building, ir.house_or_apartment, ir.landmark,
+                        ir.customer_message,
                         ir.preferred_date, ir.preferred_time,
                         ir.status, ir.decline_reason, ir.completed_at,
                         ir.created_at, ir.updated_at
@@ -298,6 +319,7 @@ class InstallationRequestService:
                         pp.package_name,
                         ir.phone_e164, ir.gps_location,
                         ir.estate_or_building, ir.house_or_apartment, ir.landmark,
+                        ir.customer_message,
                         ir.preferred_date, ir.preferred_time,
                         ir.status, ir.decline_reason, ir.completed_at,
                         ir.created_at, ir.updated_at

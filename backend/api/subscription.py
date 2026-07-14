@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from backend.api.auth import _get_current_firebase_user
 from backend.db.session import get_db_connection
-from backend.services.subscription_servies import (
+from backend.services.subscription_services import (
     Tier,
     get_provider_subscription_status,
     set_provider_tier,

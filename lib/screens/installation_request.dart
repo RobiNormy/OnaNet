@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
@@ -25,21 +27,53 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
   final _estateController = TextEditingController();
   final _houseController = TextEditingController();
   final _landmarkController = TextEditingController();
+  final _messageController = TextEditingController();
+  final _mapLocationController = TextEditingController();
 
   bool _otpSent = false;
   bool _phoneVerified = false;
+  bool _checkingPhoneStatus = true;
   bool _loadingLocation = false;
   bool _consentAccepted = false;
   bool _otpLoading = false;
-  String? _otpError;
-
   bool _submitting = false;
+  String? _otpError;
   String? _submitError;
   final _phoneVerificationService = PhoneVerificationService();
   final _installationRequestService = InstallationServiceRequest();
-  String? _gpsLocation;
+  Timer? _locationDebounce;
+  List<LocationSuggestion> _locationSuggestions = [];
+  bool _searchingLocations = false;
+  String? _locationLabel;
+  double? _locationLatitude;
+  double? _locationLongitude;
   DateTime? _installationDate;
   TimeOfDay? _installationTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedPhoneVerification();
+  }
+
+  Future<void> _loadSavedPhoneVerification() async {
+    try {
+      final status = await _phoneVerificationService.status();
+      if (!mounted) return;
+      setState(() {
+        _phoneVerified = status.isVerified;
+        _checkingPhoneStatus = false;
+        if (status.isVerified &&
+            status.phoneNumber?.trim().isNotEmpty == true) {
+          _phoneController.text = status.phoneNumber!;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      // If the status request fails, keep manual OTP verification available.
+      setState(() => _checkingPhoneStatus = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -48,20 +82,91 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
     _estateController.dispose();
     _houseController.dispose();
     _landmarkController.dispose();
+    _messageController.dispose();
+    _mapLocationController.dispose();
+    _locationDebounce?.cancel();
     super.dispose();
   }
 
   Future<void> _fetchGpsLocation() async {
     setState(() => _loadingLocation = true);
-    final location = await Location.getCurrentArea().timeout(
+    final location = await Location.getCurrentLocation().timeout(
       const Duration(seconds: 10),
       onTimeout: () => null,
     );
     if (!mounted) return;
     setState(() {
-      _gpsLocation = location ?? 'Unable to detect location';
+      if (location != null) {
+        _locationLabel =
+            location.area ??
+            '${location.latitude.toStringAsFixed(6)}, '
+                '${location.longitude.toStringAsFixed(6)}';
+        _locationLatitude = location.latitude;
+        _locationLongitude = location.longitude;
+        _mapLocationController.text = _locationLabel!;
+        _locationSuggestions = [];
+      }
       _loadingLocation = false;
     });
+    if (location == null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to detect location. Type it manually instead.'),
+        ),
+      );
+    }
+  }
+
+  void _onLocationChanged(String value) {
+    _locationDebounce?.cancel();
+    final query = value.trim();
+    setState(() {
+      _locationLabel = query.isEmpty ? null : query;
+      _locationLatitude = null;
+      _locationLongitude = null;
+      if (query.length < 2) {
+        _locationSuggestions = [];
+        _searchingLocations = false;
+      } else {
+        _searchingLocations = true;
+      }
+    });
+    if (query.length < 2) return;
+
+    _locationDebounce = Timer(const Duration(milliseconds: 450), () async {
+      final suggestions = await Location.searchAreas(query);
+      if (!mounted || _mapLocationController.text.trim() != query) return;
+      setState(() {
+        _locationSuggestions = suggestions;
+        _searchingLocations = false;
+      });
+    });
+  }
+
+  void _selectLocation(LocationSuggestion suggestion) {
+    setState(() {
+      _locationLabel = suggestion.displayName;
+      _locationLatitude = suggestion.latitude;
+      _locationLongitude = suggestion.longitude;
+      _mapLocationController.text = suggestion.displayName;
+      _mapLocationController.selection = TextSelection.collapsed(
+        offset: _mapLocationController.text.length,
+      );
+      _locationSuggestions = [];
+      _searchingLocations = false;
+    });
+  }
+
+  String? get _googleMapsUrl {
+    final label = _locationLabel?.trim();
+    if (label == null || label.isEmpty) return null;
+    final query = _locationLatitude != null && _locationLongitude != null
+        ? '$_locationLatitude,$_locationLongitude'
+        : label;
+    return Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': query,
+    }).toString();
   }
 
   Future<void> _pickDate() async {
@@ -95,6 +200,9 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
     setState(() {
       _otpError = null;
       _otpLoading = true;
+      // Reveal the input immediately so the user can prepare the code while
+      // the SMS provider finishes delivering it.
+      _otpSent = true;
     });
 
     try {
@@ -110,6 +218,7 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
       setState(() {
         _otpError = e.toString();
         _otpLoading = false;
+        _otpSent = false;
       });
     }
   }
@@ -141,91 +250,58 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
     }
   }
 
-  Future<void> _submit() async {
-    if (!_canSubmit) return;
-    final providerId = widget.provider['id']?.toString();
-    final packageId = widget.package['id']?.toString();
-    debugPrint('SUBMIT: provider keys = ${widget.provider.keys.toList()}');
-    debugPrint('SUBMIT: package keys = ${widget.package.keys.toList()}');
-    debugPrint('SUBMIT: provider[id] = ${widget.provider['id']}');
-    debugPrint(
-      'SUBMIT: provider[provider_id] = ${widget.provider['provider_id']}',
-    );
-    debugPrint(
-      'SUBMIT: provider[providerId] = ${widget.provider['providerId']}',
-    );
-    debugPrint('SUBMIT: package[id] = ${widget.package['id']}');
-    debugPrint('SUBMIT: package[package_id] = ${widget.package['package_id']}');
-    debugPrint('SUBMIT: package[packageId] = ${widget.package['packageId']}');
-    if (providerId == null ||
-        providerId.isEmpty ||
-        packageId == null ||
-        packageId.isEmpty) {
-      setState(
-        () => _submitError =
-            'Could not read provider or package. Please go back and retry.',
-      );
+  bool get _canSubmit =>
+      !_submitting &&
+      _phoneVerified &&
+      _googleMapsUrl != null &&
+      _estateController.text.trim().isNotEmpty &&
+      _houseController.text.trim().isNotEmpty &&
+      _installationDate != null &&
+      _installationTime != null &&
+      _consentAccepted;
+
+  Future<void> _submitRequest() async {
+    final providerId = (widget.provider['id'] ?? '').toString();
+    final packageId = (widget.package['id'] ?? '').toString();
+    if (providerId.isEmpty || packageId.isEmpty) {
+      setState(() {
+        _submitError = 'Provider or package information is missing.';
+      });
       return;
     }
+
     setState(() {
       _submitting = true;
       _submitError = null;
     });
+
     try {
-      final phone = PhoneVerificationService.normalizeKenyanPhone(
-        _phoneController.text,
-      );
       await _installationRequestService.submit(
         providerId: providerId,
         packageId: packageId,
-        phoneE164: phone,
-        gpsLocation: _gpsLocation,
+        phoneE164: PhoneVerificationService.normalizeKenyanPhone(
+          _phoneController.text,
+        ),
+        gpsLocation: _googleMapsUrl,
         estateOrBuilding: _estateController.text.trim(),
-        houseOrApartment: _houseController.text.trim().isEmpty
-            ? null
-            : _houseController.text.trim(),
-        landmark: _landmarkController.text.trim().isEmpty
-            ? null
-            : _landmarkController.text.trim(),
-        preferredTime: _installationTime!,
+        houseOrApartment: _houseController.text.trim(),
+        landmark: _landmarkController.text.trim(),
+        customerMessage: _messageController.text.trim(),
         preferredDate: _installationDate!,
+        preferredTime: _installationTime!,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Request Submitted. The provider will be in touch."),
-          behavior: SnackBarBehavior.floating,
-        ),
+        const SnackBar(content: Text('Installation request submitted.')),
       );
       Navigator.pop(context, true);
-    } catch (e) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _submitError = e.toString();
+        _submitError = error.toString();
       });
     }
-  }
-
-  bool get _canSubmit {
-    debugPrint(
-      'canSubmit: phone=$_phoneVerified '
-      'gps=$_gpsLocation '
-      'estate="${_estateController.text}" '
-      'house="${_houseController.text}" '
-      'landmark="${_landmarkController.text}" '
-      'date=$_installationDate '
-      'time=$_installationTime '
-      'consent=$_consentAccepted',
-    );
-    return _phoneVerified &&
-        _gpsLocation != null &&
-        _estateController.text.trim().isNotEmpty &&
-        (_houseController.text.trim().isNotEmpty ||
-            _landmarkController.text.trim().isNotEmpty) &&
-        _installationDate != null &&
-        _installationTime != null &&
-        _consentAccepted;
   }
 
   @override
@@ -258,36 +334,22 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (_submitError != null) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Colors.red.withValues(alpha: 0.35),
-                    ),
-                  ),
-                  child: Text(
-                    _submitError!,
-                    style: const TextStyle(
-                      color: Colors.red,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+                Text(
+                  _submitError!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 8),
               ],
               ElevatedButton(
-                onPressed: (_canSubmit && !_submitting) ? _submit : null,
+                onPressed: _canSubmit ? _submitRequest : null,
                 style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
                   backgroundColor: AppTheme.amber,
                   disabledBackgroundColor: AppTheme.gray.withValues(
                     alpha: 0.35,
@@ -300,18 +362,15 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                 ),
                 child: _submitting
                     ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppTheme.navy,
-                        ),
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text(
-                        "Submit Request",
+                        'Submit Request',
                         style: TextStyle(
-                          fontWeight: FontWeight.w800,
                           fontSize: 15,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
               ),
@@ -339,19 +398,38 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                       : Icons.privacy_tip_outlined,
                   title: _phoneVerified
                       ? 'Phone verified'
+                      : _checkingPhoneStatus
+                      ? 'Checking phone verification...'
                       : 'Phone verification required',
                   subtitle: _phoneVerified
-                      ? 'Providers will see that your phone is verified.'
+                      ? 'Verified permanently for this OnaNet account.'
+                      : _checkingPhoneStatus
+                      ? 'Checking your saved account verification.'
                       : 'Verify before submitting an installation request.',
                   color: _phoneVerified ? AppTheme.green : AppTheme.amber,
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _phoneController,
+                  readOnly: _phoneVerified || _checkingPhoneStatus,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Phone number',
                     hintText: '07xx xxx xxx',
+                    suffixIcon: _checkingPhoneStatus
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : _phoneVerified
+                        ? const Icon(
+                            Icons.verified_rounded,
+                            color: AppTheme.green,
+                          )
+                        : null,
                   ),
                 ),
                 if (_otpSent && !_phoneVerified) ...[
@@ -369,8 +447,8 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                   const SizedBox(height: 6),
                   Text(
                     _otpError!,
-                    style: const TextStyle(
-                      color: Colors.red,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -379,20 +457,21 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: _otpLoading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : TextButton(
-                          onPressed: _phoneVerified
-                              ? null
-                              : _otpSent
-                              ? _verifyOtp
-                              : _sendOtp,
-                          child: Text(_otpSent ? 'Verify OTP' : 'Send OTP'),
-                        ),
+                  child: TextButton(
+                    onPressed:
+                        _phoneVerified || _checkingPhoneStatus || _otpLoading
+                        ? null
+                        : _otpSent
+                        ? _verifyOtp
+                        : _sendOtp,
+                    child: _otpLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(_otpSent ? 'Verify OTP' : 'Send OTP'),
+                  ),
                 ),
               ],
             ),
@@ -403,10 +482,10 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
               children: [
                 _TrustStatusRow(
                   icon: Icons.my_location_rounded,
-                  title: _gpsLocation ?? 'Current GPS location',
+                  title: _locationLabel ?? 'Installation map location',
                   subtitle: _loadingLocation
                       ? 'Detecting location...'
-                      : 'GPS helps providers confirm service availability.',
+                      : 'Use GPS or type an address for the provider to open in Maps.',
                   color: AppTheme.amber,
                 ),
                 const SizedBox(height: 10),
@@ -414,11 +493,53 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                   onPressed: _loadingLocation ? null : _fetchGpsLocation,
                   icon: const Icon(Icons.gps_fixed_rounded),
                   label: Text(
-                    _gpsLocation == null
+                    _locationLabel == null
                         ? 'Use Current GPS Location'
                         : 'Refresh GPS Location',
                   ),
                 ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _mapLocationController,
+                  onChanged: _onLocationChanged,
+                  decoration: InputDecoration(
+                    labelText: 'Search map location',
+                    hintText: 'Type an estate, road, building, or landmark',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _searchingLocations
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+                if (_locationSuggestions.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: _locationSuggestions.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final suggestion = _locationSuggestions[index];
+                        return ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.location_on_outlined),
+                          title: Text(suggestion.title),
+                          subtitle: suggestion.subtitle.isEmpty
+                              ? null
+                              : Text(suggestion.subtitle),
+                          onTap: () => _selectLocation(suggestion),
+                        );
+                      },
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _estateController,
@@ -444,7 +565,19 @@ class _InstallationRequestScreenState extends State<InstallationRequestScreen> {
                     labelText: 'Landmark',
                     hintText: 'e.g. Near AIC Pipeline Church',
                   ),
-                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _messageController,
+                  minLines: 3,
+                  maxLines: 5,
+                  maxLength: 1000,
+                  decoration: const InputDecoration(
+                    labelText:
+                        'Message or question for the provider (optional)',
+                    hintText:
+                        'Ask about installation, equipment, or availability',
+                  ),
                 ),
               ],
             ),
@@ -556,9 +689,8 @@ class _PackageSummaryCard extends StatelessWidget {
             logoUrl: logoUrl,
             logoScale: logoScale,
             logoOffset: logoOffset,
-            color: Color(provider['color'] ?? 0xFF0D1B2A),
-            initials: (provider['initials'] ?? provider['name']?[0] ?? 'ON')
-                .toString(),
+            color: Color(provider['color']),
+            initials: provider['initials'],
             size: 48,
           ),
           const SizedBox(width: 12),
@@ -567,15 +699,14 @@ class _PackageSummaryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  (provider['name'] ?? provider['business_name'] ?? 'Provider')
-                      .toString(),
+                  provider['name'],
                   style: Theme.of(
                     context,
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${package['speed'] ?? ''} ${package['name'] ?? 'Package'}',
+                  '${package['speed']} ${package['name']}',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: AppTheme.amber,
                     fontWeight: FontWeight.w800,
@@ -583,14 +714,14 @@ class _PackageSummaryCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'KES ${package['price'] ?? ''}/mo',
+                  'KES ${package['price']}/mo',
                   style: Theme.of(
                     context,
                   ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${package['contract'] ?? 'No contract'} • Installation: KES ${package['installationFee'] ?? '0'}',
+                  '${package['contract']} • Installation: KES ${package['installationFee']}',
                   style: Theme.of(
                     context,
                   ).textTheme.labelSmall?.copyWith(color: AppTheme.gray),
@@ -771,17 +902,8 @@ class _PickerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return OutlinedButton.icon(
       onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        side: BorderSide(
-          color: isDark ? AppTheme.navyLight : AppTheme.lightGray,
-        ),
-        foregroundColor: isDark ? AppTheme.white : AppTheme.navy,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
       icon: Icon(icon, size: 18),
       label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
     );

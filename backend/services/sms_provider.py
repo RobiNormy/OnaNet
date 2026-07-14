@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 
@@ -52,21 +53,24 @@ class AfricasTalkingSmsProvider(SmsProvider):
             raise SmsSendError(
                 "africastalking SDK not installed"
             ) from exc
+        # Africa's Talking validates recipients as E.164 numbers, including the
+        # leading "+" (for example, +254757704448).
+        recipient = phone_e164
         
         try:
-            client = africastalking.Client(
-                username = self._username,api_key=self._api_key
+            sms_service = africastalking.SMSService(
+                username = self._username,
+                api_key=self._api_key,
             )
 
-            sms = client.SMS
-
-            response = sms.send(
-                message,
-                [phone_e164.lstrip("+")],
-                sender_id = self._sender_id,
+            response = await asyncio.to_thread(
+                sms_service.send,
+                message=message,
+                recipients=[recipient],
+                sender_id=self._sender_id,
             )
 
-            logger.info("AT SMS sent to %s: %s",phone_e164,response)
+            logger.info("AT SMS sent () to %s: %s",phone_e164,response)
         except Exception as exc:
             raise SmsSendError(f"Africa's Talking failed: {exc}") from exc
 
@@ -83,6 +87,7 @@ def get_sms_provider() -> SmsProvider:
     if provider == "africastalking":
         username = settings.AT_USERNAME
         api_key = settings.AT_API_KEY
+        sender_id = settings.AT_SENDER_ID
 
         if not username or not api_key:
             raise RuntimeError(
@@ -93,6 +98,7 @@ def get_sms_provider() -> SmsProvider:
         return AfricasTalkingSmsProvider(
             username=username,
             api_key=api_key,
+            sender_id=sender_id
 
         )
     

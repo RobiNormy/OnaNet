@@ -29,7 +29,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/installation-requests",tags=["installation-requests"])
 
 
+async def ensure_installation_requests_schema() -> None:
+    """Apply additive installation-request fields used by the current API."""
+    async with get_db_connection() as conn:
+        await conn.execute(
+            """
+            ALTER TABLE installation_requests
+                ADD COLUMN IF NOT EXISTS customer_message text;
+
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'installation_requests_customer_message_length'
+                      AND conrelid = 'installation_requests'::regclass
+                ) THEN
+                    ALTER TABLE installation_requests
+                        ADD CONSTRAINT installation_requests_customer_message_length
+                        CHECK (
+                            customer_message IS NULL
+                            OR char_length(customer_message) <= 1000
+                        );
+                END IF;
+            END
+            $$;
+            """
+        )
+
+
 async def _resolve_user_id(firebase_uid: str)-> str:
+
     async with get_db_connection() as conn:
         row = await conn.fetchrow(
             "SELECT id FROM users WHERE firebase_uid = $1",
@@ -64,6 +94,7 @@ async def create_installation_request(
             estate_or_building=body.estate_or_building,
             house_or_apartment=body.house_or_apartment,
             landmark=body.landmark,
+            customer_message=body.customer_message,
             preferred_date=body.preferred_date,
             preferred_time=body.preferred_time,
         )
@@ -145,6 +176,7 @@ def _result_to_response(result: InstallationRequestResult) -> InstallationReques
         provider_id = result.provider_id,
         package_id = result.package_id,
         package_name = result.package_name,
+        provider_name = result.provider_name,
         phone_e164 = result.phone_e164,
 
         gps_location = result.gps_location,
@@ -154,6 +186,7 @@ def _result_to_response(result: InstallationRequestResult) -> InstallationReques
         house_or_apartment = result.house_or_apartment,
 
         landmark = result.landmark,
+        customer_message = result.customer_message,
 
         preferred_date = result.preferred_date,
 
@@ -164,6 +197,9 @@ def _result_to_response(result: InstallationRequestResult) -> InstallationReques
         decline_reason = result.decline_reason,
 
         completed_at = result.completed_at,
+        review_id = result.review_id,
+        review_rating = result.review_rating,
+        review_comment = result.review_comment,
 
         created_at = result.created_at,
     

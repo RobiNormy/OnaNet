@@ -32,11 +32,6 @@ class _LoginState extends State<Login> {
   Future<void> _afterSuccessfulSignIn() async {
     if (!mounted) return;
 
-    if (!widget.providerMode) {
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-      return;
-    }
-
     final authService = AuthService();
     try {
       await authService.getMyProvider();
@@ -47,6 +42,10 @@ class _LoginState extends State<Login> {
       );
     } catch (_) {
       if (!mounted) return;
+      if (!widget.providerMode) {
+        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Finish provider registration to open your dashboard.'),

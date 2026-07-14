@@ -1,14 +1,17 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/onanet_provider_dash/dashy.dart';
 import 'package:ona_net/navigation/screen_ids.dart';
 import 'package:ona_net/screens/profile.dart';
 import 'package:ona_net/screens/provider_detail.dart';
 import 'package:ona_net/screens/saved.dart';
 import 'package:ona_net/screens/search.dart';
 import 'package:ona_net/services/saved_providers_store.dart';
+import 'package:ona_net/services/pro_analytics_service.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
 import 'package:provider/provider.dart';
@@ -27,7 +30,43 @@ class OnaNet extends StatelessWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeProvider.themeMode,
-      home: const MainWrapper(),
+      home: const AuthenticatedLanding(),
+    );
+  }
+}
+
+class AuthenticatedLanding extends StatefulWidget {
+  const AuthenticatedLanding({super.key});
+
+  @override
+  State<AuthenticatedLanding> createState() => _AuthenticatedLandingState();
+}
+
+class _AuthenticatedLandingState extends State<AuthenticatedLanding> {
+  late final Future<bool> _isProvider = _resolveProvider();
+
+  Future<bool> _resolveProvider() async {
+    if (FirebaseAuth.instance.currentUser == null) return false;
+    try {
+      await AuthService().getMyProvider();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _isProvider,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return snapshot.data == true ? const Dashboard() : const MainWrapper();
+      },
     );
   }
 }
@@ -61,6 +100,11 @@ class _MainWrapperState extends State<MainWrapper> {
         current: _currentScreen,
         onTap: (screenId) {
           if (screenId == _currentScreen) return;
+          if (screenId == ScreenId.profile) {
+            // Recreate the profile so an OTP verified during an installation
+            // request is reflected as soon as the user opens this tab.
+            _screens[ScreenId.profile] = Profile(key: UniqueKey());
+          }
           setState(() => _currentScreen = screenId);
         },
       ),
@@ -82,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _providersError;
   List<Map<String, dynamic>> _providers = [];
   ProviderFilter _selectedFilter = ProviderFilter.all;
+  String _providerQuery = '';
   double? _userLatitude;
   double? _userLongitude;
 
@@ -124,6 +169,12 @@ class _HomeScreenState extends State<HomeScreen> {
         _providersError = null;
         _loadingProviders = false;
       });
+      ProAnalyticsService().logSearch(
+        providers: providers,
+        area: _area,
+        latitude: _userLatitude,
+        longitude: _userLongitude,
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -140,13 +191,23 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final visibleProviders = filterProviders(
+    final areaProviders = filterProviders(
       _providers,
       filter: _selectedFilter,
       userLatitude: _userLatitude,
       userLongitude: _userLongitude,
       userArea: _area,
     );
+    final providerQuery = _providerQuery.trim().toLowerCase();
+    final visibleProviders = providerQuery.isEmpty
+        ? areaProviders
+        : areaProviders
+              .where(
+                (provider) => providerName(
+                  provider,
+                ).toLowerCase().contains(providerQuery),
+              )
+              .toList(growable: false);
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
@@ -171,7 +232,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 SizedBox(height: 20),
 
-                _SearchBar(),
+                _SearchBar(
+                  onChanged: (value) {
+                    setState(() => _providerQuery = value);
+                  },
+                ),
                 SizedBox(height: 20),
 
                 _FilterChips(
@@ -199,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(height: 12),
                 _ProvidersList(
                   providers: visibleProviders,
-                  isLoading: _loadingProviders,
+                  isLoading: _loadingProviders || _loadingLocation,
                   error: _providersError,
                   onRetry: _fetchProviders,
                   hasLocation:
@@ -207,6 +272,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       (_userLatitude != null && _userLongitude != null),
                   selectedFilter: _selectedFilter,
                   selectedArea: _area,
+                  searchQuery: _providerQuery,
                 ),
                 SizedBox(height: 110),
               ],
@@ -254,6 +320,7 @@ class _ProvidersList extends StatelessWidget {
     required this.hasLocation,
     required this.selectedFilter,
     required this.selectedArea,
+    required this.searchQuery,
   });
 
   final List<Map<String, dynamic>> providers;
@@ -263,6 +330,7 @@ class _ProvidersList extends StatelessWidget {
   final bool hasLocation;
   final ProviderFilter selectedFilter;
   final String? selectedArea;
+  final String searchQuery;
 
   @override
   Widget build(BuildContext context) {
@@ -283,15 +351,25 @@ class _ProvidersList extends StatelessWidget {
       );
     }
 
+    if (!hasLocation) {
+      return const _ProviderStateMessage(
+        icon: Icons.location_searching_rounded,
+        title: 'Choose your area',
+        message:
+            'Select your location above to see only providers that actually cover your area.',
+      );
+    }
+
     if (providers.isEmpty) {
+      final query = searchQuery.trim();
       return _ProviderStateMessage(
         icon: Icons.wifi_find_rounded,
-        title: hasLocation
-            ? 'No matching providers nearby'
-            : 'No providers yet',
-        message: hasLocation
-            ? 'No ${providerFilterLabel(selectedFilter).toLowerCase()} providers match this area yet. Try All, change your area, or pull down to refresh.'
-            : 'Pull down to check again after adding a network.',
+        title: query.isNotEmpty
+            ? 'No nearby provider named “$query”'
+            : 'No matching providers nearby',
+        message: query.isNotEmpty
+            ? 'Try another provider name, or clear the search to see all providers covering this area.'
+            : 'No ${providerFilterLabel(selectedFilter).toLowerCase()} providers match this area yet. Try All, change your area, or pull down to refresh.',
       );
     }
 
@@ -741,7 +819,9 @@ class _LocationBar extends StatelessWidget {
 }
 
 class _SearchBar extends StatefulWidget {
-  const _SearchBar();
+  const _SearchBar({required this.onChanged});
+
+  final ValueChanged<String> onChanged;
 
   @override
   State<_SearchBar> createState() => _SearchBarState();
@@ -794,8 +874,9 @@ class _SearchBarState extends State<_SearchBar> {
           Expanded(
             child: TextField(
               controller: _searchController,
-              onSubmitted: (value) {
-                debugPrint("Searching for: $value");
+              onChanged: (value) {
+                widget.onChanged(value);
+                setState(() {});
               },
               decoration: InputDecoration(
                 hintText: "Search providers near you...",
@@ -809,6 +890,17 @@ class _SearchBarState extends State<_SearchBar> {
                 border: InputBorder.none,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
+                suffixIcon: _searchController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        onPressed: () {
+                          _searchController.clear();
+                          widget.onChanged('');
+                          setState(() {});
+                        },
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                      ),
               ),
             ),
           ),
@@ -1151,8 +1243,8 @@ class _ProviderLogoAvatar extends StatelessWidget {
       child: hasLogo
           ? Transform(
               transform: Matrix4.identity()
-                ..translate(displayOffset.dx, displayOffset.dy, 0)
-                ..scale(displayScale, displayScale, displayScale),
+                ..translateByDouble(displayOffset.dx, displayOffset.dy, 0, 1)
+                ..scaleByDouble(displayScale, displayScale, displayScale, 1),
               child: Image.network(
                 logoUrl,
                 width: size,

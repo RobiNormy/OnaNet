@@ -15,6 +15,18 @@ class ProviderPackageCreate(BaseModel):
     router_included: bool = False
 
 
+class ProviderPackageUpdate(BaseModel):
+    package_name: str | None = None
+    speed_mbps: int | None = None
+    monthly_price: float | None = None
+    installation_fee: float | None = None
+    fair_usage_policy: str | None = None
+    billing_cycle: str | None = None
+    contract_type: str | None = None
+    installation_period: str | None = None
+    router_included: bool | None = None
+
+
 class ProviderPackageOut(BaseModel):
     id: UUID
     provider_id: UUID

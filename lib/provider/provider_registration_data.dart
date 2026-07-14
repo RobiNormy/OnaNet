@@ -1,8 +1,5 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:ona_net/utils/search.dart';
-
-typedef JsonMap = Map<String, dynamic>;
+import 'package:file_picker/file_picker.dart';
 
 class ProviderKind {
   const ProviderKind({
@@ -20,7 +17,7 @@ class ProviderKind {
   final IconData icon;
 }
 
-const List<ProviderKind> providerKinds = [
+const providerKinds = [
   ProviderKind(
     id: 'local_provider',
     title: 'Local Fiber / Wireless Provider',
@@ -37,7 +34,7 @@ class RegistrationStepInfo {
   final String label;
 }
 
-const List<RegistrationStepInfo> registrationSteps = [
+const registrationSteps = [
   RegistrationStepInfo('Admin\nAccount'),
   RegistrationStepInfo('Provider\nInfo'),
   RegistrationStepInfo('Services\nOffered'),
@@ -46,6 +43,24 @@ const List<RegistrationStepInfo> registrationSteps = [
   RegistrationStepInfo('Verification'),
   RegistrationStepInfo('Packages'),
 ];
+
+/// A geographic area served by a provider.
+///
+/// This lives with the registration draft because it is registration data,
+/// not search UI state.
+class CoverageArea {
+  const CoverageArea({
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+    required this.radiusKm,
+  });
+
+  final String name;
+  final double latitude;
+  final double longitude;
+  final double radiusKm;
+}
 
 class ProviderRegistrationDraft {
   const ProviderRegistrationDraft({
@@ -149,43 +164,48 @@ class ProviderRegistrationDraft {
     );
   }
 
-  JsonMap toJson() => {
-    ProviderRegistrationKeys.providerType: providerType,
-    ProviderRegistrationKeys.adminFullName: adminFullName,
-    ProviderRegistrationKeys.adminEmail: adminEmail,
-    ProviderRegistrationKeys.adminPhone: adminPhone,
-    ProviderRegistrationKeys.adminRole: adminRole,
-    ProviderRegistrationKeys.providerName: providerName,
-    ProviderRegistrationKeys.businessName: businessName,
-    ProviderRegistrationKeys.logoUrl: logoUrl,
-    ProviderRegistrationKeys.logoDisplaySize: logoDisplaySize,
-    ProviderRegistrationKeys.logoOffsetX: logoOffsetX,
-    ProviderRegistrationKeys.logoOffsetY: logoOffsetY,
-    ProviderRegistrationKeys.yearStarted: yearStarted,
-    ProviderRegistrationKeys.upstreamProvider: upstreamProvider,
-    ProviderRegistrationKeys.primaryCity: primaryCity,
-    ProviderRegistrationKeys.description: description,
-    ProviderRegistrationKeys.hasBusinessDocs: hasBusinessDocs,
-    ProviderRegistrationKeys.hasLicense: hasLicense,
+  Map<String, dynamic> toJson() => {
+    'provider_type': providerType,
+    'admin_full_name': adminFullName,
+    'admin_email': adminEmail,
+    'admin_phone': adminPhone,
+    'admin_role': adminRole,
+    'provider_name': providerName,
+    'business_name': businessName,
+    'logo_url': logoUrl,
+    'logo_display_size': logoDisplaySize,
+    'logo_offset_x': logoOffsetX,
+    'logo_offset_y': logoOffsetY,
+    'year_started': yearStarted,
+    'upstream_provider': upstreamProvider,
+    'primary_city': primaryCity,
+    'description': description,
+    'has_business_docs': hasBusinessDocs,
+    'has_license': hasLicense,
   };
 
-  JsonMap toProviderServicesJson() => {
-    ProviderRegistrationKeys.serviceTypes: serviceTypes,
+  Map<String, dynamic> toProviderServicesJson() => {
+    'service_types': serviceTypes,
   };
 
-  JsonMap toProviderCoverageAreasJson() => {
-    ProviderRegistrationKeys.coverageAreas: coverageAreas
-        .map((area) => area.toProviderJson())
+  Map<String, dynamic> toProviderCoverageAreasJson() => {
+    'coverage_areas': coverageAreas
+        .map(
+          (area) => {
+            'area_name': area.name,
+            'latitude': area.latitude,
+            'longitude': area.longitude,
+            'radius_km': area.radiusKm,
+          },
+        )
         .toList(),
   };
 
-  JsonMap toProviderContactsJson() => {
-    ProviderRegistrationKeys.contacts: contacts
-        .map((contact) => contact.toJson())
-        .toList(),
+  Map<String, dynamic> toProviderContactsJson() => {
+    'contacts': contacts.map((contact) => contact.toJson()).toList(),
   };
 
-  JsonMap? toProviderPackageJson() => package?.toJson();
+  Map<String, dynamic>? toProviderPackageJson() => package?.toJson();
 }
 
 class ProviderDocumentDraft {
@@ -206,10 +226,10 @@ class ProviderContactDraft {
   final String contactValue;
   final String? socialPlatform;
 
-  JsonMap toJson() => {
-    ProviderRegistrationKeys.contactType: contactType,
-    ProviderRegistrationKeys.contactValue: contactValue,
-    ProviderRegistrationKeys.socialPlatform: socialPlatform,
+  Map<String, dynamic> toJson() => {
+    'contact_type': contactType,
+    'contact_value': contactValue,
+    'social_platform': socialPlatform,
   };
 }
 
@@ -232,67 +252,15 @@ class ProviderPackageDraft {
   final String? installationPeriod;
   final bool routerIncluded;
 
-  JsonMap toJson() => {
-    ProviderRegistrationKeys.packageName: name,
-    ProviderRegistrationKeys.speedMbps: speedMbps,
-    ProviderRegistrationKeys.monthlyPrice: monthlyPrice,
-    ProviderRegistrationKeys.installationFee: installationFee ?? 0,
-    ProviderRegistrationKeys.fairUsagePolicy: fairUsagePolicy,
-    ProviderRegistrationKeys.billingCycle: 'monthly',
-    ProviderRegistrationKeys.contractType: 'no_contract',
-    ProviderRegistrationKeys.installationPeriod: installationPeriod,
-    ProviderRegistrationKeys.routerIncluded: routerIncluded,
+  Map<String, dynamic> toJson() => {
+    'package_name': name,
+    'speed_mbps': speedMbps,
+    'monthly_price': monthlyPrice,
+    'installation_fee': installationFee ?? 0,
+    'fair_usage_policy': fairUsagePolicy,
+    'billing_cycle': 'monthly',
+    'contract_type': 'no_contract',
+    'installation_period': installationPeriod,
+    'router_included': routerIncluded,
   };
-}
-
-extension CoverageAreaProviderJson on CoverageArea {
-  JsonMap toProviderJson() => {
-    ProviderRegistrationKeys.areaName: name,
-    ProviderRegistrationKeys.latitude: latitude,
-    ProviderRegistrationKeys.longitude: longitude,
-    ProviderRegistrationKeys.radiusKm: radiusKm,
-  };
-}
-
-abstract final class ProviderRegistrationKeys {
-  static const providerType = 'provider_type';
-  static const adminFullName = 'admin_full_name';
-  static const adminEmail = 'admin_email';
-  static const adminPhone = 'admin_phone';
-  static const adminRole = 'admin_role';
-  static const providerName = 'provider_name';
-  static const businessName = 'business_name';
-  static const logoUrl = 'logo_url';
-  static const logoDisplaySize = 'logo_display_size';
-  static const logoOffsetX = 'logo_offset_x';
-  static const logoOffsetY = 'logo_offset_y';
-  static const yearStarted = 'year_started';
-  static const upstreamProvider = 'upstream_provider';
-  static const primaryCity = 'primary_city';
-  static const description = 'description';
-  static const hasBusinessDocs = 'has_business_docs';
-  static const hasLicense = 'has_license';
-
-  static const serviceTypes = 'service_types';
-  static const coverageAreas = 'coverage_areas';
-  static const contacts = 'contacts';
-
-  static const areaName = 'area_name';
-  static const latitude = 'latitude';
-  static const longitude = 'longitude';
-  static const radiusKm = 'radius_km';
-
-  static const contactType = 'contact_type';
-  static const contactValue = 'contact_value';
-  static const socialPlatform = 'social_platform';
-
-  static const packageName = 'package_name';
-  static const speedMbps = 'speed_mbps';
-  static const monthlyPrice = 'monthly_price';
-  static const installationFee = 'installation_fee';
-  static const fairUsagePolicy = 'fair_usage_policy';
-  static const billingCycle = 'billing_cycle';
-  static const contractType = 'contract_type';
-  static const installationPeriod = 'installation_period';
-  static const routerIncluded = 'router_included';
 }

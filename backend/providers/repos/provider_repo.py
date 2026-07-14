@@ -1,6 +1,28 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from uuid import UUID
 from typing import Any
 
+from backend.providers.provider import Provider
 from backend.providers.schema.schema import ProviderRegistrationRequest
+
+
+class ProviderRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, user_id: UUID, data: dict) -> Provider:
+        provider = Provider(user_id=user_id, **data)
+        self.session.add(provider)
+        await self.session.commit()
+        await self.session.refresh(provider)
+        return provider
+
+    async def get_by_user_id(self, user_id: UUID):
+        result = await self.session.execute(
+            select(Provider).where(Provider.user_id == user_id)
+        )
+        return result.scalars().all()
 
 
 async def create_provider_registration(
@@ -9,57 +31,29 @@ async def create_provider_registration(
     provider_in: ProviderRegistrationRequest,
 ) -> dict[str, Any]:
     user_row = await db.fetchrow(
-        """
-        SELECT id
-        FROM users
-        WHERE firebase_uid = $1;
-        """,
+        "SELECT id FROM users WHERE firebase_uid = $1",
         firebase_uid,
     )
     if user_row is None:
         raise ValueError("User profile must be synced before provider registration")
 
-    user_id = user_row["id"]
     row = await db.fetchrow(
         """
         INSERT INTO providers (
-            user_id,
-            provider_type,
-            provider_name,
-            business_name,
-            logo_url,
-            logo_display_size,
-            logo_offset_x,
-            logo_offset_y,
-            year_started,
-            upstream_provider,
-            primary_city,
-            description,
-            status
+            user_id, provider_type, provider_name, business_name, logo_url,
+            logo_display_size, logo_offset_x, logo_offset_y, year_started,
+            upstream_provider, primary_city, description, status
         )
         VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'draft'
         )
         RETURNING
-            id,
-            user_id,
-            provider_type,
-            provider_name,
-            business_name,
-            logo_url,
-            logo_display_size,
-            logo_offset_x,
-            logo_offset_y,
-            year_started,
-            upstream_provider,
-            primary_city,
-            description,
-            status,
-            is_verified,
-            created_at,
-            updated_at;
+            id, user_id, provider_type, provider_name, business_name, logo_url,
+            logo_display_size, logo_offset_x, logo_offset_y, year_started,
+            upstream_provider, primary_city, description, status, is_verified,
+            created_at, updated_at
         """,
-        user_id,
+        user_row["id"],
         provider_in.provider_type,
         provider_in.provider_name,
         provider_in.business_name,
@@ -72,7 +66,6 @@ async def create_provider_registration(
         provider_in.primary_city,
         provider_in.description,
     )
-
     return _serialize_provider(row)
 
 
@@ -83,34 +76,24 @@ async def get_provider_by_firebase_uid(
     row = await db.fetchrow(
         """
         SELECT
-            providers.id,
-            providers.user_id,
-            providers.provider_type,
-            providers.provider_name,
-            providers.business_name,
-            providers.logo_url,
-            providers.logo_display_size,
-            providers.logo_offset_x,
-            providers.logo_offset_y,
-            providers.year_started,
-            providers.upstream_provider,
-            providers.primary_city,
-            providers.description,
-            providers.status,
-            providers.is_verified,
-            providers.created_at,
-            providers.updated_at
+            providers.id, providers.user_id, providers.provider_type,
+            providers.provider_name, providers.business_name,
+            providers.logo_url, providers.logo_display_size,
+            providers.logo_offset_x, providers.logo_offset_y,
+            providers.year_started, providers.upstream_provider,
+            providers.primary_city, providers.description, providers.status,
+            providers.is_verified, providers.subscription_tier,
+            providers.created_at, providers.updated_at
         FROM providers
         JOIN users ON users.id = providers.user_id
         WHERE users.firebase_uid = $1
         ORDER BY providers.created_at DESC
-        LIMIT 1;
+        LIMIT 1
         """,
         firebase_uid,
     )
     if row is None:
         raise ValueError("Provider profile not found for this user")
-
     return _serialize_provider(row)
 
 

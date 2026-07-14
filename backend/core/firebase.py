@@ -39,9 +39,6 @@ async def verify_firebase_token(token: str) -> dict | None:
 
 
 async def create_firebase_user_rest(email: str, password: str, display_name: str | None = None) -> str:
-    api_key = settings.FIREBASE_API_KEY
-    print(f"DEBUG API KEY: '{api_key}'")
-
     async with httpx.AsyncClient() as client:
         res = await client.post(
             f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={settings.FIREBASE_API_KEY}",

@@ -128,6 +128,7 @@ class ProviderInboxItem {
     this.packageName,
     this.houseOrApartment,
     this.landmark,
+    this.customerMessage,
     this.gpsLocation,
     this.phoneE164,
     this.declineReason,
@@ -149,6 +150,7 @@ class ProviderInboxItem {
   final String estateOrBuilding;
   final String? houseOrApartment;
   final String? landmark;
+  final String? customerMessage;
   final String? gpsLocation;
   final String? phoneE164;
   final String? declineReason;
@@ -204,6 +206,7 @@ class ProviderInboxItem {
       status: json['status']?.toString() ?? '',
       houseOrApartment: json['house_or_apartment']?.toString(),
       landmark: json['landmark']?.toString(),
+      customerMessage: json['customer_message']?.toString(),
       gpsLocation: json['gps_location']?.toString(),
       phoneE164: json['phone_e164']?.toString(),
       declineReason: json['decline_reason']?.toString(),

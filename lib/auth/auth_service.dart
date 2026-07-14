@@ -129,7 +129,8 @@ class AuthService {
       );
     }
 
-    return getDashboard(providerId);
+    final dashboard = await getDashboard(providerId);
+    return {...provider, ...dashboard, 'id': providerId};
   }
 
   Future<List<Map<String, dynamic>>> getPublicProviders() async {
@@ -189,6 +190,60 @@ class AuthService {
     await _postJson('/providers/$providerId/packages', payload);
   }
 
+  Future<List<Map<String, dynamic>>> getProviderPackages(
+    String providerId,
+  ) async {
+    final response = await _getJson('/providers/$providerId/packages');
+    return _asMapList(response.data);
+  }
+
+  Future<void> updateProviderPackage(
+    String providerId,
+    String packageId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.patch<dynamic>(
+        _url('/providers/$providerId/packages/$packageId'),
+        data: payload,
+        options: await _authorizedOptions(),
+      );
+    } on DioException catch (e) {
+      throw AuthServiceException(_errorMessage(e));
+    }
+  }
+
+  Future<void> deleteProviderPackage(
+    String providerId,
+    String packageId,
+  ) async {
+    try {
+      await _dio.delete<dynamic>(
+        _url('/providers/$providerId/packages/$packageId'),
+        options: await _authorizedOptions(),
+      );
+    } on DioException catch (e) {
+      throw AuthServiceException(_errorMessage(e));
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getProviderCoverageAreas(
+    String providerId,
+  ) async {
+    final response = await _getJson('/providers/$providerId/coverage-areas');
+    return _asMapList(response.data);
+  }
+
+  Future<List<Map<String, dynamic>>> getProviderCustomers() async {
+    final response = await _getJson('/providers/me/customers');
+    return _asMapList(response.data);
+  }
+
+  Future<List<Map<String, dynamic>>> getProviderReviews() async {
+    final response = await _getJson('/providers/me/reviews');
+    return _asMapList(response.data);
+  }
+
   Future<void> uploadProviderDocument({
     required String providerId,
     required String documentType,
@@ -202,7 +257,14 @@ class AuthService {
     );
   }
 
-  Future<void> signOut() => _auth.signOut();
+  Future<void> signOut() async {
+    // Firebase owns the app session, so clear it first. Google cleanup is
+    // best-effort and must not leave the app looking signed in if it fails.
+    await _auth.signOut();
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+  }
 
   Future<Response<dynamic>> _postJson(
     String path,
