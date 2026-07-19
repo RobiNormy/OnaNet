@@ -4,7 +4,8 @@ from typing import Optional
 from pydantic import ConfigDict
 class UserOut(BaseModel):
     id:UUID
-    firebase_uid:str
+    firebase_uid:Optional[str]=None
+    auth_user_id:Optional[str]=None
     email: str
     first_name:Optional[str]=None
     last_name:Optional[str]=None
