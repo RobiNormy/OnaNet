@@ -379,17 +379,13 @@ class _LoginState extends State<Login> {
                           ),
                           GestureDetector(
                             onTap: () {
-                              if (widget.providerMode) {
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const SignUp(providerMode: true),
-                                  ),
-                                );
-                              } else {
-                                Navigator.pop(context);
-                              }
+                              Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      SignUp(providerMode: widget.providerMode),
+                                ),
+                              );
                             },
                             child: Text(
                               "Sign Up",
