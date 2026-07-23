@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/auth/installation_service_request.dart';
+import 'package:ona_net/services/customer_notification_store.dart';
 import 'package:ona_net/services/preferred_location_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
@@ -566,11 +567,16 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  late Future<List<InstallationRequestResult>> _requests =
-      InstallationServiceRequest().myRequests();
+  late Future<List<InstallationRequestResult>> _requests = _load();
+
+  Future<List<InstallationRequestResult>> _load() async {
+    final requests = await InstallationServiceRequest().myRequests();
+    await CustomerNotificationStore.markRead(requests);
+    return requests;
+  }
 
   Future<void> _refresh() async {
-    final request = InstallationServiceRequest().myRequests();
+    final request = _load();
     setState(() {
       _requests = request;
     });
@@ -593,16 +599,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               onRetry: _refresh,
             );
           }
-          final items = (snapshot.data ?? const [])
-              .where(
-                (request) => {
-                  'accepted',
-                  'declined',
-                  'complete',
-                  'completed',
-                }.contains(request.status.toLowerCase()),
-              )
-              .toList();
+          final items = CustomerNotificationStore.notificationItems(
+            snapshot.data ?? const [],
+          );
           if (items.isEmpty) {
             return const _EmptyHint(
               icon: Icons.notifications_none_rounded,

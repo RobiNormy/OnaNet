@@ -8,6 +8,7 @@ import 'package:ona_net/screens/my_requests.dart';
 import 'package:ona_net/screens/customer_profile_pages.dart';
 import 'package:ona_net/screens/saved.dart';
 import 'package:ona_net/auth/installation_service_request.dart';
+import 'package:ona_net/services/customer_notification_store.dart';
 import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
@@ -27,6 +28,9 @@ class _ProfileState extends State<Profile> {
   late Future<Map<String, dynamic>> _account = _loadAccount();
   late Future<List<InstallationRequestResult>> _requestUpdates =
       _loadRequestUpdates();
+  late Future<int> _unreadNotifications = _loadUnreadNotifications(
+    _requestUpdates,
+  );
   bool _isSigningOut = false;
 
   Future<OtpStatusResult?> _loadPhoneStatus() async {
@@ -43,12 +47,14 @@ class _ProfileState extends State<Profile> {
     final phone = _loadPhoneStatus();
     final account = _loadAccount();
     final requests = _loadRequestUpdates();
+    final unread = _loadUnreadNotifications(requests);
     setState(() {
       _phoneStatus = phone;
       _account = account;
       _requestUpdates = requests;
+      _unreadNotifications = unread;
     });
-    await Future.wait([phone, account, requests]);
+    await Future.wait([phone, account, requests, unread]);
   }
 
   Future<Map<String, dynamic>> _loadAccount() async {
@@ -73,6 +79,21 @@ class _ProfileState extends State<Profile> {
     } catch (_) {
       return const [];
     }
+  }
+
+  Future<int> _loadUnreadNotifications(
+    Future<List<InstallationRequestResult>> requests,
+  ) async {
+    return CustomerNotificationStore.unreadCount(await requests);
+  }
+
+  Future<void> _openNotifications() async {
+    if (!await _requireAccount() || !mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+    );
+    if (mounted) await _refreshProfile();
   }
 
   Future<bool> _requireAccount() async {
@@ -284,19 +305,10 @@ class _ProfileState extends State<Profile> {
                       isDark: isDark,
                     ),
                     _SectionDivider(color: mutedTextColor),
-                    FutureBuilder<List<InstallationRequestResult>>(
-                      future: _requestUpdates,
+                    FutureBuilder<int>(
+                      future: _unreadNotifications,
                       builder: (context, snapshot) {
-                        final count = (snapshot.data ?? const [])
-                            .where(
-                              (request) => {
-                                'accepted',
-                                'declined',
-                                'complete',
-                                'completed',
-                              }.contains(request.status.toLowerCase()),
-                            )
-                            .length;
+                        final count = snapshot.data ?? 0;
                         return _SettingsTile(
                           icon: Icons.notifications_none_rounded,
                           title: 'Notifications',
@@ -305,7 +317,7 @@ class _ProfileState extends State<Profile> {
                           mutedTextColor: mutedTextColor,
                           isDark: isDark,
                           badgeCount: count,
-                          onTap: () => _openPage(const NotificationsScreen()),
+                          onTap: _openNotifications,
                         );
                       },
                     ),
