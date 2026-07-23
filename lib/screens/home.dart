@@ -7,6 +7,7 @@ import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/onanet_provider_dash/dashy.dart';
 import 'package:ona_net/navigation/screen_ids.dart';
 import 'package:ona_net/screens/profile.dart';
+import 'package:ona_net/screens/onanet_admin_dashboard.dart';
 import 'package:ona_net/screens/provider_detail.dart';
 import 'package:ona_net/screens/saved.dart';
 import 'package:ona_net/screens/search.dart';
@@ -46,33 +47,47 @@ class AuthenticatedLanding extends StatefulWidget {
 }
 
 class _AuthenticatedLandingState extends State<AuthenticatedLanding> {
-  late final Future<bool> _isProvider = _resolveProvider();
+  late final Future<_LandingDestination> _destination = _resolveDestination();
 
-  Future<bool> _resolveProvider() async {
-    if (FirebaseAuth.instance.currentUser == null) return false;
+  Future<_LandingDestination> _resolveDestination() async {
+    if (FirebaseAuth.instance.currentUser == null) {
+      return _LandingDestination.customer;
+    }
+    try {
+      final account = await AuthService().getMyAccount();
+      if (account['role']?.toString().toLowerCase() == 'admin') {
+        return _LandingDestination.admin;
+      }
+    } catch (_) {}
     try {
       await AuthService().getMyProvider();
-      return true;
+      return _LandingDestination.provider;
     } catch (_) {
-      return false;
+      return _LandingDestination.customer;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<bool>(
-      future: _isProvider,
+    return FutureBuilder<_LandingDestination>(
+      future: _destination,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        return snapshot.data == true ? const Dashboard() : const MainWrapper();
+        return switch (snapshot.data) {
+          _LandingDestination.admin => const OnaNetAdminDashboard(),
+          _LandingDestination.provider => const Dashboard(),
+          _ => const MainWrapper(),
+        };
       },
     );
   }
 }
+
+enum _LandingDestination { customer, provider, admin }
 
 class MainWrapper extends StatefulWidget {
   const MainWrapper({super.key});
