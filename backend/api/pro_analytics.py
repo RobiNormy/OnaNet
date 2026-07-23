@@ -4,7 +4,7 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from backend.api.auth import _get_current_firebase_user
@@ -172,6 +172,215 @@ async def _owned_pro_provider(firebase_uid: str) -> tuple[UUID, str]:
     if tier != "pro":
         raise HTTPException(403, "Pro Analytics requires an active Pro plan.")
     return row["id"], row["provider_name"]
+
+
+@router.get("/providers/me/pro-analytics/package-comparison")
+async def package_comparison(
+    area: str = Query(min_length=2, max_length=200),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    firebase_user = await _get_current_firebase_user(authorization)
+    provider_id, provider_name = await _owned_pro_provider(firebase_user["uid"])
+    clean_area = area.strip()
+
+    async with get_db_connection() as db:
+        area_exists = await db.fetchval(
+            """
+            SELECT EXISTS(
+              SELECT 1
+              FROM provider_coverage_areas
+              WHERE lower(btrim(area_name)) = lower(btrim($1))
+            );
+            """,
+            clean_area,
+        )
+        if not area_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No OnaNet provider coverage was found for that area.",
+            )
+
+        own_package = await db.fetchrow(
+            """
+            WITH area_performance AS (
+              SELECT ir.package_id,
+                count(*) FILTER (
+                  WHERE ir.status IN ('complete', 'completed')
+                )::int AS completed_installs,
+                count(*) FILTER (
+                  WHERE ir.status IN ('pending', 'accepted', 'scheduled', 'installed')
+                )::int AS active_requests
+              FROM installation_requests ir
+              WHERE ir.provider_id = $1
+                AND lower(btrim(coalesce(
+                  ir.installation_area,
+                  ir.estate_or_building,
+                  ''
+                ))) = lower(btrim($2))
+              GROUP BY ir.package_id
+            ), overall_performance AS (
+              SELECT ir.package_id,
+                count(*) FILTER (
+                  WHERE ir.status IN ('complete', 'completed')
+                )::int AS overall_completed
+              FROM installation_requests ir
+              WHERE ir.provider_id = $1
+              GROUP BY ir.package_id
+            )
+            SELECT pp.package_name,
+              pp.speed_mbps,
+              pp.monthly_price::float AS monthly_price,
+              pp.installation_fee::float AS installation_fee,
+              pp.fair_usage_policy,
+              pp.billing_cycle,
+              pp.contract_type,
+              pp.installation_period,
+              pp.router_included,
+              coalesce(ap.completed_installs, 0)::int AS completed_installs,
+              coalesce(ap.active_requests, 0)::int AS active_requests,
+              coalesce(op.overall_completed, 0)::int AS overall_completed,
+              CASE
+                WHEN coalesce(ap.completed_installs, 0) > 0
+                  OR coalesce(ap.active_requests, 0) > 0
+                THEN 'Selected-area performance'
+                ELSE 'Best overall package fallback'
+              END AS selection_basis
+            FROM provider_packages pp
+            LEFT JOIN area_performance ap ON ap.package_id = pp.id
+            LEFT JOIN overall_performance op ON op.package_id = pp.id
+            WHERE pp.provider_id = $1
+            ORDER BY
+              coalesce(ap.completed_installs, 0) DESC,
+              coalesce(ap.active_requests, 0) DESC,
+              coalesce(op.overall_completed, 0) DESC,
+              (pp.speed_mbps / nullif(pp.monthly_price, 0)) DESC NULLS LAST,
+              pp.monthly_price ASC
+            LIMIT 1;
+            """,
+            provider_id,
+            clean_area,
+        )
+
+        competitor_package = await db.fetchrow(
+            """
+            WITH eligible_providers AS (
+              SELECT DISTINCT p.id, p.provider_name
+              FROM providers p
+              JOIN provider_coverage_areas coverage
+                ON coverage.provider_id = p.id
+              WHERE p.id <> $1
+                AND lower(btrim(coverage.area_name)) = lower(btrim($2))
+            ), provider_installs AS (
+              SELECT ir.provider_id,
+                count(*) FILTER (
+                  WHERE ir.status IN ('complete', 'completed')
+                )::int AS completed_installs,
+                count(*) FILTER (
+                  WHERE ir.status IN ('pending', 'accepted', 'scheduled', 'installed')
+                )::int AS active_requests
+              FROM installation_requests ir
+              WHERE lower(btrim(coalesce(
+                  ir.installation_area,
+                  ir.estate_or_building,
+                  ''
+                ))) = lower(btrim($2))
+              GROUP BY ir.provider_id
+            ), provider_interest AS (
+              SELECT views.provider_id,
+                count(*)::int AS area_views
+              FROM provider_views views
+              WHERE views.created_at >= now() - interval '90 days'
+                AND lower(btrim(coalesce(views.area_name, ''))) =
+                    lower(btrim($2))
+              GROUP BY views.provider_id
+            ), best_provider AS (
+              SELECT eligible.id,
+                eligible.provider_name,
+                coalesce(installs.completed_installs, 0)::int
+                  AS provider_completed_installs,
+                coalesce(installs.active_requests, 0)::int
+                  AS provider_active_requests,
+                coalesce(interest.area_views, 0)::int AS provider_area_views
+              FROM eligible_providers eligible
+              LEFT JOIN provider_installs installs
+                ON installs.provider_id = eligible.id
+              LEFT JOIN provider_interest interest
+                ON interest.provider_id = eligible.id
+              ORDER BY
+                coalesce(installs.completed_installs, 0) DESC,
+                coalesce(installs.active_requests, 0) DESC,
+                coalesce(interest.area_views, 0) DESC,
+                eligible.provider_name
+              LIMIT 1
+            ), package_performance AS (
+              SELECT ir.package_id,
+                count(*) FILTER (
+                  WHERE ir.status IN ('complete', 'completed')
+                )::int AS completed_installs,
+                count(*) FILTER (
+                  WHERE ir.status IN ('pending', 'accepted', 'scheduled', 'installed')
+                )::int AS active_requests
+              FROM installation_requests ir
+              JOIN best_provider best ON best.id = ir.provider_id
+              WHERE lower(btrim(coalesce(
+                  ir.installation_area,
+                  ir.estate_or_building,
+                  ''
+                ))) = lower(btrim($2))
+              GROUP BY ir.package_id
+            )
+            SELECT best.provider_name,
+              pp.package_name,
+              pp.speed_mbps,
+              pp.monthly_price::float AS monthly_price,
+              pp.installation_fee::float AS installation_fee,
+              pp.fair_usage_policy,
+              pp.billing_cycle,
+              pp.contract_type,
+              pp.installation_period,
+              pp.router_included,
+              coalesce(performance.completed_installs, 0)::int
+                AS completed_installs,
+              coalesce(performance.active_requests, 0)::int
+                AS active_requests,
+              best.provider_completed_installs,
+              best.provider_active_requests,
+              best.provider_area_views,
+              'Top provider in selected area'::text AS selection_basis
+            FROM best_provider best
+            JOIN provider_packages pp ON pp.provider_id = best.id
+            LEFT JOIN package_performance performance
+              ON performance.package_id = pp.id
+            ORDER BY
+              coalesce(performance.completed_installs, 0) DESC,
+              coalesce(performance.active_requests, 0) DESC,
+              (pp.speed_mbps / nullif(pp.monthly_price, 0)) DESC NULLS LAST,
+              pp.monthly_price ASC
+            LIMIT 1;
+            """,
+            provider_id,
+            clean_area,
+        )
+
+    if own_package is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Add at least one package before running a comparison.",
+        )
+
+    return {
+        "area_name": clean_area,
+        "your_provider_name": provider_name,
+        "your_package": dict(own_package),
+        "competitor_package": (
+            dict(competitor_package) if competitor_package is not None else None
+        ),
+        "methodology": (
+            "Providers are ranked by completed installations, active requests, "
+            "and package interest in the selected area. Package selection then "
+            "uses area performance and value."
+        ),
+    }
 
 
 @router.get("/providers/me/pro-analytics")

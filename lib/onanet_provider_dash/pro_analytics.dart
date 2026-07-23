@@ -102,6 +102,10 @@ class _ProAnalyticsPageState extends State<ProAnalyticsPage> {
           children: [
             _CustomerSearchInsightsCard(data: _map(data['search_insights'])),
             _DemandMapCard(zones: _maps(data['demand_zones'])),
+            _CompetitiveComparisonCard(
+              zones: _maps(data['demand_zones']),
+              service: _service,
+            ),
             _FunnelCard(data: _maps(data['funnel'])),
             _GrowthAreasCard(items: _maps(data['growth_areas'])),
             _PackageGapsCard(items: _maps(data['package_gaps'])),
@@ -934,6 +938,609 @@ class _DemandViewButton extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _CompetitiveComparisonCard extends StatefulWidget {
+  const _CompetitiveComparisonCard({
+    required this.zones,
+    required this.service,
+  });
+
+  final List<Map<String, dynamic>> zones;
+  final ProAnalyticsService service;
+
+  @override
+  State<_CompetitiveComparisonCard> createState() =>
+      _CompetitiveComparisonCardState();
+}
+
+class _CompetitiveComparisonCardState
+    extends State<_CompetitiveComparisonCard> {
+  String? _selectedArea;
+  Future<Map<String, dynamic>>? _comparison;
+
+  List<String> get _areas {
+    final seen = <String>{};
+    final result = <String>[];
+    for (final zone in widget.zones) {
+      if (_int(zone['providers']) <= 0) continue;
+      final area = zone['area_name']?.toString().trim() ?? '';
+      if (area.isEmpty || !seen.add(area.toLowerCase())) continue;
+      result.add(area);
+    }
+    return result;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final areas = _areas;
+    if (areas.isNotEmpty) {
+      _selectedArea = areas.first;
+      _comparison = widget.service.comparePackagesByArea(areas.first);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _CompetitiveComparisonCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final areas = _areas;
+    if (areas.isEmpty) {
+      _selectedArea = null;
+      _comparison = null;
+      return;
+    }
+    if (_selectedArea == null || !areas.contains(_selectedArea)) {
+      _selectedArea = areas.first;
+      _comparison = widget.service.comparePackagesByArea(areas.first);
+    }
+  }
+
+  void _selectArea(String area) {
+    final nextComparison = widget.service.comparePackagesByArea(area);
+    setState(() {
+      _selectedArea = area;
+      _comparison = nextComparison;
+    });
+  }
+
+  Future<void> _pickArea() async {
+    final area = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) =>
+          _ComparisonAreaPicker(areas: _areas, selectedArea: _selectedArea),
+    );
+    if (area != null && area != _selectedArea && mounted) _selectArea(area);
+  }
+
+  void _retry() {
+    final area = _selectedArea;
+    if (area == null) return;
+    _selectArea(area);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final area = _selectedArea;
+    return _ProCard(
+      title: 'Competitive Package Comparison',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Compare your most successful package with the strongest competing package in one area.',
+            softWrap: true,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _areas.isEmpty ? null : _pickArea,
+            icon: const Icon(Icons.location_searching_rounded),
+            label: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                area ?? 'Choose comparison area',
+                softWrap: true,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_areas.isEmpty)
+            const _Empty(
+              message:
+                  'Provider coverage areas will appear here when they are available.',
+            )
+          else
+            FutureBuilder<Map<String, dynamic>>(
+              future: _comparison,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox(
+                    height: 240,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return Column(
+                    children: [
+                      Text(
+                        snapshot.error.toString(),
+                        textAlign: TextAlign.center,
+                        softWrap: true,
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: _retry,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('Retry comparison'),
+                      ),
+                    ],
+                  );
+                }
+                final data = snapshot.data ?? const <String, dynamic>{};
+                final yours = _map(data['your_package']);
+                final competitor = _map(data['competitor_package']);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final cardWidth = constraints.maxWidth >= 700
+                            ? (constraints.maxWidth - 12) / 2
+                            : math.max(278.0, constraints.maxWidth * .84);
+                        return SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: cardWidth,
+                                child: _ComparisonPackageCard(
+                                  badge: 'YOUR BEST',
+                                  providerName:
+                                      data['your_provider_name']?.toString() ??
+                                      'Your provider',
+                                  package: yours,
+                                  accent: AppTheme.amber,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              SizedBox(
+                                width: cardWidth,
+                                child: competitor.isEmpty
+                                    ? const _NoCompetitorCard()
+                                    : _ComparisonPackageCard(
+                                        badge: 'AREA LEADER',
+                                        providerName:
+                                            competitor['provider_name']
+                                                ?.toString() ??
+                                            'Top area provider',
+                                        package: competitor,
+                                        accent: Colors.green,
+                                      ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    if (competitor.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _ComparisonSummary(yours: yours, competitor: competitor),
+                    ],
+                    const SizedBox(height: 9),
+                    Text(
+                      data['methodology']?.toString() ?? '',
+                      textAlign: TextAlign.center,
+                      softWrap: true,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 10,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComparisonAreaPicker extends StatefulWidget {
+  const _ComparisonAreaPicker({
+    required this.areas,
+    required this.selectedArea,
+  });
+
+  final List<String> areas;
+  final String? selectedArea;
+
+  @override
+  State<_ComparisonAreaPicker> createState() => _ComparisonAreaPickerState();
+}
+
+class _ComparisonAreaPickerState extends State<_ComparisonAreaPicker> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _query.trim().toLowerCase();
+    final results = widget.areas
+        .where((area) => query.isEmpty || area.toLowerCase().contains(query))
+        .toList();
+    return FractionallySizedBox(
+      heightFactor: .78,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Choose comparison area',
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              autofocus: true,
+              onChanged: (value) => setState(() {
+                _query = value;
+              }),
+              decoration: InputDecoration(
+                hintText: 'Search areas',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixText: '${results.length}',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                itemCount: results.length,
+                itemBuilder: (context, index) {
+                  final area = results[index];
+                  final selected = area == widget.selectedArea;
+                  return ListTile(
+                    leading: Icon(
+                      Icons.location_on_outlined,
+                      color: selected ? AppTheme.amber : null,
+                    ),
+                    title: Text(
+                      area,
+                      softWrap: true,
+                      style: TextStyle(
+                        fontWeight: selected
+                            ? FontWeight.w900
+                            : FontWeight.w700,
+                      ),
+                    ),
+                    trailing: selected
+                        ? const Icon(
+                            Icons.check_circle_rounded,
+                            color: AppTheme.amber,
+                          )
+                        : null,
+                    onTap: () => Navigator.pop(context, area),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ComparisonPackageCard extends StatelessWidget {
+  const _ComparisonPackageCard({
+    required this.badge,
+    required this.providerName,
+    required this.package,
+    required this.accent,
+  });
+
+  final String badge;
+  final String providerName;
+  final Map<String, dynamic> package;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: .28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(99),
+              ),
+              child: Text(
+                badge,
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: .5,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            providerName,
+            softWrap: true,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            package['package_name']?.toString() ?? 'Package',
+            softWrap: true,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 12),
+          _ComparisonFact(
+            icon: Icons.speed_rounded,
+            label: 'Speed',
+            value: '${_int(package['speed_mbps'])} Mbps',
+          ),
+          _ComparisonFact(
+            icon: Icons.payments_outlined,
+            label: 'Monthly price',
+            value: 'KES ${_money(_d(package['monthly_price']))}',
+          ),
+          _ComparisonFact(
+            icon: Icons.handyman_outlined,
+            label: 'Installation fee',
+            value: 'KES ${_money(_d(package['installation_fee']))}',
+          ),
+          _ComparisonFact(
+            icon: Icons.data_usage_rounded,
+            label: 'Fair usage policy',
+            value: _value(package['fair_usage_policy'], 'Not specified'),
+          ),
+          _ComparisonFact(
+            icon: Icons.calendar_month_outlined,
+            label: 'Billing cycle',
+            value: _pretty(package['billing_cycle']),
+          ),
+          _ComparisonFact(
+            icon: Icons.description_outlined,
+            label: 'Contract',
+            value: _pretty(package['contract_type']),
+          ),
+          _ComparisonFact(
+            icon: Icons.schedule_rounded,
+            label: 'Installation time',
+            value: _value(package['installation_period'], 'Not specified'),
+          ),
+          _ComparisonFact(
+            icon: Icons.router_outlined,
+            label: 'Router included',
+            value: package['router_included'] == true ? 'Yes' : 'No',
+          ),
+          _ComparisonFact(
+            icon: Icons.check_circle_outline_rounded,
+            label: 'Completed in area',
+            value: '${_int(package['completed_installs'])}',
+          ),
+          _ComparisonFact(
+            icon: Icons.pending_actions_outlined,
+            label: 'Active requests',
+            value: '${_int(package['active_requests'])}',
+            showDivider: false,
+          ),
+          const SizedBox(height: 9),
+          Text(
+            package['selection_basis']?.toString() ?? '',
+            textAlign: TextAlign.center,
+            softWrap: true,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComparisonFact extends StatelessWidget {
+  const _ComparisonFact({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.showDivider = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 17, color: AppTheme.amber),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                softWrap: true,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                value,
+                textAlign: TextAlign.right,
+                softWrap: true,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      if (showDivider)
+        Divider(
+          height: 1,
+          color: Theme.of(
+            context,
+          ).colorScheme.onSurfaceVariant.withValues(alpha: .12),
+        ),
+    ],
+  );
+}
+
+class _NoCompetitorCard extends StatelessWidget {
+  const _NoCompetitorCard();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(minHeight: 330),
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: Theme.of(
+          context,
+        ).colorScheme.onSurfaceVariant.withValues(alpha: .18),
+      ),
+    ),
+    child: const Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.emoji_events_outlined, color: AppTheme.amber, size: 38),
+        SizedBox(height: 12),
+        Text(
+          'No competing package in this area',
+          textAlign: TextAlign.center,
+          softWrap: true,
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
+        SizedBox(height: 6),
+        Text(
+          'Your provider is currently the only OnaNet option recorded here.',
+          textAlign: TextAlign.center,
+          softWrap: true,
+        ),
+      ],
+    ),
+  );
+}
+
+class _ComparisonSummary extends StatelessWidget {
+  const _ComparisonSummary({required this.yours, required this.competitor});
+
+  final Map<String, dynamic> yours;
+  final Map<String, dynamic> competitor;
+
+  @override
+  Widget build(BuildContext context) {
+    final yourSpeed = _d(yours['speed_mbps']);
+    final theirSpeed = _d(competitor['speed_mbps']);
+    final yourPrice = _d(yours['monthly_price']);
+    final theirPrice = _d(competitor['monthly_price']);
+    final insights = <String>[
+      yourSpeed == theirSpeed
+          ? 'Both packages offer the same advertised speed.'
+          : yourSpeed > theirSpeed
+          ? 'Your package is ${_money(yourSpeed - theirSpeed)} Mbps faster.'
+          : 'The area leader is ${_money(theirSpeed - yourSpeed)} Mbps faster.',
+      yourPrice == theirPrice
+          ? 'Both packages have the same monthly price.'
+          : yourPrice < theirPrice
+          ? 'Your package costs KES ${_money(theirPrice - yourPrice)} less per month.'
+          : 'The area leader costs KES ${_money(yourPrice - theirPrice)} less per month.',
+    ];
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.amber.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Quick comparison',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 7),
+          for (final insight in insights)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 5),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.insights_rounded,
+                    color: AppTheme.amber,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(child: Text(insight, softWrap: true)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _value(Object? value, String fallback) {
+  final text = value?.toString().trim() ?? '';
+  return text.isEmpty ? fallback : text;
+}
+
+String _pretty(Object? value) {
+  final text = _value(value, 'Not specified').replaceAll('_', ' ');
+  return text
+      .split(' ')
+      .where((part) => part.isNotEmpty)
+      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
 }
 
 class _DemandMapScreen extends StatefulWidget {

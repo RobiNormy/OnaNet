@@ -49,6 +49,24 @@ class ProAnalyticsService {
     }
   }
 
+  Future<Map<String, dynamic>> comparePackagesByArea(String area) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        _url('/providers/me/pro-analytics/package-comparison'),
+        queryParameters: {'area': area.trim()},
+        options: await _options(),
+      );
+      return response.data ?? const {};
+    } on DioException catch (error) {
+      final detail = error.response?.data is Map
+          ? error.response?.data['detail']?.toString()
+          : null;
+      throw ProAnalyticsException(
+        detail ?? error.message ?? 'Could not compare packages for this area.',
+      );
+    }
+  }
+
   Future<void> logSearch({
     required List<Map<String, dynamic>> providers,
     String? queryText,
