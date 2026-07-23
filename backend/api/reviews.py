@@ -57,6 +57,7 @@ class ReviewOut(BaseModel):
     rating: int
     comment: str | None
     customer_name: str | None
+    provider_name: str | None = None
     package_name: str | None
     created_at: Any
     updated_at: Any
@@ -167,10 +168,12 @@ async def my_reviews(authorization: str | None = Header(default=None)) -> list[A
                 pr.created_at,
                 pr.updated_at,
                 pp.package_name,
+                p.provider_name,
                 u.first_name,
                 u.last_name
             FROM provider_reviews pr
             JOIN users u ON u.id = pr.user_id
+            JOIN providers p ON p.id = pr.provider_id
             LEFT JOIN provider_packages pp ON pp.id = pr.package_id
             WHERE u.firebase_uid = $1
             ORDER BY pr.updated_at DESC
@@ -182,6 +185,7 @@ async def my_reviews(authorization: str | None = Header(default=None)) -> list[A
         _review_response(
             dict(row),
             customer_name=_customer_name(dict(row)),
+            provider_name=row["provider_name"],
             package_name=row["package_name"],
         )
         for row in rows
@@ -201,7 +205,8 @@ def _review_response(
     row: dict[str, Any],
     *,
     customer_name: str | None,
-    package_name: str | None,
+    provider_name: str | None = None,
+    package_name: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -211,6 +216,7 @@ def _review_response(
         "rating": row["rating"],
         "comment": row["comment"],
         "customer_name": customer_name,
+        "provider_name": provider_name,
         "package_name": package_name,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],

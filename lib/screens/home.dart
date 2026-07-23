@@ -12,6 +12,7 @@ import 'package:ona_net/screens/saved.dart';
 import 'package:ona_net/screens/search.dart';
 import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/services/pro_analytics_service.dart';
+import 'package:ona_net/services/preferred_location_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
 import 'package:provider/provider.dart';
@@ -141,6 +142,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchLocation() async {
     setState(() => _loadingLocation = true);
+    final preferred = await PreferredLocationStore.load();
+    if (preferred != null) {
+      if (!mounted) return;
+      setState(() {
+        _area = preferred.name;
+        _userLatitude = preferred.latitude;
+        _userLongitude = preferred.longitude;
+        _loadingLocation = false;
+      });
+      return;
+    }
     final location = await Location.getCurrentLocation().timeout(
       Duration(seconds: 10),
       onTimeout: () => null,
@@ -303,9 +315,10 @@ class _HomeScreenState extends State<HomeScreen> {
         return _LocationPickerSheet(
           isDark: isDark,
           currentArea: _area,
-          onUseCurrent: () {
+          onUseCurrent: () async {
             Navigator.pop(sheetContext);
-            _fetchLocation();
+            await PreferredLocationStore.clear();
+            await _fetchLocation();
           },
           onSelect: (area) {
             Navigator.pop(sheetContext);

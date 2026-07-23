@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -8,9 +10,14 @@ class SavedProvidersStore extends ChangeNotifier {
 
   final Map<String, Map<String, dynamic>> _providersById = {};
   bool _loaded = false;
+  String? _accountId;
+  late final StreamSubscription<User?> _authSubscription;
 
   SavedProvidersStore() {
-    _load();
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen(
+      (user) => _loadForAccount(user?.uid ?? 'guest'),
+    );
+    _loadForAccount(FirebaseAuth.instance.currentUser?.uid ?? 'guest');
   }
 
   bool get isLoaded => _loaded;
@@ -38,9 +45,24 @@ class SavedProvidersStore extends ChangeNotifier {
     await _persist();
   }
 
-  Future<void> _load() async {
+  String get _accountStorageKey => '${_storageKey}_${_accountId ?? 'guest'}';
+
+  Future<void> _loadForAccount(String accountId) async {
+    if (_accountId == accountId && _loaded) return;
+    _accountId = accountId;
+    _loaded = false;
+    _providersById.clear();
+    notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_storageKey);
+    var saved = prefs.getString(_accountStorageKey);
+    if (saved == null && accountId != 'guest') {
+      saved = prefs.getString(_storageKey);
+      if (saved != null) {
+        await prefs.setString(_accountStorageKey, saved);
+        await prefs.remove(_storageKey);
+      }
+    }
+    if (_accountId != accountId) return;
     try {
       if (saved == null || saved.isEmpty) return;
       final decoded = jsonDecode(saved);
@@ -53,17 +75,25 @@ class SavedProvidersStore extends ChangeNotifier {
         }
       }
     } catch (_) {
-      await prefs.remove(_storageKey);
+      await prefs.remove(_accountStorageKey);
       _providersById.clear();
     } finally {
-      _loaded = true;
-      notifyListeners();
+      if (_accountId == accountId) {
+        _loaded = true;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> _persist() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_storageKey, jsonEncode(providers));
+    await prefs.setString(_accountStorageKey, jsonEncode(providers));
+  }
+
+  @override
+  void dispose() {
+    _authSubscription.cancel();
+    super.dispose();
   }
 }
 

@@ -38,7 +38,9 @@ class _MyRequestsScreenState extends State<MyRequestsScreen> {
 
   Future<void> _refresh() async {
     final next = _load();
-    setState(() => _requests = next);
+    setState(() {
+      _requests = next;
+    });
     await next;
   }
 

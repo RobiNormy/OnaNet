@@ -1,8 +1,8 @@
 import anyio
 import functools
 import logging
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel, EmailStr, Field
 from firebase_admin import auth
 from backend.db.session import get_db_connection
 from backend.core.firebase import create_firebase_user_rest,verify_firebase_token
@@ -21,6 +21,29 @@ class SignUpRequest(BaseModel):
     password: str
     first_name: str | None = None
     last_name: str | None = None
+
+
+class PersonalInfoUpdate(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(default="", max_length=100)
+
+
+def _user_response(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "firebase_uid": row["firebase_uid"],
+        "email": row["email"],
+        "first_name": row["first_name"],
+        "last_name": row["last_name"],
+        "phone_number": row["phone_number"],
+        "profile_image_url": row["profile_image_url"],
+        "auth_provider": row["auth_provider"],
+        "role": row["role"],
+        "is_phone_verified": row["is_phone_verified"],
+        "is_profile_complete": row["is_profile_complete"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
 
 
 async def _get_current_firebase_user(authorization: str | None) -> dict:
@@ -57,6 +80,61 @@ async def _get_current_firebase_user(authorization: str | None) -> dict:
         }
 
     return decoded
+
+
+@router.get("/me")
+async def get_my_account(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    firebase_user = await _get_current_firebase_user(authorization)
+    account_uid = firebase_user.get("actor_uid") or firebase_user["uid"]
+    firebase_email = (firebase_user.get("email") or "").strip().lower() or None
+    async with get_db_connection() as connection:
+        row = await connection.fetchrow(
+            """
+            UPDATE users
+            SET email = coalesce($2, email),
+                updated_at = CASE
+                    WHEN $2::text IS NOT NULL AND email IS DISTINCT FROM $2
+                    THEN now()
+                    ELSE updated_at
+                END
+            WHERE firebase_uid = $1
+            RETURNING *
+            """,
+            account_uid,
+            firebase_email,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="User profile not found.")
+    return _user_response(dict(row))
+
+
+@router.patch("/me")
+async def update_my_account(
+    body: PersonalInfoUpdate,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    firebase_user = await _get_current_firebase_user(authorization)
+    account_uid = firebase_user.get("actor_uid") or firebase_user["uid"]
+    async with get_db_connection() as connection:
+        row = await connection.fetchrow(
+            """
+            UPDATE users
+            SET first_name = $2,
+                last_name = $3,
+                is_profile_complete = true,
+                updated_at = now()
+            WHERE firebase_uid = $1
+            RETURNING *
+            """,
+            account_uid,
+            body.first_name.strip(),
+            body.last_name.strip() or None,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="User profile not found.")
+    return _user_response(dict(row))
 
 
 @router.post('/signup', response_model=AuthResponse)
@@ -190,6 +268,24 @@ async def firebase_auth(body: FirebaseTokenRequest):
                 'user',
                 False,
                 False,
+            )
+        else:
+            user_row = await connection.fetchrow(
+                """
+                UPDATE users
+                SET email = $2,
+                    first_name = coalesce($3, first_name),
+                    last_name = coalesce($4, last_name),
+                    profile_image_url = coalesce($5, profile_image_url),
+                    updated_at = now()
+                WHERE firebase_uid = $1
+                RETURNING *
+                """,
+                firebase_uid,
+                email.strip().lower(),
+                first_name,
+                last_name,
+                photo,
             )
 
     access_token = create_access_token(

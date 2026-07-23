@@ -5,6 +5,9 @@ import 'package:ona_net/auth/phone_verification.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/screens/my_requests.dart';
+import 'package:ona_net/screens/customer_profile_pages.dart';
+import 'package:ona_net/screens/saved.dart';
+import 'package:ona_net/auth/installation_service_request.dart';
 import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/themes/theme_provider.dart';
@@ -21,6 +24,9 @@ class Profile extends StatefulWidget {
 class _ProfileState extends State<Profile> {
   final _phoneVerificationService = PhoneVerificationService();
   late Future<OtpStatusResult?> _phoneStatus = _loadPhoneStatus();
+  late Future<Map<String, dynamic>> _account = _loadAccount();
+  late Future<List<InstallationRequestResult>> _requestUpdates =
+      _loadRequestUpdates();
   bool _isSigningOut = false;
 
   Future<OtpStatusResult?> _loadPhoneStatus() async {
@@ -34,9 +40,67 @@ class _ProfileState extends State<Profile> {
   }
 
   Future<void> _refreshProfile() async {
-    final next = _loadPhoneStatus();
-    setState(() => _phoneStatus = next);
-    await next;
+    final phone = _loadPhoneStatus();
+    final account = _loadAccount();
+    final requests = _loadRequestUpdates();
+    setState(() {
+      _phoneStatus = phone;
+      _account = account;
+      _requestUpdates = requests;
+    });
+    await Future.wait([phone, account, requests]);
+  }
+
+  Future<Map<String, dynamic>> _loadAccount() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const {};
+    try {
+      return await AuthService().getMyAccount();
+    } catch (_) {
+      return {
+        'email': user.email,
+        'first_name': user.displayName?.split(' ').first,
+        'last_name': user.displayName?.split(' ').skip(1).join(' '),
+        'created_at': user.metadata.creationTime?.toIso8601String(),
+      };
+    }
+  }
+
+  Future<List<InstallationRequestResult>> _loadRequestUpdates() async {
+    if (FirebaseAuth.instance.currentUser == null) return const [];
+    try {
+      return await InstallationServiceRequest().myRequests();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<bool> _requireAccount() async {
+    if (FirebaseAuth.instance.currentUser != null) return true;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const Login()));
+    if (FirebaseAuth.instance.currentUser == null) return false;
+    await _refreshProfile();
+    return true;
+  }
+
+  Future<void> _openPersonalInformation() async {
+    if (!await _requireAccount() || !mounted) return;
+    final account = await _account;
+    if (!mounted) return;
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PersonalInformationScreen(account: account),
+      ),
+    );
+    if (changed == true) await _refreshProfile();
+  }
+
+  Future<void> _openPage(Widget page) async {
+    if (!await _requireAccount() || !mounted) return;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   }
 
   Future<void> _openMyRequests() async {
@@ -130,6 +194,7 @@ class _ProfileState extends State<Profile> {
                         : null,
                     isCheckingPhone:
                         snapshot.connectionState == ConnectionState.waiting,
+                    onEdit: _openPersonalInformation,
                   ),
                 ),
                 if (user == null) ...[
@@ -150,6 +215,7 @@ class _ProfileState extends State<Profile> {
                       textColor: textColor,
                       mutedTextColor: mutedTextColor,
                       isDark: isDark,
+                      onTap: _openPersonalInformation,
                     ),
                     _SectionDivider(color: mutedTextColor),
                     _SettingsTile(
@@ -159,6 +225,7 @@ class _ProfileState extends State<Profile> {
                       textColor: textColor,
                       mutedTextColor: mutedTextColor,
                       isDark: isDark,
+                      onTap: () => _openPage(const PasswordSecurityScreen()),
                     ),
                     _SectionDivider(color: mutedTextColor),
                     _SettingsTile(
@@ -168,6 +235,7 @@ class _ProfileState extends State<Profile> {
                       textColor: textColor,
                       mutedTextColor: mutedTextColor,
                       isDark: isDark,
+                      onTap: () => _openPage(const LocationPreferencesScreen()),
                     ),
                   ],
                 ),
@@ -192,6 +260,7 @@ class _ProfileState extends State<Profile> {
                       textColor: textColor,
                       mutedTextColor: mutedTextColor,
                       isDark: isDark,
+                      onTap: () => _openPage(const SavedScreen()),
                     ),
                     _SectionDivider(color: mutedTextColor),
                     _SettingsTile(
@@ -201,6 +270,7 @@ class _ProfileState extends State<Profile> {
                       textColor: textColor,
                       mutedTextColor: mutedTextColor,
                       isDark: isDark,
+                      onTap: () => _openPage(const MyReviewsScreen()),
                     ),
                   ],
                 ),
@@ -214,13 +284,30 @@ class _ProfileState extends State<Profile> {
                       isDark: isDark,
                     ),
                     _SectionDivider(color: mutedTextColor),
-                    _SettingsTile(
-                      icon: Icons.notifications_none_rounded,
-                      title: 'Notifications',
-                      subtitle: 'Provider updates and request alerts',
-                      textColor: textColor,
-                      mutedTextColor: mutedTextColor,
-                      isDark: isDark,
+                    FutureBuilder<List<InstallationRequestResult>>(
+                      future: _requestUpdates,
+                      builder: (context, snapshot) {
+                        final count = (snapshot.data ?? const [])
+                            .where(
+                              (request) => {
+                                'accepted',
+                                'declined',
+                                'complete',
+                                'completed',
+                              }.contains(request.status.toLowerCase()),
+                            )
+                            .length;
+                        return _SettingsTile(
+                          icon: Icons.notifications_none_rounded,
+                          title: 'Notifications',
+                          subtitle: 'Provider updates and request alerts',
+                          textColor: textColor,
+                          mutedTextColor: mutedTextColor,
+                          isDark: isDark,
+                          badgeCount: count,
+                          onTap: () => _openPage(const NotificationsScreen()),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -235,6 +322,12 @@ class _ProfileState extends State<Profile> {
                       textColor: textColor,
                       mutedTextColor: mutedTextColor,
                       isDark: isDark,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const HelpCenterScreen(),
+                        ),
+                      ),
                     ),
                     _SectionDivider(color: mutedTextColor),
                     _SettingsTile(
@@ -244,6 +337,12 @@ class _ProfileState extends State<Profile> {
                       textColor: textColor,
                       mutedTextColor: mutedTextColor,
                       isDark: isDark,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const AboutOnaNetScreen(),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -379,12 +478,14 @@ class _ProfileHeaderCard extends StatelessWidget {
     required this.email,
     required this.verifiedPhone,
     required this.isCheckingPhone,
+    required this.onEdit,
   });
 
   final String displayName;
   final String? email;
   final String? verifiedPhone;
   final bool isCheckingPhone;
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -496,17 +597,21 @@ class _ProfileHeaderCard extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: isDark ? AppTheme.navyLight : AppTheme.offWhite,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              Icons.edit_outlined,
-              color: isDark ? AppTheme.amberLight : AppTheme.amberDark,
-              size: 20,
+          InkWell(
+            onTap: onEdit,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isDark ? AppTheme.navyLight : AppTheme.offWhite,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                Icons.edit_outlined,
+                color: isDark ? AppTheme.amberLight : AppTheme.amberDark,
+                size: 20,
+              ),
             ),
           ),
         ],
@@ -577,6 +682,7 @@ class _SettingsTile extends StatelessWidget {
     this.accentColor = AppTheme.amber,
     this.showChevron = true,
     this.onTap,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
@@ -588,6 +694,7 @@ class _SettingsTile extends StatelessWidget {
   final Color accentColor;
   final bool showChevron;
   final VoidCallback? onTap;
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
@@ -630,6 +737,29 @@ class _SettingsTile extends StatelessWidget {
             ),
             if (showChevron) ...[
               const SizedBox(width: 10),
+              if (badgeCount > 0) ...[
+                Container(
+                  constraints: const BoxConstraints(minWidth: 22),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.amber,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badgeCount > 99 ? '99+' : '$badgeCount',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppTheme.navy,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+              ],
               Icon(
                 Icons.chevron_right_rounded,
                 color: mutedTextColor,

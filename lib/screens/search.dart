@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/provider_detail.dart';
 import 'package:ona_net/services/pro_analytics_service.dart';
+import 'package:ona_net/services/preferred_location_store.dart';
 import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
@@ -73,6 +74,17 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _loadLocation() async {
+    final preferred = await PreferredLocationStore.load();
+    if (preferred != null) {
+      if (!mounted) return;
+      setState(() {
+        _area = preferred.name;
+        _userLatitude = preferred.latitude;
+        _userLongitude = preferred.longitude;
+      });
+      _scheduleSearchAnalytics();
+      return;
+    }
     final location = await Location.getCurrentLocation().timeout(
       const Duration(seconds: 10),
       onTimeout: () => null,

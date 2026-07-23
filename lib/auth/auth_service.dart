@@ -109,6 +109,70 @@ class AuthService {
     }
   }
 
+  Future<Map<String, dynamic>> getMyAccount() async {
+    final response = await _getJson('/auth/me');
+    return _asMap(response.data);
+  }
+
+  Future<Map<String, dynamic>> updateMyAccount({
+    required String firstName,
+    required String lastName,
+  }) async {
+    try {
+      final response = await _dio.patch<dynamic>(
+        _url('/auth/me'),
+        data: {'first_name': firstName.trim(), 'last_name': lastName.trim()},
+        options: await _authorizedOptions(),
+      );
+      final displayName = [
+        firstName,
+        lastName,
+      ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(' ');
+      await _auth.currentUser?.updateDisplayName(displayName);
+      return _asMap(response.data);
+    } on FirebaseAuthException catch (error) {
+      throw AuthServiceException(_firebaseErrorMessage(error));
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
+  Future<void> requestEmailChange(String newEmail) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw const AuthServiceException('Please sign in again.');
+    }
+    try {
+      await user.verifyBeforeUpdateEmail(newEmail.trim());
+    } on FirebaseAuthException catch (error) {
+      throw AuthServiceException(_firebaseErrorMessage(error));
+    }
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+    if (user == null || email == null) {
+      throw const AuthServiceException('Please sign in again.');
+    }
+    try {
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: email, password: currentPassword),
+      );
+      await user.updatePassword(newPassword);
+    } on FirebaseAuthException catch (error) {
+      throw AuthServiceException(_firebaseErrorMessage(error));
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getMyReviews() async {
+    final response = await _getJson('/reviews/me');
+    return _asMapList(response.data);
+  }
+
   Future<String?> getFirebaseIdToken() async => _auth.currentUser?.getIdToken();
 
   Future<Map<String, dynamic>> submitProviderRegistration(
@@ -509,6 +573,12 @@ class AuthService {
       'user-not-found' => 'No account was found for that email.',
       'wrong-password' || 'invalid-credential' => 'Invalid email or password.',
       'weak-password' => 'Please choose a stronger password.',
+      'requires-recent-login' =>
+        'For security, log out and sign in again before making this change.',
+      'too-many-requests' =>
+        'Too many attempts. Please wait a moment and try again.',
+      'operation-not-allowed' =>
+        'This sign-in method does not support that password change.',
       'network-request-failed' => 'Network error. Please try again.',
       _ => error.message ?? 'Authentication failed.',
     };
