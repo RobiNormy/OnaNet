@@ -29,6 +29,13 @@ async def ensure_provider_staff_schema() -> None:
             """
             CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+            ALTER TABLE users
+              DROP CONSTRAINT IF EXISTS users_role_check;
+
+            ALTER TABLE users
+              ADD CONSTRAINT users_role_check
+              CHECK (role IN ('user', 'provider', 'provider_staff', 'admin'));
+
             CREATE TABLE IF NOT EXISTS provider_staff_accounts (
               id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
               provider_id uuid NOT NULL
@@ -244,6 +251,7 @@ async def create_provider_staff(
 
     email = body.email.strip().lower()
     names = body.display_name.strip().split(" ", 1)
+    firebase_uid: str
     try:
         firebase_uid = await create_firebase_user_rest(
             email=email,
@@ -253,11 +261,44 @@ async def create_provider_staff(
     except Exception as exc:
         message = str(exc)
         if "EMAIL_EXISTS" in message:
-            message = "That staff email already has an OnaNet account."
+            try:
+                firebase_uid = await verify_firebase_password(
+                    email,
+                    body.password,
+                )
+            except (ValueError, KeyError) as recovery_error:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "That email already has an OnaNet account. Use a "
+                        "different email or the existing account password."
+                    ),
+                ) from recovery_error
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=message,
+            ) from exc
+
+    async with get_db_connection() as db:
+        existing_user = await db.fetchrow(
+            """
+            SELECT id
+            FROM users
+            WHERE firebase_uid = $1 OR lower(email) = $2
+            LIMIT 1;
+            """,
+            firebase_uid,
+            email,
+        )
+    if existing_user is not None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=message,
-        ) from exc
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "That email already belongs to an OnaNet profile. Use a "
+                "different email for this team account."
+            ),
+        )
 
     permissions = _normalized_permissions(body.permissions)
     async with get_db_connection() as db:

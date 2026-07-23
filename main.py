@@ -43,6 +43,7 @@ app.add_middleware(
         "http://localhost",
         "http://127.0.0.1",
         "http://localhost:8080",
+        "https://onanet-production.up.railway.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],

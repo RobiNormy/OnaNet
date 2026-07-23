@@ -5,8 +5,7 @@ import 'package:ona_net/services/api_client.dart';
 class SubscriptionService {
   SubscriptionService({Dio? dio, String? apiBaseUrl})
     : _dio = dio ?? sharedApiClient,
-      _apiBaseUrl =
-          apiBaseUrl ?? const String.fromEnvironment('ONA_NET_API_BASE_URL');
+      _apiBaseUrl = apiBaseUrl ?? onaNetApiBaseUrl;
 
   final Dio _dio;
   final String _apiBaseUrl;
@@ -14,8 +13,7 @@ class SubscriptionService {
   String _url(String path) {
     if (_apiBaseUrl.trim().isEmpty) {
       throw const SubscriptionException(
-        'The API address is not configured. Start the app with '
-        '--dart-define=ONA_NET_API_BASE_URL=http://<server>:8000.',
+        'The OnaNet API address is not configured.',
       );
     }
     final base = Uri.parse(_apiBaseUrl);

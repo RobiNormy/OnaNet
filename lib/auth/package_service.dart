@@ -6,8 +6,7 @@ import 'package:ona_net/utils/provider_filters.dart';
 class ProviderPackageService {
   ProviderPackageService({Dio? dio, String? apiBaseUrl})
     : _dio = dio ?? sharedApiClient,
-      _apiBaseUrl =
-          apiBaseUrl ?? const String.fromEnvironment('ONA_NET_API_BASE_URL');
+      _apiBaseUrl = apiBaseUrl ?? onaNetApiBaseUrl;
 
   final Dio _dio;
   final String _apiBaseUrl;

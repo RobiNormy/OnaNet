@@ -2,6 +2,17 @@
 
 Ona Net wifi discovery
 
+## Production API
+
+Flutter builds use the Railway API by default:
+
+```text
+https://onanet-production.up.railway.app
+```
+
+Railway forwards that public HTTPS address to the backend's internal port.
+Do not add `:8080` to the public URL.
+
 ## Running With A Local API On A Physical Phone
 
 Start FastAPI so other devices on your Wi-Fi can reach it:
@@ -25,6 +36,7 @@ flutter run --dart-define=ONA_NET_API_BASE_URL=http://192.168.1.23:8000
 
 Replace `192.168.1.23` with your computer's actual Wi-Fi IP. The phone and
 computer must be on the same network, and your firewall must allow port `8000`.
+This command overrides the production Railway URL for local development.
 
 ## Getting Started
 

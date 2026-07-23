@@ -20,8 +20,7 @@ class AuthServiceException implements Exception {
 class AuthService {
   AuthService({Dio? dio, String? apiBaseUrl})
     : _dio = dio ?? sharedApiClient,
-      _apiBaseUrl =
-          apiBaseUrl ?? const String.fromEnvironment('ONA_NET_API_BASE_URL');
+      _apiBaseUrl = apiBaseUrl ?? onaNetApiBaseUrl;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
@@ -471,9 +470,7 @@ class AuthService {
   String _url(String path) {
     if (_apiBaseUrl.trim().isEmpty) {
       throw const AuthServiceException(
-        'ONA_NET_API_BASE_URL is not configured. Run Flutter with '
-        '--dart-define=ONA_NET_API_BASE_URL=http://<computer-lan-ip>:8000. '
-        'On a physical phone, do not use localhost.',
+        'The OnaNet API address is not configured.',
       );
     }
     final base = Uri.parse(_apiBaseUrl);
