@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/onanet_provider_dash/dashy.dart';
 import 'package:ona_net/provider/registration.dart';
+import 'package:ona_net/screens/onanet_admin_dashboard.dart';
 import 'package:ona_net/screens/sign_up.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
@@ -34,6 +35,22 @@ class _LoginState extends State<Login> {
 
     final authService = AuthService();
     try {
+      Map<String, dynamic>? account;
+      try {
+        account = await authService.getMyAccount();
+      } catch (_) {
+        // Older Firebase-only accounts can continue through the existing
+        // provider/customer resolver until their database profile is synced.
+      }
+      if (!mounted) return;
+      if (account?['role']?.toString().toLowerCase() == 'admin') {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnaNetAdminDashboard()),
+          (route) => false,
+        );
+        return;
+      }
+
       final provider = await authService.findMyProvider();
       if (!mounted) return;
       if (provider != null) {
