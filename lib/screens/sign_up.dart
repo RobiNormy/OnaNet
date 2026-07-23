@@ -420,8 +420,7 @@ class _OnaNetLogo extends StatelessWidget {
             ),
             Positioned(
               top: -15,
-              height: -1,
-              child: Icon(Icons.wifi_rounded, color: Colors.amber),
+              child: Icon(Icons.wifi_rounded, color: AppTheme.amber, size: 18),
             ),
           ],
         ),
