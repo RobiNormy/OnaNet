@@ -117,33 +117,34 @@ class _SearchScreenState extends State<SearchScreen> {
 
   List<Map<String, dynamic>> get _filteredProviders {
     final query = _query.trim().toLowerCase();
-    final directoryProviders =
-        filterProviders(
-          _providers,
-          filter: _selectedFilter,
-          userLatitude: _userLatitude,
-          userLongitude: _userLongitude,
-          userArea: _area,
-          restrictToUserArea: false,
-        )..sort((a, b) {
-          final aNearby = providerMatchesUserLocation(
-            a,
-            userLatitude: _userLatitude,
-            userLongitude: _userLongitude,
-            userArea: _area,
-          );
-          final bNearby = providerMatchesUserLocation(
-            b,
-            userLatitude: _userLatitude,
-            userLongitude: _userLongitude,
-            userArea: _area,
-          );
-          if (aNearby != bNearby) return aNearby ? -1 : 1;
-          return providerName(a).compareTo(providerName(b));
-        });
+    final searchArea = _searchedArea ?? _area;
+    final directoryProviders = filterProviders(
+      _providers,
+      filter: _selectedFilter,
+      userLatitude: _searchedArea == null ? _userLatitude : null,
+      userLongitude: _searchedArea == null ? _userLongitude : null,
+      userArea: searchArea,
+      restrictToUserArea: false,
+    );
+    directoryProviders.sort((a, b) {
+      final aCoversArea = providerMatchesUserLocation(
+        a,
+        userLatitude: _searchedArea == null ? _userLatitude : null,
+        userLongitude: _searchedArea == null ? _userLongitude : null,
+        userArea: searchArea,
+      );
+      final bCoversArea = providerMatchesUserLocation(
+        b,
+        userLatitude: _searchedArea == null ? _userLatitude : null,
+        userLongitude: _searchedArea == null ? _userLongitude : null,
+        userArea: searchArea,
+      );
+      if (aCoversArea != bCoversArea) return aCoversArea ? -1 : 1;
+      return compareProviderPlacement(a, b);
+    });
     if (query.isEmpty) return directoryProviders.take(12).toList();
 
-    return directoryProviders.where((provider) {
+    final matches = directoryProviders.where((provider) {
       final searchable = [
         providerName(provider),
         providerType(provider),
@@ -170,6 +171,23 @@ class _SearchScreenState extends State<SearchScreen> {
           .where((part) => part.isNotEmpty)
           .every(searchable.contains);
     }).toList();
+    matches.sort((a, b) {
+      final aCoversArea = providerMatchesUserLocation(
+        a,
+        userLatitude: _searchedArea == null ? _userLatitude : null,
+        userLongitude: _searchedArea == null ? _userLongitude : null,
+        userArea: searchArea,
+      );
+      final bCoversArea = providerMatchesUserLocation(
+        b,
+        userLatitude: _searchedArea == null ? _userLatitude : null,
+        userLongitude: _searchedArea == null ? _userLongitude : null,
+        userArea: searchArea,
+      );
+      if (aCoversArea != bCoversArea) return aCoversArea ? -1 : 1;
+      return compareProviderPlacement(a, b);
+    });
+    return matches;
   }
 
   List<_SearchGoal> get _filteredGoals {
@@ -387,6 +405,18 @@ class _SearchScreenState extends State<SearchScreen> {
                             padding: const EdgeInsets.only(bottom: 12),
                             child: _ProviderResultCard(
                               provider: provider,
+                              isSuggested:
+                                  providerPlanTier(provider) == 'pro' &&
+                                  providerMatchesUserLocation(
+                                    provider,
+                                    userLatitude: _searchedArea == null
+                                        ? _userLatitude
+                                        : null,
+                                    userLongitude: _searchedArea == null
+                                        ? _userLongitude
+                                        : null,
+                                    userArea: _searchedArea ?? _area,
+                                  ),
                               onTap: () => _openProvider(provider),
                             ),
                           ),
@@ -696,9 +726,14 @@ class _GoalTile extends StatelessWidget {
 }
 
 class _ProviderResultCard extends StatelessWidget {
-  const _ProviderResultCard({required this.provider, required this.onTap});
+  const _ProviderResultCard({
+    required this.provider,
+    required this.isSuggested,
+    required this.onTap,
+  });
 
   final Map<String, dynamic> provider;
+  final bool isSuggested;
   final VoidCallback onTap;
 
   @override
@@ -713,7 +748,6 @@ class _ProviderResultCard extends StatelessWidget {
     final distance = providerDistanceLabel(provider);
     final savedProviders = context.watch<SavedProvidersStore>();
     final isSaved = savedProviders.isSaved(provider);
-
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -744,6 +778,27 @@ class _ProviderResultCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (isSuggested) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.amber.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'Suggested for you',
+                        style: GoogleFonts.plusJakartaSans(
+                          color: AppTheme.amber,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
                   Row(
                     children: [
                       Expanded(

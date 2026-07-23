@@ -5,7 +5,11 @@ CREATE TABLE IF NOT EXISTS provider_views (
     latitude double precision, longitude double precision, speed_filter_mbps integer,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE provider_views
+  ADD COLUMN IF NOT EXISTS package_id uuid
+    REFERENCES provider_packages(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS provider_views_provider_date_idx ON provider_views(provider_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS provider_views_package_date_idx ON provider_views(package_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS search_logs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(), search_id uuid NOT NULL,
     provider_id uuid NOT NULL REFERENCES providers(id) ON DELETE CASCADE,

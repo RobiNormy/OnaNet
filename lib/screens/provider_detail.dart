@@ -194,6 +194,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                               providerId: providerId,
                               viewType: 'package',
                               area: widget.selectedArea,
+                              packageId: package['id']?.toString(),
                             );
                           }
                           Navigator.push(
@@ -640,7 +641,7 @@ class _PackageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final isPopular = package['popular'] as bool;
+    final isPopular = package['popular'] == true;
     final topArea = (package['topArea'] ?? package['top_area'])
         ?.toString()
         .trim();
@@ -796,7 +797,7 @@ class _PackageCard extends StatelessWidget {
                     ),
                   ),
                   child: const Text(
-                    'POPULAR',
+                    'MOST POPULAR',
                     style: TextStyle(
                       color: AppTheme.navy,
                       fontSize: 10,
@@ -882,6 +883,11 @@ class PackageDetailScreen extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
+                if (package['popular'] == true)
+                  const _TrustChip(
+                    icon: Icons.local_fire_department_rounded,
+                    label: 'Most popular',
+                  ),
                 if (package['trustLabel'] != null)
                   _TrustChip(
                     icon: Icons.trending_up_rounded,

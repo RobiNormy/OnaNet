@@ -29,8 +29,13 @@ async def ensure_pro_analytics_schema() -> None:
                 speed_filter_mbps integer,
                 created_at timestamptz NOT NULL DEFAULT now()
             );
+            ALTER TABLE provider_views
+                ADD COLUMN IF NOT EXISTS package_id uuid
+                    REFERENCES provider_packages(id) ON DELETE SET NULL;
             CREATE INDEX IF NOT EXISTS provider_views_provider_date_idx
                 ON provider_views(provider_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS provider_views_package_date_idx
+                ON provider_views(package_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS provider_views_area_date_idx
                 ON provider_views(area_name, created_at DESC);
 
@@ -92,6 +97,7 @@ class SearchLogCreate(BaseModel):
 
 class ViewLogCreate(BaseModel):
     provider_id: UUID
+    package_id: UUID | None = None
     view_type: str = Field(pattern="^(profile|package)$")
     area_name: str | None = Field(default=None, max_length=200)
     latitude: float | None = None
@@ -148,11 +154,16 @@ async def log_view(body: ViewLogCreate) -> None:
         await conn.execute(
             """
             INSERT INTO provider_views(provider_id, view_type, area_name,
-                latitude, longitude, speed_filter_mbps)
-            VALUES ($1,$2,$3,$4,$5,$6)
+                latitude, longitude, speed_filter_mbps, package_id)
+            SELECT $1,$2,$3,$4,$5,$6,$7
+            WHERE $7::uuid IS NULL OR EXISTS (
+                SELECT 1 FROM provider_packages
+                WHERE id = $7 AND provider_id = $1
+            )
             """,
             body.provider_id, body.view_type, body.area_name,
             body.latitude, body.longitude, body.speed_filter_mbps,
+            body.package_id,
         )
 
 

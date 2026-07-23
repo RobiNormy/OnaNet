@@ -50,7 +50,7 @@ List<Map<String, dynamic>> filterProviders(
       .toList();
   final fastThreshold = _fastThreshold(enriched);
 
-  return enriched.where((provider) {
+  final filtered = enriched.where((provider) {
     return switch (filter) {
       ProviderFilter.all => true,
       ProviderFilter.budget => hasBudgetPackage(provider),
@@ -59,6 +59,29 @@ List<Map<String, dynamic>> filterProviders(
       ProviderFilter.fiber => isFiberProvider(provider),
     };
   }).toList();
+  filtered.sort(compareProviderPlacement);
+  return filtered;
+}
+
+int compareProviderPlacement(Map<String, dynamic> a, Map<String, dynamic> b) {
+  final tierComparison = _providerTierRank(
+    providerPlanTier(a),
+  ).compareTo(_providerTierRank(providerPlanTier(b)));
+  if (tierComparison != 0) return tierComparison;
+
+  final ratingComparison = (_asDouble(b['rating']) ?? 0).compareTo(
+    _asDouble(a['rating']) ?? 0,
+  );
+  if (ratingComparison != 0) return ratingComparison;
+  return providerName(a).compareTo(providerName(b));
+}
+
+int _providerTierRank(String tier) {
+  return switch (tier) {
+    'pro' => 0,
+    'growth' => 1,
+    _ => 2,
+  };
 }
 
 Map<String, dynamic> enrichProvider(

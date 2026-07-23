@@ -151,6 +151,7 @@ async def list_public_providers() -> list[dict[str, Any]]:
         reviews_by_provider: dict[UUID, list[dict[str, Any]]] = {
             provider_id: [] for provider_id in provider_ids
         }
+        popularity_by_package: dict[UUID, list[dict[str, Any]]] = {}
 
         if provider_ids:
             package_rows = await db.fetch(
@@ -165,8 +166,26 @@ async def list_public_providers() -> list[dict[str, Any]]:
                     fair_usage_policy,
                     contract_type,
                     installation_period,
-                    router_included
-                FROM provider_packages
+                    router_included,
+                    (
+                        SELECT count(*)::int
+                        FROM installation_requests request
+                        WHERE request.package_id = package.id
+                          AND request.status NOT IN ('cancelled', 'rejected')
+                    ) AS request_count,
+                    (
+                        SELECT count(*)::int
+                        FROM installation_requests request
+                        WHERE request.package_id = package.id
+                          AND request.status IN ('complete', 'completed')
+                    ) AS completed_install_count,
+                    (
+                        SELECT count(*)::int
+                        FROM provider_views view
+                        WHERE view.package_id = package.id
+                          AND view.view_type = 'package'
+                    ) AS deal_view_count
+                FROM provider_packages package
                 WHERE provider_id = ANY($1::uuid[])
                 ORDER BY monthly_price ASC;
                 """,
@@ -188,9 +207,43 @@ async def list_public_providers() -> list[dict[str, Any]]:
                         or "Not specified",
                         "coverageAreas": [],
                         "trustLabel": "Provider package",
-                        "subscriberCount": "No review data yet",
+                        "subscriberCount": (
+                            f"{row['completed_install_count']} completed "
+                            "installations"
+                            if row["completed_install_count"]
+                            else "No completed installations yet"
+                        ),
                         "popular": False,
+                        "_popularityScore": (
+                            int(row["deal_view_count"] or 0)
+                            + int(row["request_count"] or 0) * 3
+                            + int(row["completed_install_count"] or 0) * 5
+                        ),
                     }
+                )
+
+            popularity_rows = await db.fetch(
+                """
+                SELECT
+                    request.package_id,
+                    coalesce(
+                        nullif(trim(request.installation_area), ''),
+                        nullif(trim(request.estate_or_building), ''),
+                        'Area not specified'
+                    ) AS area,
+                    count(*)::int AS installs
+                FROM installation_requests request
+                JOIN provider_packages package ON package.id = request.package_id
+                WHERE package.provider_id = ANY($1::uuid[])
+                  AND request.status IN ('complete', 'completed')
+                GROUP BY request.package_id, area
+                ORDER BY request.package_id, installs DESC, area
+                """,
+                provider_ids,
+            )
+            for row in popularity_rows:
+                popularity_by_package.setdefault(row["package_id"], []).append(
+                    {"area": row["area"], "installs": row["installs"]}
                 )
 
             coverage_rows = await db.fetch(
@@ -265,8 +318,32 @@ async def list_public_providers() -> list[dict[str, Any]]:
         provider_id = provider["id"]
         packages = packages_by_provider[provider_id]
         coverage_areas = coverage_by_provider[provider_id]
+        scored_packages = [
+            package for package in packages if package["_popularityScore"] > 0
+        ]
+        popular_package = (
+            max(
+                scored_packages,
+                key=lambda package: (
+                    package["_popularityScore"],
+                    _speed_to_mbps(package["speed"]),
+                ),
+            )
+            if scored_packages
+            else None
+        )
         for package in packages:
             package["coverageAreas"] = coverage_areas
+            area_popularity = popularity_by_package.get(
+                UUID(package["id"]),
+                [],
+            )
+            package["popularityByArea"] = area_popularity
+            package["topArea"] = (
+                area_popularity[0]["area"] if area_popularity else None
+            )
+            package["popular"] = package is popular_package
+            package.pop("_popularityScore", None)
 
         starting_price = min(
             (_money_to_float(package["price"]) for package in packages),

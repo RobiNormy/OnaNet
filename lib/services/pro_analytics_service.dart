@@ -106,6 +106,7 @@ class ProAnalyticsService {
     required String providerId,
     required String viewType,
     String? area,
+    String? packageId,
   }) async {
     try {
       await _dio.post<dynamic>(
@@ -114,6 +115,7 @@ class ProAnalyticsService {
           'provider_id': providerId,
           'view_type': viewType,
           'area_name': area,
+          'package_id': packageId,
         },
       );
     } catch (_) {}
