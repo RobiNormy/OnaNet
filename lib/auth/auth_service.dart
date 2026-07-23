@@ -114,6 +114,42 @@ class AuthService {
     return _asMap(response.data);
   }
 
+  Future<Map<String, dynamic>> getAdminSnapshot() async {
+    final response = await _getJson('/admin/snapshot');
+    return _asMap(response.data);
+  }
+
+  Future<void> reviewAdminDocument(
+    String documentId, {
+    required String status,
+  }) async {
+    try {
+      await _dio.patch<dynamic>(
+        _url('/admin/documents/$documentId'),
+        data: {'status': status},
+        options: await _authorizedOptions(),
+      );
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
+  Future<void> moderateAdminProvider(
+    String providerId, {
+    required String status,
+    String? reason,
+  }) async {
+    try {
+      await _dio.patch<dynamic>(
+        _url('/admin/providers/$providerId/moderation'),
+        data: {'status': status, 'reason': reason},
+        options: await _authorizedOptions(),
+      );
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
   Future<Map<String, dynamic>> updateMyAccount({
     required String firstName,
     required String lastName,

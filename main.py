@@ -18,6 +18,7 @@ from backend.api.provider_staff import (
     ensure_provider_staff_schema,
     router as provider_staff_router,
 )
+from backend.api.admin import router as admin_router
 from backend.services.provider_access import provider_staff_access_middleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -60,6 +61,7 @@ app.include_router(reviews_router)
 app.include_router(subscription_router)
 app.include_router(pro_analytics_router)
 app.include_router(provider_staff_router)
+app.include_router(admin_router)
 @app.get("/")
 async def root():
     return {
