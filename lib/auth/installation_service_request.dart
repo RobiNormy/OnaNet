@@ -1,10 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:ona_net/services/api_client.dart';
 
 class InstallationServiceRequest {
   InstallationServiceRequest({Dio? dio, String? apiBaseUrl})
-    : _dio = dio ?? Dio(),
+    : _dio = dio ?? sharedApiClient,
       _apiBaseUrl =
           apiBaseUrl ?? const String.fromEnvironment("ONA_NET_API_BASE_URL");
 

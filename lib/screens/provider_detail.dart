@@ -5,8 +5,11 @@ import 'package:ona_net/screens/installation_request.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/services/pro_analytics_service.dart';
+import 'package:ona_net/services/provider_share_link.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:ona_net/widgets/provider_badges.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 class ProviderDetailScreen extends StatefulWidget {
   final Map<String, dynamic> provider;
@@ -24,6 +27,42 @@ class ProviderDetailScreen extends StatefulWidget {
 
 class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
   int? _selectedPackageIndex;
+
+  Future<void> _shareProvider(BuildContext shareContext) async {
+    final provider = widget.provider;
+    final name =
+        (provider['name'] ?? provider['business_name'] ?? 'this provider')
+            .toString();
+    final providerId = provider['id']?.toString().trim() ?? '';
+    if (providerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This provider cannot be shared yet.')),
+      );
+      return;
+    }
+    final link = providerShareLink(providerId);
+
+    final renderBox = shareContext.findRenderObject();
+    final shareOrigin = renderBox is RenderBox && renderBox.hasSize
+        ? renderBox.localToGlobal(Offset.zero) & renderBox.size
+        : null;
+
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          uri: link,
+          title: 'Share $name',
+          subject: '$name on Ona Net',
+          sharePositionOrigin: shareOrigin,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open sharing options.')),
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -100,13 +139,16 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                       color: Colors.white.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: IconButton(
-                      icon: const Icon(
-                        Icons.ios_share_outlined,
-                        color: Colors.white,
-                        size: 18,
+                    child: Builder(
+                      builder: (shareContext) => IconButton(
+                        tooltip: 'Share provider',
+                        icon: const Icon(
+                          Icons.ios_share_outlined,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                        onPressed: () => _shareProvider(shareContext),
                       ),
-                      onPressed: () {},
                     ),
                   ),
                 ],
@@ -240,30 +282,23 @@ class _HeroSection extends StatelessWidget {
 
             const SizedBox(height: 10),
 
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  (provider['name'] ?? provider['business_name'] ?? 'Provider')
-                      .toString(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                (provider['name'] ?? provider['business_name'] ?? 'Provider')
+                    .toString(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
                 ),
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.all(3),
-                  decoration: const BoxDecoration(
-                    color: AppTheme.green,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.check, color: Colors.white, size: 11),
-                ),
-              ],
+              ),
             ),
-
+            const SizedBox(height: 6),
+            ProviderBadges(provider: provider, center: true),
             const SizedBox(height: 6),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -328,31 +363,45 @@ class _ProviderLogoMark extends StatelessWidget {
       logoOffset.dy * size / 280,
     );
 
-    return Container(
+    final logo = url == null || url.isEmpty
+        ? _LogoInitials(initials: initials, size: size)
+        : Transform(
+            transform: Matrix4.identity()
+              ..translateByDouble(displayOffset.dx, displayOffset.dy, 0, 1)
+              ..scaleByDouble(displayScale, displayScale, displayScale, 1),
+            child: Image.network(
+              url,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) =>
+                  _LogoInitials(initials: initials, size: size),
+            ),
+          );
+
+    return SizedBox(
       width: size,
       height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: border,
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: url == null || url.isEmpty
-          ? _LogoInitials(initials: initials, size: size)
-          : Transform(
-              transform: Matrix4.identity()
-                ..translateByDouble(displayOffset.dx, displayOffset.dy, 0, 1)
-                ..scaleByDouble(displayScale, displayScale, displayScale, 1),
-              child: Image.network(
-                url,
-                width: size,
-                height: size,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    _LogoInitials(initials: initials, size: size),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipOval(
+            child: ColoredBox(
+              color: color,
+              child: Center(child: logo),
+            ),
+          ),
+          if (border != null)
+            IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: border,
+                ),
               ),
             ),
+        ],
+      ),
     );
   }
 }
@@ -1487,9 +1536,20 @@ class _ProviderPackagesListState extends State<_ProviderPackagesList> {
   @override
   void initState() {
     super.initState();
-    _packagesFuture = ProviderPackageService().listForProvider(
-      widget.provider['id'] as String,
-    );
+    final embeddedPackages = (widget.provider['packages'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => ProviderPackage.fromJson(
+            item.map((key, value) => MapEntry(key.toString(), value)),
+          ),
+        )
+        .where((package) => package.id.isNotEmpty)
+        .toList(growable: false);
+    _packagesFuture = embeddedPackages.isNotEmpty
+        ? Future.value(embeddedPackages)
+        : ProviderPackageService().listForProvider(
+            widget.provider['id'].toString(),
+          );
   }
 
   Future<void> _refresh() async {

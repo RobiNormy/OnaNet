@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:ona_net/onanet_provider_dash/blueprint_components.dart';
 import 'package:ona_net/services/pro_analytics_service.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
@@ -13,12 +14,14 @@ class ProAnalyticsPage extends StatefulWidget {
     required this.isPro,
     required this.isUpgradeRunning,
     required this.onUpgradePressed,
+    required this.onBackPressed,
     required this.showMenuButton,
     required this.onMenuPressed,
   });
   final bool isPro;
   final bool isUpgradeRunning;
   final VoidCallback onUpgradePressed;
+  final VoidCallback onBackPressed;
   final bool showMenuButton;
   final VoidCallback onMenuPressed;
 
@@ -50,6 +53,7 @@ class _ProAnalyticsPageState extends State<ProAnalyticsPage> {
       return _LockedProPage(
         isUpgradeRunning: widget.isUpgradeRunning,
         onUpgradePressed: widget.onUpgradePressed,
+        onBackPressed: widget.onBackPressed,
         showMenuButton: widget.showMenuButton,
         onMenuPressed: widget.onMenuPressed,
       );
@@ -62,6 +66,7 @@ class _ProAnalyticsPageState extends State<ProAnalyticsPage> {
         }
         if (snapshot.hasError) {
           return _AnalyticsShell(
+            onBackPressed: widget.onBackPressed,
             showMenuButton: widget.showMenuButton,
             onMenuPressed: widget.onMenuPressed,
             onRefresh: _reload,
@@ -85,14 +90,15 @@ class _ProAnalyticsPageState extends State<ProAnalyticsPage> {
         }
         final data = snapshot.data ?? const {};
         return _AnalyticsShell(
+          onBackPressed: widget.onBackPressed,
           showMenuButton: widget.showMenuButton,
           onMenuPressed: widget.onMenuPressed,
           onRefresh: _reload,
           children: [
-            _FunnelCard(data: _maps(data['funnel'])),
-            _DemandMapCard(zones: _maps(data['demand_zones'])),
-            _GrowthAreasCard(items: _maps(data['growth_areas'])),
             _CustomerSearchInsightsCard(data: _map(data['search_insights'])),
+            _DemandMapCard(zones: _maps(data['demand_zones'])),
+            _FunnelCard(data: _maps(data['funnel'])),
+            _GrowthAreasCard(items: _maps(data['growth_areas'])),
             _PackageGapsCard(items: _maps(data['package_gaps'])),
             _PriceBenchmarkCard(items: _maps(data['price_benchmarks'])),
             _SearchPositionCard(items: _maps(data['search_positions'])),
@@ -111,17 +117,20 @@ class _ProAnalyticsPageState extends State<ProAnalyticsPage> {
 class _AnalyticsShell extends StatelessWidget {
   const _AnalyticsShell({
     required this.children,
+    required this.onBackPressed,
     required this.showMenuButton,
     required this.onMenuPressed,
     this.onRefresh,
   });
   final List<Widget> children;
+  final VoidCallback onBackPressed;
   final bool showMenuButton;
   final VoidCallback onMenuPressed;
   final VoidCallback? onRefresh;
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final compactPage = MediaQuery.sizeOf(context).width < 700;
     final border = dark
         ? Colors.white.withValues(alpha: .08)
         : const Color(0xFFE5EAF1);
@@ -129,30 +138,53 @@ class _AnalyticsShell extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.all(22),
+          padding: EdgeInsets.all(compactPage ? 4 : 22),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: dark
-                  ? const [Color(0xFF132F42), Color(0xFF0A1D2A)]
-                  : const [Color(0xFFFFFFFF), Color(0xFFFFF5D8)],
-            ),
+            color: compactPage
+                ? Colors.transparent
+                : dark
+                ? const Color(0xFF132F42)
+                : AppTheme.amberLight,
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: border),
-            boxShadow: [
-              BoxShadow(
-                color: (dark ? Colors.black : AppTheme.navy).withValues(
-                  alpha: dark ? .2 : .07,
-                ),
-                blurRadius: 28,
-                offset: const Offset(0, 12),
-              ),
-            ],
+            border: Border.all(
+              color: compactPage ? Colors.transparent : border,
+            ),
+            boxShadow: compactPage
+                ? const []
+                : [
+                    BoxShadow(
+                      color: (dark ? Colors.black : AppTheme.navy).withValues(
+                        alpha: dark ? .2 : .07,
+                      ),
+                      blurRadius: 28,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final compact = constraints.maxWidth < 560;
+              if (compact) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    OnaBlueprintHeader(
+                      title: 'Analytics',
+                      onBack: onBackPressed,
+                      onMenu: onMenuPressed,
+                    ),
+                    if (onRefresh != null)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: onRefresh,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Refresh data'),
+                        ),
+                      ),
+                  ],
+                );
+              }
               return Row(
                 children: [
                   if (showMenuButton) ...[
@@ -196,8 +228,6 @@ class _AnalyticsShell extends StatelessWidget {
                         const SizedBox(height: 5),
                         Text(
                           'Business intelligence, made actionable',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.headlineSmall
                               ?.copyWith(
                                 fontWeight: FontWeight.w900,
@@ -208,8 +238,6 @@ class _AnalyticsShell extends StatelessWidget {
                           const SizedBox(height: 3),
                           Text(
                             'Live demand, conversion, pricing and growth signals',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: Theme.of(
                                 context,
@@ -268,15 +296,18 @@ class _LockedProPage extends StatelessWidget {
   const _LockedProPage({
     required this.isUpgradeRunning,
     required this.onUpgradePressed,
+    required this.onBackPressed,
     required this.showMenuButton,
     required this.onMenuPressed,
   });
   final bool isUpgradeRunning;
   final VoidCallback onUpgradePressed;
+  final VoidCallback onBackPressed;
   final bool showMenuButton;
   final VoidCallback onMenuPressed;
   @override
   Widget build(BuildContext context) => _AnalyticsShell(
+    onBackPressed: onBackPressed,
     showMenuButton: showMenuButton,
     onMenuPressed: onMenuPressed,
     children: [
@@ -320,59 +351,10 @@ class _ProCard extends StatelessWidget {
   final bool badge;
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: dark ? const Color(0xFF0D2231) : Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: dark
-              ? Colors.white.withValues(alpha: .075)
-              : const Color(0xFFE5EAF1),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: (dark ? Colors.black : AppTheme.navy).withValues(
-              alpha: dark ? .17 : .055,
-            ),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 4,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: AppTheme.amber,
-                  borderRadius: BorderRadius.circular(99),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -.2,
-                  ),
-                ),
-              ),
-              if (badge) const _ProBadge(),
-            ],
-          ),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
+    return OnaBlueprintCard(
+      title: title,
+      action: badge ? const _ProBadge() : null,
+      child: child,
     );
   }
 }
@@ -383,16 +365,16 @@ class _ProBadge extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
     decoration: BoxDecoration(
-      color: AppTheme.amber,
+      color: AppTheme.amber.withValues(alpha: .12),
       borderRadius: BorderRadius.circular(999),
       boxShadow: [
-        BoxShadow(color: AppTheme.amber.withValues(alpha: .22), blurRadius: 10),
+        BoxShadow(color: AppTheme.amber.withValues(alpha: .10), blurRadius: 8),
       ],
     ),
     child: const Text(
       'PRO',
       style: TextStyle(
-        color: AppTheme.navy,
+        color: AppTheme.amberDark,
         fontSize: 11,
         fontWeight: FontWeight.w900,
       ),
@@ -416,6 +398,14 @@ class _FunnelCard extends StatelessWidget {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                OnaSemiGauge(
+                  value: data.isEmpty
+                      ? 0
+                      : (_d(data.last['rate']) / 100).clamp(0, 1),
+                  centerLabel: 'Conversions',
+                  centerValue: '${_int(data.last['value'])}',
+                ),
+                const SizedBox(height: 12),
                 Text(
                   'See where customers progress and where demand drops away.',
                   style: TextStyle(
@@ -454,7 +444,7 @@ class _FunnelStageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final good = stage['above_average'] == true;
-    final color = good ? AppTheme.green : const Color(0xFFE16D5B);
+    final color = good ? AppTheme.amber : AppTheme.navyMid;
     final value = _int(stage['value']);
     final progress = peak == 0
         ? 0.0
@@ -493,8 +483,6 @@ class _FunnelStageRow extends StatelessWidget {
                         Expanded(
                           child: Text(
                             (stage['label'] ?? 'Stage').toString(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w800,
@@ -539,7 +527,6 @@ class _FunnelStageRow extends StatelessWidget {
                     ),
                     Text(
                       'avg ${_num(stage['platform_average'])}%',
-                      maxLines: 1,
                       style: TextStyle(color: muted, fontSize: 10),
                     ),
                   ],
@@ -602,7 +589,7 @@ class _DemandMapCardState extends State<_DemandMapCard> {
             (valid.first['longitude'] as num).toDouble(),
           );
     return _ProCard(
-      title: 'Demand Intelligence Map',
+      title: 'Demand by Top Locations',
       child: Column(
         children: [
           if (center == null)
@@ -1003,8 +990,6 @@ class _DemandMapScreenState extends State<_DemandMapScreen> {
                           children: [
                             Text(
                               zone['area_name']?.toString() ?? 'Coverage area',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w900,
                               ),
@@ -1013,8 +998,6 @@ class _DemandMapScreenState extends State<_DemandMapScreen> {
                               names.isEmpty
                                   ? 'No provider listed'
                                   : names.join(', '),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 11),
                             ),
                           ],
@@ -1098,8 +1081,6 @@ class _DemandMapScreenState extends State<_DemandMapScreen> {
                                     names.isEmpty
                                         ? 'No provider listed'
                                         : names.join(', '),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
                                   onTap: () => _focusZone(zone),
                                 );
@@ -1226,7 +1207,7 @@ class _CustomerSearchInsightsCard extends StatelessWidget {
         queries.isNotEmpty || areas.isNotEmpty || speeds.isNotEmpty;
 
     return _ProCard(
-      title: 'What Customers Search Most',
+      title: 'Search Traffic by Top Areas and Needs',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1309,7 +1290,7 @@ class _SearchSummaryMetric extends StatelessWidget {
           value,
           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
         ),
-        Text(label, maxLines: 2, overflow: TextOverflow.ellipsis),
+        Text(label, softWrap: true),
       ],
     ),
   );
@@ -1336,19 +1317,60 @@ class _SearchInsightSection extends StatelessWidget {
     children: [
       Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
       const SizedBox(height: 6),
-      ...items.map(
-        (item) => ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(icon, color: AppTheme.amber),
-          title: Text(
-            label(item),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: Text(
-            count(item),
-            style: const TextStyle(fontWeight: FontWeight.w800),
+      ...items.indexed.map(
+        (entry) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppTheme.amber.withValues(alpha: .09),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: AppTheme.amber, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            label(entry.$2),
+                            softWrap: true,
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          count(entry.$2),
+                          softWrap: true,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(
+                        value: (1 - (entry.$1 * .15)).clamp(.2, 1),
+                        minHeight: 5,
+                        backgroundColor: AppTheme.amber.withValues(alpha: .08),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppTheme.amber,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1557,12 +1579,22 @@ class _MarketShareCard extends StatelessWidget {
     title: 'Market Share Indicator',
     child: Row(
       children: [
-        Text(
-          '${_num(data['overall'])}%',
-          style: const TextStyle(
-            fontSize: 42,
-            fontWeight: FontWeight.w900,
-            color: AppTheme.amber,
+        SizedBox.square(
+          dimension: 118,
+          child: CustomPaint(
+            painter: _ShareRingPainter(_d(data['overall'])),
+            child: Center(
+              child: Text(
+                '${_num(data['overall'])}%',
+                textAlign: TextAlign.center,
+                softWrap: true,
+                style: const TextStyle(
+                  fontSize: 23,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.amber,
+                ),
+              ),
+            ),
           ),
         ),
         const SizedBox(width: 18),
@@ -1576,6 +1608,41 @@ class _MarketShareCard extends StatelessWidget {
   );
 }
 
+class _ShareRingPainter extends CustomPainter {
+  const _ShareRingPainter(this.percent);
+
+  final double percent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width, size.height) / 2 - 9;
+    final track = Paint()
+      ..color = AppTheme.amber.withValues(alpha: .10)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 13;
+    final value = Paint()
+      ..shader = const SweepGradient(
+        colors: [AppTheme.amber, AppTheme.navyMid],
+      ).createShader(Rect.fromCircle(center: center, radius: radius))
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 13;
+    canvas.drawCircle(center, radius, track);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      math.pi * 2 * (percent / 100).clamp(0, 1),
+      false,
+      value,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShareRingPainter oldDelegate) =>
+      oldDelegate.percent != percent;
+}
+
 class _ZoneShareCard extends StatelessWidget {
   const _ZoneShareCard({required this.items});
   final List<Map<String, dynamic>> items;
@@ -1585,20 +1652,49 @@ class _ZoneShareCard extends StatelessWidget {
     child: items.isEmpty
         ? const _Empty()
         : Column(
-            children: items
-                .map(
-                  (x) => ListTile(
-                    title: Text(x['area_name'].toString()),
-                    trailing: Text(
-                      '~${_num(x['share'])}%',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
+            children: items.map((x) {
+              final share = _d(x['share']).clamp(0, 100);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            x['area_name'].toString(),
+                            softWrap: true,
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        Text(
+                          '~${_num(x['share'])}%',
+                          style: const TextStyle(
+                            color: AppTheme.amber,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(
+                        value: share / 100,
+                        minHeight: 7,
+                        backgroundColor: AppTheme.amber.withValues(alpha: .08),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppTheme.amber,
+                        ),
                       ),
                     ),
-                  ),
-                )
-                .toList(),
+                  ],
+                ),
+              );
+            }).toList(),
           ),
   );
 }

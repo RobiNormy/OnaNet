@@ -7,11 +7,12 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:ona_net/services/api_client.dart';
 import 'package:share_plus/share_plus.dart';
 
 class ProAnalyticsService {
   ProAnalyticsService({Dio? dio, String? apiBaseUrl})
-    : _dio = dio ?? Dio(),
+    : _dio = dio ?? sharedApiClient,
       _apiBaseUrl =
           apiBaseUrl ?? const String.fromEnvironment('ONA_NET_API_BASE_URL');
 

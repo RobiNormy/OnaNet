@@ -1,10 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:ona_net/services/api_client.dart';
 
 class ProviderInbox {
   ProviderInbox({Dio? dio, String? apiBaseUrl})
-    : _dio = dio ?? Dio(),
+    : _dio = dio ?? sharedApiClient,
       _apiBaseUrl =
           apiBaseUrl ?? const String.fromEnvironment('ONA_NET_API_BASE_URL');
 
@@ -240,7 +241,16 @@ class ProviderInboxItem {
       case 'cancelled':
         return 'Cancelled';
       default:
-        return cleanStatus[0].toUpperCase() + cleanStatus.substring(1);
+        return cleanStatus
+            .replaceAll(RegExp(r'[_-]+'), ' ')
+            .split(RegExp(r'\s+'))
+            .where((word) => word.isNotEmpty)
+            .map(
+              (word) => word.length == 1
+                  ? word.toUpperCase()
+                  : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+            )
+            .join(' ');
     }
   }
 

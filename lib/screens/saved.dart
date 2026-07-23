@@ -3,6 +3,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/screens/provider_detail.dart';
 import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:ona_net/utils/provider_filters.dart';
+import 'package:ona_net/widgets/provider_badges.dart';
 import 'package:provider/provider.dart';
 
 class SavedScreen extends StatelessWidget {
@@ -153,14 +155,9 @@ class _SavedProviderCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (_isVerified(provider))
-                        const Icon(
-                          Icons.verified_rounded,
-                          color: AppTheme.green,
-                          size: 17,
-                        ),
                     ],
                   ),
+                  ProviderBadges(provider: provider),
                   const SizedBox(height: 5),
                   Text(
                     areas.isEmpty
@@ -336,11 +333,13 @@ String _providerName(Map<String, dynamic> provider) {
 }
 
 String _providerType(Map<String, dynamic> provider) {
-  return (provider['providerType'] ??
-          provider['provider_type'] ??
-          provider['service_type'] ??
-          'Internet provider')
-      .toString();
+  return humanizeBackendValue(
+    (provider['providerType'] ??
+            provider['provider_type'] ??
+            provider['service_type'] ??
+            'Internet provider')
+        .toString(),
+  );
 }
 
 List<String> _coverageAreas(Map<String, dynamic> provider) {
@@ -358,19 +357,18 @@ List<String> _coverageAreas(Map<String, dynamic> provider) {
   return [];
 }
 
-bool _isVerified(Map<String, dynamic> provider) {
-  return provider['verified'] == true || provider['isVerified'] == true;
-}
-
 int _speed(Map<String, dynamic> provider) {
-  final value = provider['speed'] ?? provider['maxSpeed'] ?? provider['speed_mbps'];
+  final value =
+      provider['speed'] ?? provider['maxSpeed'] ?? provider['speed_mbps'];
   if (value is num) return value.round();
   return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 int _price(Map<String, dynamic> provider) {
   final value =
-      provider['price'] ?? provider['startingPrice'] ?? provider['monthly_price'];
+      provider['price'] ??
+      provider['startingPrice'] ??
+      provider['monthly_price'];
   if (value is num) return value.round();
   return int.tryParse(value?.toString() ?? '') ?? 0;
 }

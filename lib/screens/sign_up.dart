@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/provider/registration.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/themes/app_theme.dart';
 
@@ -26,6 +27,21 @@ class _SignUpState extends State<SignUp> {
   final RegExp _passwordRegex = RegExp(
     r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$',
   );
+
+  void _afterSuccessfulSignUp() {
+    if (!mounted) return;
+
+    if (widget.providerMode) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const ProviderReg()),
+        (route) => false,
+      );
+      return;
+    }
+
+    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -72,7 +88,9 @@ class _SignUpState extends State<SignUp> {
                       _OnaNetLogo(textColor: textColor),
                       const SizedBox(height: 10),
                       Text(
-                        'Create Account',
+                        widget.providerMode
+                            ? 'Create Provider Account'
+                            : 'Create Account',
                         style: GoogleFonts.urbanist(
                           fontSize: 30,
                           fontWeight: FontWeight.w800,
@@ -81,7 +99,9 @@ class _SignUpState extends State<SignUp> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Find better internet near you',
+                        widget.providerMode
+                            ? 'Set up your provider profile and services'
+                            : 'Find better internet near you',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.urbanist(
                           fontSize: 15,
@@ -208,14 +228,7 @@ class _SignUpState extends State<SignUp> {
                                         firstName: _firstname.text.trim(),
                                         lastName: _lastname.text.trim(),
                                       );
-                                      if (context.mounted) {
-                                        Navigator.of(
-                                          context,
-                                        ).pushNamedAndRemoveUntil(
-                                          '/',
-                                          (route) => false,
-                                        );
-                                      }
+                                      _afterSuccessfulSignUp();
                                     } catch (e) {
                                       if (context.mounted) {
                                         ScaffoldMessenger.of(
@@ -299,14 +312,7 @@ class _SignUpState extends State<SignUp> {
                                   try {
                                     final authService = AuthService();
                                     await authService.signInWithGoogle();
-                                    if (context.mounted) {
-                                      Navigator.of(
-                                        context,
-                                      ).pushNamedAndRemoveUntil(
-                                        '/',
-                                        (route) => false,
-                                      );
-                                    }
+                                    _afterSuccessfulSignUp();
                                   } catch (e) {
                                     if (context.mounted) {
                                       ScaffoldMessenger.of(

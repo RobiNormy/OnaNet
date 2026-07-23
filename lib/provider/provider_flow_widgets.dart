@@ -395,7 +395,12 @@ class ProviderPrimaryButton extends StatelessWidget {
 }
 
 class SecureFooter extends StatelessWidget {
-  const SecureFooter({super.key});
+  const SecureFooter({
+    super.key,
+    this.message = 'Your information is safe with us.',
+  });
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -411,7 +416,7 @@ class SecureFooter extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Text(
-          'Your information is safe with us.',
+          message,
           style: GoogleFonts.urbanist(
             color: isDark ? AppTheme.gray : AppTheme.darkGray,
             fontSize: 12,

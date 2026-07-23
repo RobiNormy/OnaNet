@@ -9,6 +9,7 @@ import 'package:ona_net/services/saved_providers_store.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/utils/location.dart';
 import 'package:ona_net/utils/provider_filters.dart';
+import 'package:ona_net/widgets/provider_badges.dart';
 import 'package:provider/provider.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -85,14 +86,16 @@ class _SearchScreenState extends State<SearchScreen> {
     _scheduleSearchAnalytics();
   }
 
-  Future<void> _loadProviders() async {
+  Future<void> _loadProviders({bool forceRefresh = false}) async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
     try {
-      final providers = await AuthService().getPublicProviders();
+      final providers = await AuthService().getPublicProviders(
+        forceRefresh: forceRefresh,
+      );
       if (!mounted) return;
       setState(() {
         _providers = providers;
@@ -109,7 +112,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _refreshSearch() async {
-    await Future.wait([_loadLocation(), _loadProviders()]);
+    await Future.wait([_loadLocation(), _loadProviders(forceRefresh: true)]);
   }
 
   List<Map<String, dynamic>> get _filteredProviders {
@@ -705,7 +708,6 @@ class _ProviderResultCard extends StatelessWidget {
     final mutedColor = isDark ? AppTheme.gray : AppTheme.darkGray;
     final name = providerName(provider);
     final areas = providerCoverageAreas(provider);
-    final verified = isVerifiedProvider(provider);
     final speed = providerSpeed(provider);
     final price = providerPrice(provider);
     final distance = providerDistanceLabel(provider);
@@ -756,14 +758,9 @@ class _ProviderResultCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (verified)
-                        Icon(
-                          Icons.verified_rounded,
-                          color: AppTheme.green,
-                          size: 17,
-                        ),
                     ],
                   ),
+                  ProviderBadges(provider: provider),
                   const SizedBox(height: 5),
                   Text(
                     areas.isEmpty
@@ -783,14 +780,16 @@ class _ProviderResultCard extends StatelessWidget {
                     runSpacing: 8,
                     children: [
                       _ProviderMeta(
-                        label: 'From',
-                        value: price > 0 ? 'KES $price' : 'Ask',
+                        label: 'From / month',
+                        value: price > 0
+                            ? 'KES ${formatKesPrice(price)}'
+                            : 'Ask',
                       ),
                       _ProviderMeta(
                         label: 'Speed',
                         value: speed > 0 ? '${speed}Mbps' : 'Ask',
                       ),
-                      _ProviderMeta(label: 'Near', value: distance),
+                      _ProviderMeta(label: 'Distance', value: distance),
                     ],
                   ),
                 ],

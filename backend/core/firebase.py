@@ -1,40 +1,83 @@
-import anyio
-import httpx
 import logging
+
+import anyio
 import firebase_admin
-from firebase_admin import auth
+import httpx
+from firebase_admin import auth, credentials
+
 from backend.core.config import settings
+
+log = logging.getLogger(__name__)
+_firebase_admin_ready = False
 
 
 def _init_firebase_admin() -> None:
-    pass
+    global _firebase_admin_ready
+
+    try:
+        firebase_admin.get_app()
+        _firebase_admin_ready = True
+        return
+    except ValueError:
+        pass
+
+    try:
+        try:
+            credential = credentials.Certificate(
+                settings.firebase_service_account_path
+            )
+        except ValueError:
+            credential = credentials.RefreshToken(
+                settings.firebase_service_account_path
+            )
+        options = (
+            {"projectId": settings.firebase_project_id}
+            if settings.firebase_project_id
+            else None
+        )
+        firebase_admin.initialize_app(credential, options)
+        _firebase_admin_ready = True
+    except Exception:
+        log.warning(
+            "Firebase Admin could not initialize; using remote token verification",
+            exc_info=True,
+        )
 
 
 _init_firebase_admin()
 
 
 async def verify_firebase_token(token: str) -> dict | None:
+    if _firebase_admin_ready:
+        try:
+            return await anyio.to_thread.run_sync(auth.verify_id_token, token)
+        except (auth.InvalidIdTokenError, auth.ExpiredIdTokenError):
+            return None
+        except Exception:
+            log.exception("Local Firebase token verification failed")
+            return None
+
     try:
         async with httpx.AsyncClient() as client:
-            res = await client.post(
-                f"https://identitytoolkit.googleapis.com/v1/accounts:lookup?key={settings.FIREBASE_API_KEY}",
-                json={"idToken": token}
+            response = await client.post(
+                "https://identitytoolkit.googleapis.com/v1/accounts:lookup",
+                params={"key": settings.FIREBASE_API_KEY},
+                json={"idToken": token},
             )
-            data = res.json()
-            if "error" in data:
-                return None
-            users = data.get("users", [])
-            if not users:
-                return None
-            user = users[0]
-            return {
-                "uid": user["localId"],
-                "email": user.get("email"),
-                "name": user.get("displayName", ""),
-                "picture": user.get("photoUrl"),
-                "firebase": {"sign_in_provider": "password"},
-            }
+        data = response.json()
+        users = data.get("users", [])
+        if "error" in data or not users:
+            return None
+        user = users[0]
+        return {
+            "uid": user["localId"],
+            "email": user.get("email"),
+            "name": user.get("displayName", ""),
+            "picture": user.get("photoUrl"),
+            "firebase": {"sign_in_provider": "password"},
+        }
     except Exception:
+        log.exception("Remote Firebase token verification failed")
         return None
 
 
@@ -58,3 +101,20 @@ async def create_firebase_user_rest(email: str, password: str, display_name: str
             )
 
     return firebase_uid
+
+
+async def verify_firebase_password(email: str, password: str) -> str:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword",
+            params={"key": settings.FIREBASE_API_KEY},
+            json={
+                "email": email.strip().lower(),
+                "password": password,
+                "returnSecureToken": True,
+            },
+        )
+    data = response.json()
+    if "error" in data:
+        raise ValueError("The provider owner password is incorrect.")
+    return data["localId"]

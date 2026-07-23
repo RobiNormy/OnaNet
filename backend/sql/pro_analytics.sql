@@ -1,5 +1,3 @@
--- Idempotent Pro Analytics migration. The API startup runs the same migration.
--- Apply manually if your production role does not allow runtime DDL.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS provider_views (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(), provider_id uuid REFERENCES providers(id) ON DELETE CASCADE,

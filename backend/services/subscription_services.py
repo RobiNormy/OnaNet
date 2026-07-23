@@ -19,9 +19,8 @@ class Tier(str, Enum):
 TIER_LIMITS: dict[str, dict[str, Any]] = {
     Tier.FREE.value: {
         "max_packages": 10,
-        "max_coverage_areas": 999,
+        "max_coverage_areas": 3,
         "max_photos": 0,
-        "verified_badge": False,
         "featured_in_search": False,
         "demand_intelligence_enabled": False,
         "in_app_alerts": True,
@@ -33,9 +32,8 @@ TIER_LIMITS: dict[str, dict[str, Any]] = {
     },
     Tier.GROWTH.value: {
         "max_packages": 10,
-        "max_coverage_areas": 999,
+        "max_coverage_areas": 5,
         "max_photos": 3,
-        "verified_badge": True,
         "featured_in_search": "mid",
         "demand_intelligence_enabled": False,
         "in_app_alerts": True,
@@ -48,11 +46,10 @@ TIER_LIMITS: dict[str, dict[str, Any]] = {
 
     Tier.PRO.value: {
         "max_packages": 999,
-        "max_coverage_areas": 999,
+        "max_coverage_areas": None,
         "featured_in_search": "pinned",
         "max_photos": 6,
         "max_staff_accounts": 999,
-        "verified_badge": True,
         "external_alerts": True,
         "demand_intelligence_enabled": True,
         "own_stats": True,
@@ -157,6 +154,9 @@ def within_count_limits(
     current_count: int,
 ) -> bool:
     cap = limits.get(feature, 0)
+
+    if cap is None:
+        return True
 
     return current_count < cap
 

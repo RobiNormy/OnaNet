@@ -1,15 +1,20 @@
+import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:ona_net/auth/auth_service.dart';
+import 'package:ona_net/onanet_provider_dash/blueprint_components.dart';
 import 'package:ona_net/onanet_provider_dash/pro_analytics.dart';
+import 'package:ona_net/onanet_provider_dash/provider_documents.dart';
+import 'package:ona_net/onanet_provider_dash/provider_team_accounts.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:ona_net/services/provider_inbox.dart';
 import 'package:ona_net/services/subscription_service.dart';
+import 'package:ona_net/utils/location.dart';
+import 'package:ona_net/utils/provider_filters.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 Future<void> _openMapLocation(BuildContext context, String url) async {
@@ -33,7 +38,7 @@ bool _isDark(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark;
 
 Color _dashBackground(BuildContext context) =>
-    _isDark(context) ? const Color(0xFF06131E) : const Color(0xFFF4F7FB);
+    _isDark(context) ? const Color(0xFF06131E) : AppTheme.offWhite;
 
 Color _dashSurface(BuildContext context) =>
     _isDark(context) ? const Color(0xFF0D2231) : AppTheme.white;
@@ -46,7 +51,7 @@ Color _dashMuted(BuildContext context) =>
 
 Color _dashBorder(BuildContext context) => _isDark(context)
     ? Colors.white.withValues(alpha: .075)
-    : const Color(0xFFE5EAF1);
+    : const Color(0xFFE6E0EF);
 
 Color _dashSoftAmber(BuildContext context) => _isDark(context)
     ? AppTheme.amber.withValues(alpha: .14)
@@ -59,6 +64,14 @@ Color _dashShadow(BuildContext context) =>
     (_isDark(context) ? Colors.black : const Color(0xFF16324A)).withValues(
       alpha: _isDark(context) ? .2 : .065,
     );
+
+bool _accountCanView(Map<String, dynamic> access, String section) {
+  if (access['is_owner'] != false) return true;
+  final permissions = access['permissions'];
+  if (permissions is! Map) return false;
+  final sectionAccess = permissions[section];
+  return sectionAccess is Map && sectionAccess['view'] == true;
+}
 
 TextStyle _dashFont({
   Color? color,
@@ -83,8 +96,11 @@ class Dashboard extends StatefulWidget {
 
 enum _ProviderDashView {
   dashboard,
+  upgradePlan,
+  teamAccounts,
   packages,
   coverage,
+  documents,
   installationRequests,
   customers,
   reviews,
@@ -92,10 +108,12 @@ enum _ProviderDashView {
   analytics,
 }
 
+enum _DashboardProfileAction { dashboard, packages, coverage, signOut }
+
 class _DashboardState extends State<Dashboard> {
-  bool _showMobileSidebar = false;
   _ProviderDashView _activeView = _ProviderDashView.dashboard;
   late Future<Map<String, dynamic>> _providerFuture;
+  Future<Map<String, dynamic>>? _subscriptionFuture;
   late DateTimeRange _selectedDateRange;
   late String _selectedMonth;
   final _inboxService = ProviderInbox();
@@ -105,6 +123,15 @@ class _DashboardState extends State<Dashboard> {
   bool _inboxLoaded = false;
   String? _inboxError;
   bool _isTestUpgradeRunning = false;
+  bool _isTestGrowthRunning = false;
+  Map<String, dynamic> _accountAccess = {
+    'is_owner': true,
+    'role': 'Owner',
+    'permissions': <String, dynamic>{},
+  };
+
+  Future<Map<String, dynamic>> get _currentSubscription =>
+      _subscriptionFuture ??= SubscriptionService().getCurrentSubscription();
 
   Future<void> _activateTestUpgrade() async {
     if (_isTestUpgradeRunning) return;
@@ -133,7 +160,41 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
+  Future<void> _activateTestGrowth() async {
+    if (_isTestGrowthRunning) return;
+    setState(() {
+      _isTestGrowthRunning = true;
+    });
+
+    try {
+      await SubscriptionService().upgradeToGrowthForTesting();
+      if (!mounted) return;
+      _refreshProviderDashboard();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Test Growth plan activated for 30 days.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(error.toString()),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isTestGrowthRunning = false;
+        });
+      }
+    }
+  }
+
   Future<void> _refreshInbox() async {
+    if (!mounted) return;
     setState(() {
       _inboxLoading = true;
       _inboxError = null;
@@ -156,9 +217,65 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
+  Future<void> _loadAccountAccess() async {
+    try {
+      final access = await AuthService().getProviderAccountAccess();
+      if (!mounted) return;
+      setState(() {
+        _accountAccess = access;
+        if (!_canOpenView(_activeView, access)) {
+          _activeView = _firstAllowedView(access);
+        }
+      });
+    } catch (_) {
+      // Keep owner accounts usable while an older backend is being migrated.
+    }
+  }
+
+  bool _canOpenView(_ProviderDashView view, [Map<String, dynamic>? access]) {
+    final currentAccess = access ?? _accountAccess;
+    if (view == _ProviderDashView.upgradePlan ||
+        view == _ProviderDashView.teamAccounts) {
+      return currentAccess['is_owner'] != false;
+    }
+    final section = switch (view) {
+      _ProviderDashView.dashboard => 'dashboard',
+      _ProviderDashView.packages => 'packages',
+      _ProviderDashView.coverage => 'coverage',
+      _ProviderDashView.documents => 'documents',
+      _ProviderDashView.installationRequests => 'installation_requests',
+      _ProviderDashView.customers => 'customers',
+      _ProviderDashView.reviews => 'reviews',
+      _ProviderDashView.messages => 'messages',
+      _ProviderDashView.analytics => 'analytics',
+      _ => 'dashboard',
+    };
+    return _accountCanView(currentAccess, section);
+  }
+
+  _ProviderDashView _firstAllowedView(Map<String, dynamic> access) {
+    const candidates = [
+      _ProviderDashView.dashboard,
+      _ProviderDashView.packages,
+      _ProviderDashView.coverage,
+      _ProviderDashView.documents,
+      _ProviderDashView.installationRequests,
+      _ProviderDashView.customers,
+      _ProviderDashView.reviews,
+      _ProviderDashView.messages,
+      _ProviderDashView.analytics,
+    ];
+    return candidates.firstWhere(
+      (view) => _canOpenView(view, access),
+      orElse: () => _ProviderDashView.dashboard,
+    );
+  }
+
   void _refreshProviderDashboard() {
+    if (!mounted) return;
     setState(() {
       _providerFuture = AuthService().getProviderDashboardData();
+      _subscriptionFuture = SubscriptionService().getCurrentSubscription();
     });
   }
 
@@ -218,24 +335,25 @@ class _DashboardState extends State<Dashboard> {
   }
 
   void _showInstallationRequests({bool closeSidebar = false}) {
+    if (!_canOpenView(_ProviderDashView.installationRequests)) return;
     setState(() {
       _activeView = _ProviderDashView.installationRequests;
-      if (closeSidebar) _showMobileSidebar = false;
     });
     _refreshInbox();
   }
 
   void _showDashboard({bool closeSidebar = false}) {
     setState(() {
-      _activeView = _ProviderDashView.dashboard;
-      if (closeSidebar) _showMobileSidebar = false;
+      _activeView = _canOpenView(_ProviderDashView.dashboard)
+          ? _ProviderDashView.dashboard
+          : _firstAllowedView(_accountAccess);
     });
   }
 
   void _showView(_ProviderDashView view, {bool closeSidebar = false}) {
+    if (!_canOpenView(view)) return;
     setState(() {
       _activeView = view;
-      if (closeSidebar) _showMobileSidebar = false;
     });
     if (view == _ProviderDashView.installationRequests ||
         view == _ProviderDashView.customers ||
@@ -244,11 +362,43 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  Future<void> _logoutProvider({bool closeSidebar = false}) async {
-    if (closeSidebar && mounted) {
-      setState(() => _showMobileSidebar = false);
+  Future<void> _openMoreMenu() async {
+    Map<String, dynamic> provider;
+    try {
+      provider = await _providerFuture;
+    } catch (_) {
+      provider = const <String, dynamic>{};
     }
+    if (!mounted) return;
+    final selected = await showModalBottomSheet<Object>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _DashboardMoreSheet(
+        activeView: _activeView,
+        subscriptionTier: provider['subscription_tier']?.toString() ?? 'free',
+        accountAccess: _accountAccess,
+      ),
+    );
+    if (selected is _ProviderDashView && mounted) {
+      _showView(selected, closeSidebar: true);
+    } else if (selected == 'sign_out' && mounted) {
+      await _logoutProvider(closeSidebar: true);
+    } else if (selected == 'switch_account' && mounted) {
+      await _switchProviderAccount();
+    }
+  }
 
+  Future<void> _switchProviderAccount() async {
+    await AuthService().signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const Login(providerMode: true)),
+      (route) => false,
+    );
+  }
+
+  Future<void> _logoutProvider({bool closeSidebar = false}) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -281,7 +431,7 @@ class _DashboardState extends State<Dashboard> {
         ),
       );
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const Login(providerMode: true)),
+        MaterialPageRoute(builder: (_) => const Login()),
         (route) => false,
       );
     } catch (error) {
@@ -299,6 +449,7 @@ class _DashboardState extends State<Dashboard> {
   void initState() {
     super.initState();
     _providerFuture = AuthService().getProviderDashboardData();
+    _subscriptionFuture = SubscriptionService().getCurrentSubscription();
     final now = DateTime.now();
     _selectedDateRange = DateTimeRange(
       start: now.subtract(const Duration(days: 6)),
@@ -306,6 +457,7 @@ class _DashboardState extends State<Dashboard> {
     );
     _selectedMonth = _monthLabel(now);
     WidgetsBinding.instance.addPostFrameCallback((_) => _refreshInbox());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadAccountAccess());
   }
 
   @override
@@ -319,7 +471,7 @@ class _DashboardState extends State<Dashboard> {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(15),
           side: BorderSide(color: _dashBorder(context)),
         ),
       ),
@@ -340,13 +492,22 @@ class _DashboardState extends State<Dashboard> {
               final packages = _packagesFromProvider(provider);
               final locations = _locationsFromProvider(provider);
               final reviews = _reviewsFromProvider(provider);
+              final rangedInboxItems = _inboxItems
+                  .where(_requestInSelectedRange)
+                  .toList(growable: false);
               final pendingRequestCount = _intValue(
                 provider,
                 'pending_installations',
               );
               final livePendingRequestCount = _inboxLoaded
-                  ? _inboxItems.where((request) => request.isPending).length
+                  ? rangedInboxItems
+                        .where((request) => request.isPending)
+                        .length
                   : pendingRequestCount;
+              final selectedRevenueTotal = _selectedMonthRevenue(
+                revenue,
+                fallback: _moneyValue(provider, 'monthly_revenue'),
+              );
 
               return DefaultTextStyle(
                 style: _dashFont(color: _dashText(context), fontSize: 14),
@@ -357,19 +518,20 @@ class _DashboardState extends State<Dashboard> {
                       final wide = constraints.maxWidth >= 1100;
                       final content = switch (_activeView) {
                         _ProviderDashView.dashboard => _DashboardContent(
+                          subscription: _currentSubscription,
+                          fallbackTier:
+                              provider?['subscription_tier']?.toString() ??
+                              'free',
                           metrics: metrics,
                           revenue: revenue,
-                          revenueTotal: _moneyValue(
-                            provider,
-                            'monthly_revenue',
-                          ),
+                          revenueTotal: selectedRevenueTotal,
                           dateRangeLabel: _dateRangeLabel(_selectedDateRange),
                           selectedMonth: _selectedMonth,
                           onDateRangePressed: _pickDateRange,
                           onMonthPressed: _pickMonth,
                           packages: packages,
                           locations: locations,
-                          requests: _inboxItems,
+                          requests: rangedInboxItems,
                           requestsLoading: _inboxLoading,
                           requestsError: _inboxError,
                           onRefreshRequests: _refreshInbox,
@@ -389,23 +551,38 @@ class _DashboardState extends State<Dashboard> {
                               snapshot.connectionState ==
                               ConnectionState.waiting,
                           showMenuButton: !wide,
-                          onMenuPressed: () {
-                            setState(() => _showMobileSidebar = true);
-                          },
+                          onMenuPressed: _openMoreMenu,
                         ),
+                        _ProviderDashView.upgradePlan => _SubscriptionPlansPage(
+                          currentTier:
+                              provider?['subscription_tier']?.toString() ??
+                              'free',
+                          isGrowthTestRunning: _isTestGrowthRunning,
+                          onActivateGrowthTest: _activateTestGrowth,
+                          isProTestRunning: _isTestUpgradeRunning,
+                          onActivateProTest: _activateTestUpgrade,
+                          onBackPressed: _showDashboard,
+                          showMenuButton: !wide,
+                          onMenuPressed: _openMoreMenu,
+                        ),
+                        _ProviderDashView.teamAccounts =>
+                          ProviderTeamAccountsPage(
+                            providerName: providerName,
+                            onBackPressed: _showDashboard,
+                            showMenuButton: !wide,
+                            onMenuPressed: _openMoreMenu,
+                          ),
                         _ProviderDashView.installationRequests =>
                           _InstallationRequestsPage(
                             providerName: providerName,
                             providerStatus: providerStatus,
                             notificationCount: livePendingRequestCount,
                             dateRangeLabel: _dateRangeLabel(_selectedDateRange),
-                            requests: _inboxItems,
+                            requests: rangedInboxItems,
                             isLoading: _inboxLoading,
                             error: _inboxError,
                             showMenuButton: !wide,
-                            onMenuPressed: () {
-                              setState(() => _showMobileSidebar = true);
-                            },
+                            onMenuPressed: _openMoreMenu,
                             onDateRangePressed: _pickDateRange,
                             onBackToDashboard: _showDashboard,
                             onRefresh: _refreshInbox,
@@ -422,19 +599,31 @@ class _DashboardState extends State<Dashboard> {
                               'pro',
                           isUpgradeRunning: _isTestUpgradeRunning,
                           onUpgradePressed: _activateTestUpgrade,
+                          onBackPressed: _showDashboard,
                           showMenuButton: !wide,
-                          onMenuPressed: () =>
-                              setState(() => _showMobileSidebar = true),
+                          onMenuPressed: _openMoreMenu,
+                        ),
+                        _ProviderDashView.documents => ProviderDocumentsPage(
+                          providerId: provider?['id']?.toString() ?? '',
+                          providerName: providerName,
+                          isVerified: provider?['is_verified'] == true,
+                          onBackPressed: _showDashboard,
+                          showMenuButton: !wide,
+                          onMenuPressed: _openMoreMenu,
+                          onChanged: _refreshProviderDashboard,
                         ),
                         _ => _ProviderSectionPage(
                           view: _activeView,
                           providerId: provider?['id']?.toString() ?? '',
+                          subscriptionTier:
+                              provider?['subscription_tier']?.toString() ??
+                              'free',
                           providerName: providerName,
                           providerStatus: providerStatus,
                           requests: _inboxItems,
                           showMenuButton: !wide,
-                          onMenuPressed: () =>
-                              setState(() => _showMobileSidebar = true),
+                          onMenuPressed: _openMoreMenu,
+                          onViewChanged: _showView,
                           onChanged: () {
                             _refreshProviderDashboard();
                             _refreshInbox();
@@ -444,93 +633,9 @@ class _DashboardState extends State<Dashboard> {
                       if (!wide) {
                         return SizedBox.expand(
                           child: SafeArea(
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Positioned.fill(
-                                  child: SingleChildScrollView(
-                                    padding: const EdgeInsets.all(16),
-                                    child: content,
-                                  ),
-                                ),
-                                Positioned(
-                                  left: 0,
-                                  top: 0,
-                                  bottom: 0,
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.translucent,
-                                    onTap: () => setState(
-                                      () => _showMobileSidebar = true,
-                                    ),
-                                    onHorizontalDragEnd: (details) {
-                                      if ((details.primaryVelocity ?? 0) > 0) {
-                                        setState(
-                                          () => _showMobileSidebar = true,
-                                        );
-                                      }
-                                    },
-                                    child: const SizedBox(width: 24),
-                                  ),
-                                ),
-                                if (_showMobileSidebar)
-                                  Positioned.fill(
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () {
-                                        setState(
-                                          () => _showMobileSidebar = false,
-                                        );
-                                      },
-                                      child: Container(
-                                        color: Colors.black.withValues(
-                                          alpha: .35,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                AnimatedPositioned(
-                                  duration: const Duration(milliseconds: 240),
-                                  curve: Curves.easeOutCubic,
-                                  left: _showMobileSidebar ? 0 : -280,
-                                  top: 0,
-                                  bottom: 0,
-                                  width: 280,
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    elevation: _showMobileSidebar ? 18 : 0,
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () {},
-                                      onHorizontalDragEnd: (details) {
-                                        if ((details.primaryVelocity ?? 0) <
-                                            0) {
-                                          setState(
-                                            () => _showMobileSidebar = false,
-                                          );
-                                        }
-                                      },
-                                      child: _SideBar(
-                                        activeView: _activeView,
-                                        providerName: providerName,
-                                        providerStatus: providerStatus,
-                                        subscriptionTier:
-                                            provider?['subscription_tier']
-                                                ?.toString() ??
-                                            'free',
-                                        packageCount: packages.length,
-                                        isUpgradeRunning: _isTestUpgradeRunning,
-                                        pendingRequestCount:
-                                            livePendingRequestCount,
-                                        onViewPressed: (view) =>
-                                            _showView(view, closeSidebar: true),
-                                        onUpgradePressed: _activateTestUpgrade,
-                                        onLogoutPressed: () =>
-                                            _logoutProvider(closeSidebar: true),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
+                              child: content,
                             ),
                           ),
                         );
@@ -544,11 +649,11 @@ class _DashboardState extends State<Dashboard> {
                             subscriptionTier:
                                 provider?['subscription_tier']?.toString() ??
                                 'free',
+                            accountAccess: _accountAccess,
                             packageCount: packages.length,
-                            isUpgradeRunning: _isTestUpgradeRunning,
                             pendingRequestCount: livePendingRequestCount,
                             onViewPressed: _showView,
-                            onUpgradePressed: _activateTestUpgrade,
+                            onSwitchAccountPressed: _switchProviderAccount,
                             onLogoutPressed: _logoutProvider,
                           ),
                           Expanded(
@@ -588,13 +693,44 @@ class _DashboardState extends State<Dashboard> {
     return 'Provider';
   }
 
+  bool _requestInSelectedRange(ProviderInboxItem request) {
+    final createdAt = request.createdAt;
+    if (createdAt == null) return true;
+    final start = DateTime(
+      _selectedDateRange.start.year,
+      _selectedDateRange.start.month,
+      _selectedDateRange.start.day,
+    );
+    final endExclusive = DateTime(
+      _selectedDateRange.end.year,
+      _selectedDateRange.end.month,
+      _selectedDateRange.end.day + 1,
+    );
+    final localCreatedAt = createdAt.toLocal();
+    return !localCreatedAt.isBefore(start) &&
+        localCreatedAt.isBefore(endExclusive);
+  }
+
+  double _selectedMonthRevenue(
+    List<_RevenuePoint> revenue, {
+    required double fallback,
+  }) {
+    final selectedShortMonth = _selectedMonth.substring(0, 3);
+    for (final point in revenue) {
+      if (point.month.toLowerCase() == selectedShortMonth.toLowerCase()) {
+        return point.amount;
+      }
+    }
+    return fallback;
+  }
+
   String _providerStatus(Map<String, dynamic>? provider) {
     if (provider == null) return 'Loading provider';
     if (provider['is_verified'] == true) return 'Verified Provider';
 
     final status = provider['status']?.toString().trim();
     if (status == null || status.isEmpty) return 'Provider';
-    return '${status[0].toUpperCase()}${status.substring(1)} Provider';
+    return '${humanizeBackendValue(status)} Provider';
   }
 
   Future<void> _pickDateRange() async {
@@ -949,6 +1085,8 @@ class _DashboardState extends State<Dashboard> {
 
 class _DashboardContent extends StatelessWidget {
   const _DashboardContent({
+    required this.subscription,
+    required this.fallbackTier,
     required this.metrics,
     required this.revenue,
     required this.revenueTotal,
@@ -976,6 +1114,8 @@ class _DashboardContent extends StatelessWidget {
     required this.showMenuButton,
     required this.onMenuPressed,
   });
+  final Future<Map<String, dynamic>> subscription;
+  final String fallbackTier;
   final List<_Metric> metrics;
   final List<_RevenuePoint> revenue;
   final double revenueTotal;
@@ -1006,10 +1146,12 @@ class _DashboardContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = MediaQuery.sizeOf(context).width < 700;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _TopBar(
+          pageTitle: 'Dashboard',
           providerName: providerName,
           providerStatus: providerStatus,
           notificationCount: pendingRequestCount,
@@ -1025,30 +1167,27 @@ class _DashboardContent extends StatelessWidget {
           const SizedBox(height: 12),
           const _DashboardNotice(message: 'Loading provider dashboard data...'),
         ],
-        const SizedBox(height: 24),
+        const SizedBox(height: 14),
+        _CurrentBillingCard(
+          subscription: subscription,
+          fallbackTier: fallbackTier,
+        ),
+        if (mobile) ...[
+          const SizedBox(height: 14),
+          _LocationsCard(locations: locations),
+        ],
+        SizedBox(height: mobile ? 14 : 24),
         _MetricGrid(metrics: metrics),
-        const SizedBox(height: 18),
-        _ResponsivePair(
-          leftFlex: 9,
-          rightFlex: 10,
-          left: _RevenueCard(
+        SizedBox(height: mobile ? 14 : 18),
+        if (mobile) ...[
+          _RevenueCard(
             points: revenue,
             totalRevenue: revenueTotal,
             selectedMonth: selectedMonth,
             onMonthPressed: onMonthPressed,
           ),
-          right: _PackagesCard(
-            packages: packages,
-            selectedMonth: selectedMonth,
-            onMonthPressed: onMonthPressed,
-          ),
-        ),
-        const SizedBox(height: 18),
-        _ResponsivePair(
-          leftFlex: 9,
-          rightFlex: 10,
-          left: _LocationsCard(locations: locations),
-          right: _RequestsCard(
+          const SizedBox(height: 14),
+          _RequestsCard(
             key: requestsSectionKey,
             requests: requests,
             isLoading: requestsLoading,
@@ -1059,7 +1198,38 @@ class _DashboardContent extends StatelessWidget {
             onComplete: onCompleteRequest,
             onViewAll: onOpenFullRequests,
           ),
-        ),
+          const SizedBox(height: 14),
+          _PackagesCard(packages: packages),
+        ] else ...[
+          _ResponsivePair(
+            leftFlex: 9,
+            rightFlex: 10,
+            left: _RevenueCard(
+              points: revenue,
+              totalRevenue: revenueTotal,
+              selectedMonth: selectedMonth,
+              onMonthPressed: onMonthPressed,
+            ),
+            right: _PackagesCard(packages: packages),
+          ),
+          const SizedBox(height: 18),
+          _ResponsivePair(
+            leftFlex: 9,
+            rightFlex: 10,
+            left: _LocationsCard(locations: locations),
+            right: _RequestsCard(
+              key: requestsSectionKey,
+              requests: requests,
+              isLoading: requestsLoading,
+              error: requestsError,
+              onRefresh: onRefreshRequests,
+              onAccept: onAcceptRequest,
+              onDecline: onDeclineRequest,
+              onComplete: onCompleteRequest,
+              onViewAll: onOpenFullRequests,
+            ),
+          ),
+        ],
         const SizedBox(height: 18),
         _ReviewsCard(reviews: reviews),
         const SizedBox(height: 16),
@@ -1074,8 +1244,696 @@ class _DashboardContent extends StatelessWidget {
   }
 }
 
+class _CurrentBillingCard extends StatelessWidget {
+  const _CurrentBillingCard({
+    required this.subscription,
+    required this.fallbackTier,
+  });
+
+  final Future<Map<String, dynamic>> subscription;
+  final String fallbackTier;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: subscription,
+      builder: (context, snapshot) {
+        final data = snapshot.data ?? const <String, dynamic>{};
+        final tier = _normalizedTier(data['tier'] ?? fallbackTier);
+        final isFree = tier == 'free';
+        final isGrowth = tier == 'growth';
+        final active = data['is_active'] != false;
+        final limits = data['limits'] is Map
+            ? Map<String, dynamic>.from(data['limits'] as Map)
+            : const <String, dynamic>{};
+        final expiresAt = DateTime.tryParse(
+          data['expires_at']?.toString() ?? '',
+        )?.toLocal();
+        final coverageLimit = limits.containsKey('max_coverage_areas')
+            ? limits['max_coverage_areas']
+            : isFree
+            ? 3
+            : isGrowth
+            ? 5
+            : null;
+        final planColor = isFree
+            ? AppTheme.darkGray
+            : isGrowth
+            ? AppTheme.amberDark
+            : AppTheme.navy;
+
+        return OnaBlueprintCard(
+          title: 'Current billing',
+          action: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: (active ? AppTheme.green : Colors.red).withValues(
+                alpha: .10,
+              ),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (snapshot.connectionState == ConnectionState.waiting)
+                  const SizedBox.square(
+                    dimension: 11,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  )
+                else
+                  Icon(
+                    active ? Icons.check_circle_rounded : Icons.error_rounded,
+                    color: active ? AppTheme.green : Colors.red,
+                    size: 13,
+                  ),
+                const SizedBox(width: 5),
+                Text(
+                  active ? 'Active' : 'Expired',
+                  style: TextStyle(
+                    color: active ? AppTheme.green : Colors.red,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: planColor.withValues(alpha: .07),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: planColor.withValues(alpha: .16)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: planColor,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        isFree
+                            ? Icons.wifi_rounded
+                            : isGrowth
+                            ? Icons.trending_up_rounded
+                            : Icons.workspace_premium_rounded,
+                        color: AppTheme.white,
+                        size: 21,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${_titleCase(tier)} plan',
+                            softWrap: true,
+                            style: GoogleFonts.plusJakartaSans(
+                              color: _dashText(context),
+                              fontSize: 19,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            isFree
+                                ? 'No subscription charge or renewal date.'
+                                : expiresAt == null
+                                ? 'Paid plan access is active.'
+                                : 'Plan access is active until ${_billingDate(expiresAt)}.',
+                            softWrap: true,
+                            style: TextStyle(
+                              color: _dashMuted(context),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final itemWidth = constraints.maxWidth < 520
+                      ? (constraints.maxWidth - 10) / 2
+                      : (constraints.maxWidth - 20) / 3;
+                  return Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _BillingDetail(
+                        width: itemWidth,
+                        label: 'Billing',
+                        value: isFree ? 'Free' : 'Paid plan',
+                        icon: Icons.receipt_long_outlined,
+                      ),
+                      _BillingDetail(
+                        width: itemWidth,
+                        label: isFree ? 'Renewal' : 'Access until',
+                        value: isFree
+                            ? 'No renewal'
+                            : expiresAt == null
+                            ? 'No expiry set'
+                            : _billingDate(expiresAt),
+                        icon: Icons.calendar_month_outlined,
+                      ),
+                      _BillingDetail(
+                        width: itemWidth,
+                        label: 'Coverage areas',
+                        value: coverageLimit == null
+                            ? 'Unlimited'
+                            : 'Up to $coverageLimit',
+                        icon: Icons.map_outlined,
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 11),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    tier == 'pro'
+                        ? Icons.insights_rounded
+                        : Icons.lock_outline_rounded,
+                    color: tier == 'pro' ? AppTheme.green : _dashMuted(context),
+                    size: 17,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      tier == 'pro'
+                          ? 'Advanced analytics are included with your plan.'
+                          : 'Advanced analytics require the Pro plan.',
+                      softWrap: true,
+                      style: TextStyle(
+                        color: _dashMuted(context),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (snapshot.hasError) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Live billing details could not be refreshed. Showing your saved plan.',
+                  softWrap: true,
+                  style: TextStyle(color: _dashMuted(context), fontSize: 10),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static String _normalizedTier(Object? value) {
+    final tier = value?.toString().trim().toLowerCase();
+    return switch (tier) {
+      'growth' => 'growth',
+      'pro' => 'pro',
+      _ => 'free',
+    };
+  }
+
+  static String _titleCase(String value) =>
+      '${value[0].toUpperCase()}${value.substring(1)}';
+
+  static String _billingDate(DateTime value) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${value.day} ${months[value.month - 1]} ${value.year}';
+  }
+}
+
+class _SubscriptionPlansPage extends StatelessWidget {
+  const _SubscriptionPlansPage({
+    required this.currentTier,
+    required this.isGrowthTestRunning,
+    required this.onActivateGrowthTest,
+    required this.isProTestRunning,
+    required this.onActivateProTest,
+    required this.onBackPressed,
+    required this.showMenuButton,
+    required this.onMenuPressed,
+  });
+
+  final String currentTier;
+  final bool isGrowthTestRunning;
+  final Future<void> Function() onActivateGrowthTest;
+  final bool isProTestRunning;
+  final Future<void> Function() onActivateProTest;
+  final VoidCallback onBackPressed;
+  final bool showMenuButton;
+  final VoidCallback onMenuPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (showMenuButton)
+          OnaBlueprintHeader(
+            title: 'Upgrade your plan',
+            onBack: onBackPressed,
+            onMenu: onMenuPressed,
+          )
+        else
+          Row(
+            children: [
+              IconButton(
+                onPressed: onBackPressed,
+                tooltip: 'Back to dashboard',
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Upgrade your plan',
+                  softWrap: true,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: _dashText(context),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        const SizedBox(height: 14),
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Choose the OnaNet plan that fits your provider business.',
+                  textAlign: TextAlign.center,
+                  softWrap: true,
+                  style: TextStyle(
+                    color: _dashMuted(context),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _SubscriptionPlanSelector(
+                  currentTier: currentTier,
+                  isGrowthTestRunning: isGrowthTestRunning,
+                  onActivateGrowthTest: onActivateGrowthTest,
+                  isProTestRunning: isProTestRunning,
+                  onActivateProTest: onActivateProTest,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SubscriptionPlanSelector extends StatefulWidget {
+  const _SubscriptionPlanSelector({
+    required this.currentTier,
+    required this.isGrowthTestRunning,
+    required this.onActivateGrowthTest,
+    required this.isProTestRunning,
+    required this.onActivateProTest,
+  });
+
+  final String currentTier;
+  final bool isGrowthTestRunning;
+  final Future<void> Function() onActivateGrowthTest;
+  final bool isProTestRunning;
+  final Future<void> Function() onActivateProTest;
+
+  @override
+  State<_SubscriptionPlanSelector> createState() =>
+      _SubscriptionPlanSelectorState();
+}
+
+class _SubscriptionPlanSelectorState extends State<_SubscriptionPlanSelector> {
+  static const _tiers = ['free', 'growth', 'pro'];
+  late String _selectedTier = widget.currentTier;
+
+  @override
+  void didUpdateWidget(covariant _SubscriptionPlanSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentTier != widget.currentTier) {
+      _selectedTier = widget.currentTier;
+    }
+  }
+
+  List<String> get _perks => switch (_selectedTier) {
+    'growth' => const [
+      'Up to 10 internet packages',
+      'Up to 5 coverage areas',
+      '3 provider profile photos',
+      'External customer alerts',
+      'Up to 3 staff accounts',
+      'Your own performance statistics',
+    ],
+    'pro' => const [
+      'Expanded package capacity',
+      'Unlimited coverage areas',
+      '6 provider profile photos',
+      'Pinned placement in search',
+      'Advanced analytics and demand intelligence',
+      'Priority inbox and external alerts',
+      'Custom cover and expanded staff access',
+    ],
+    _ => const [
+      'Up to 10 internet packages',
+      'Up to 3 coverage areas',
+      'In-app customer alerts',
+      'Your own performance statistics',
+      '1 staff account',
+    ],
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final current = _selectedTier == widget.currentTier;
+    final growthLoading =
+        _selectedTier == 'growth' && widget.isGrowthTestRunning;
+    final proLoading = _selectedTier == 'pro' && widget.isProTestRunning;
+    final loading = growthLoading || proLoading;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppTheme.navyMid, AppTheme.navy],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.navyLight),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.navy.withValues(alpha: .18),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: _tiers.map((tier) {
+              final selected = tier == _selectedTier;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: InkWell(
+                    onTap: () => setState(() => _selectedTier = tier),
+                    borderRadius: BorderRadius.circular(999),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? AppTheme.amber.withValues(alpha: .12)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: selected
+                              ? AppTheme.amber.withValues(alpha: .55)
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Text(
+                        _titleCase(tier),
+                        textAlign: TextAlign.center,
+                        softWrap: true,
+                        style: TextStyle(
+                          color: selected
+                              ? AppTheme.white
+                              : AppTheme.offWhite.withValues(alpha: .72),
+                          fontSize: 13,
+                          fontWeight: selected
+                              ? FontWeight.w900
+                              : FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 24),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            child: Column(
+              key: ValueKey(_selectedTier),
+              children: [
+                if (_selectedTier == 'free') ...[
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'KES ',
+                          style: GoogleFonts.plusJakartaSans(
+                            color: AppTheme.amberLight,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        TextSpan(
+                          text: '0',
+                          style: GoogleFonts.plusJakartaSans(
+                            color: AppTheme.amberLight,
+                            fontSize: 58,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -2,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Text(
+                    'PER MONTH',
+                    style: TextStyle(
+                      color: AppTheme.offWhite,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .8,
+                    ),
+                  ),
+                ] else ...[
+                  Text(
+                    'PAID',
+                    style: GoogleFonts.plusJakartaSans(
+                      color: AppTheme.amberLight,
+                      fontSize: 48,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -1.5,
+                    ),
+                  ),
+                  const Text(
+                    'PRICE SHOWN AT CHECKOUT',
+                    textAlign: TextAlign.center,
+                    softWrap: true,
+                    style: TextStyle(
+                      color: AppTheme.offWhite,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .7,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                for (final perk in _perks)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 11),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 13,
+                          height: 13,
+                          margin: const EdgeInsets.only(top: 2),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: AppTheme.amberLight.withValues(alpha: .8),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.check_rounded,
+                            color: AppTheme.amberLight,
+                            size: 9,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            perk,
+                            softWrap: true,
+                            style: const TextStyle(
+                              color: AppTheme.offWhite,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: current || _selectedTier == 'free' || loading
+                  ? null
+                  : _selectedTier == 'growth'
+                  ? widget.onActivateGrowthTest
+                  : widget.onActivateProTest,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.amber,
+                foregroundColor: AppTheme.navy,
+                disabledBackgroundColor: AppTheme.white.withValues(alpha: .14),
+                disabledForegroundColor: AppTheme.offWhite.withValues(
+                  alpha: .72,
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              icon: loading
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppTheme.offWhite,
+                      ),
+                    )
+                  : Icon(
+                      current
+                          ? Icons.check_circle_rounded
+                          : Icons.arrow_forward_rounded,
+                      size: 18,
+                    ),
+              label: Text(
+                loading
+                    ? 'Activating ${_titleCase(_selectedTier)}...'
+                    : current
+                    ? 'Current plan'
+                    : _selectedTier == 'free'
+                    ? 'Free plan'
+                    : 'Test ${_titleCase(_selectedTier)} for 30 days',
+                softWrap: true,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _selectedTier == 'free'
+                ? 'Free has no subscription charge. You can upgrade whenever you are ready.'
+                : 'Test access lasts 30 days. Paid pricing will be shown at checkout when billing is enabled.',
+            textAlign: TextAlign.center,
+            softWrap: true,
+            style: TextStyle(
+              color: AppTheme.offWhite.withValues(alpha: .68),
+              fontSize: 10,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _titleCase(String tier) =>
+      '${tier[0].toUpperCase()}${tier.substring(1)}';
+}
+
+class _BillingDetail extends StatelessWidget {
+  const _BillingDetail({
+    required this.width,
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final double width;
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: width,
+    child: Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _dashBackground(context),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppTheme.amber, size: 17),
+          const SizedBox(height: 7),
+          Text(
+            label,
+            softWrap: true,
+            style: TextStyle(color: _dashMuted(context), fontSize: 10),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            softWrap: true,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _TopBar extends StatelessWidget {
   const _TopBar({
+    required this.pageTitle,
     required this.providerName,
     required this.providerStatus,
     required this.notificationCount,
@@ -1085,6 +1943,7 @@ class _TopBar extends StatelessWidget {
     required this.onMenuPressed,
   });
 
+  final String pageTitle;
   final String providerName;
   final String providerStatus;
   final int notificationCount;
@@ -1096,25 +1955,30 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = _isDark(context);
+    final compactPage = MediaQuery.sizeOf(context).width < 1100;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: compactPage
+          ? const EdgeInsets.symmetric(vertical: 4)
+          : const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: dark
-              ? const [Color(0xFF102D3E), Color(0xFF0A1E2B)]
-              : const [Color(0xFFFFFFFF), Color(0xFFFFF8E8)],
-        ),
+        color: compactPage
+            ? Colors.transparent
+            : dark
+            ? const Color(0xFF102D3E)
+            : AppTheme.amberLight,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: _dashBorder(context)),
-        boxShadow: [
-          BoxShadow(
-            color: _dashShadow(context),
-            blurRadius: 28,
-            offset: const Offset(0, 12),
-          ),
-        ],
+        border: Border.all(
+          color: compactPage ? Colors.transparent : _dashBorder(context),
+        ),
+        boxShadow: compactPage
+            ? const []
+            : [
+                BoxShadow(
+                  color: _dashShadow(context),
+                  blurRadius: 28,
+                  offset: const Offset(0, 12),
+                ),
+              ],
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1126,30 +1990,21 @@ class _TopBar extends StatelessWidget {
           );
 
           if (mobile) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                welcome,
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _DateButton(
-                        label: dateRangeLabel,
-                        onPressed: onDateRangePressed,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    _NotificationButton(count: notificationCount),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                _ProfileChip(
-                  expanded: true,
-                  providerName: providerName,
-                  providerStatus: providerStatus,
-                ),
-              ],
+            if (pageTitle == 'Dashboard') {
+              return OnaDashboardBrandHeader(
+                onMenu: onMenuPressed,
+                notificationCount: notificationCount,
+                onNotifications: () => context
+                    .findAncestorStateOfType<_DashboardState>()
+                    ?._showInstallationRequests(),
+              );
+            }
+            return OnaBlueprintHeader(
+              title: pageTitle,
+              onBack: () => context
+                  .findAncestorStateOfType<_DashboardState>()
+                  ?._showDashboard(),
+              onMenu: onMenuPressed,
             );
           }
 
@@ -1321,17 +2176,200 @@ class _MenuButton extends StatelessWidget {
   }
 }
 
+class _DashboardMoreSheet extends StatelessWidget {
+  const _DashboardMoreSheet({
+    required this.activeView,
+    required this.subscriptionTier,
+    required this.accountAccess,
+  });
+
+  final _ProviderDashView activeView;
+  final String subscriptionTier;
+  final Map<String, dynamic> accountAccess;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final background = isDark ? const Color(0xFF111827) : AppTheme.offWhite;
+    final surface = isDark ? const Color(0xFF1F2937) : Colors.white;
+    final isOwner = accountAccess['is_owner'] != false;
+    final canUpgrade =
+        isOwner && subscriptionTier.trim().toLowerCase() != 'pro';
+    final items = [
+      if (_accountCanView(accountAccess, 'dashboard'))
+        (_ProviderDashView.dashboard, 'Dashboard', Icons.grid_view_rounded),
+      if (_accountCanView(accountAccess, 'packages'))
+        (_ProviderDashView.packages, 'Packages', Icons.wifi_rounded),
+      if (_accountCanView(accountAccess, 'coverage'))
+        (_ProviderDashView.coverage, 'Coverage Areas', Icons.map_outlined),
+      if (_accountCanView(accountAccess, 'documents'))
+        (
+          _ProviderDashView.documents,
+          'Documents and Verification',
+          Icons.verified_user_outlined,
+        ),
+      if (_accountCanView(accountAccess, 'installation_requests'))
+        (
+          _ProviderDashView.installationRequests,
+          'Installation Requests',
+          Icons.add_task_rounded,
+        ),
+      if (_accountCanView(accountAccess, 'customers'))
+        (
+          _ProviderDashView.customers,
+          'Customers',
+          Icons.people_outline_rounded,
+        ),
+      if (_accountCanView(accountAccess, 'reviews'))
+        (_ProviderDashView.reviews, 'Reviews', Icons.star_border_rounded),
+      if (_accountCanView(accountAccess, 'messages'))
+        (_ProviderDashView.messages, 'Messages', Icons.mail_outline_rounded),
+      if (_accountCanView(accountAccess, 'analytics'))
+        (
+          _ProviderDashView.analytics,
+          'Pro Analytics',
+          Icons.auto_graph_rounded,
+        ),
+      if (isOwner)
+        (
+          _ProviderDashView.teamAccounts,
+          'Team accounts',
+          Icons.manage_accounts_outlined,
+        ),
+    ];
+    return SafeArea(
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .82,
+        ),
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF98A2B3).withValues(alpha: .45),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'OnaNet workspace',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.plusJakartaSans(
+                color: _dashText(context),
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Flexible(
+              child: SingleChildScrollView(
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 1.55,
+                  ),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    final selected = activeView == item.$1;
+                    return InkWell(
+                      onTap: () => Navigator.pop(context, item.$1),
+                      borderRadius: BorderRadius.circular(18),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? AppTheme.amber.withValues(alpha: .13)
+                              : surface,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: selected
+                                ? AppTheme.amber
+                                : _dashBorder(context),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              item.$3,
+                              color: selected
+                                  ? AppTheme.amber
+                                  : _dashMuted(context),
+                            ),
+                            const SizedBox(height: 9),
+                            Text(
+                              item.$2,
+                              softWrap: true,
+                              style: GoogleFonts.urbanist(
+                                color: _dashText(context),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(context, 'switch_account'),
+              icon: const Icon(Icons.switch_account_rounded),
+              label: const Text('Switch provider account'),
+            ),
+            if (canUpgrade) ...[
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () =>
+                    Navigator.pop(context, _ProviderDashView.upgradePlan),
+                icon: const Icon(Icons.workspace_premium_outlined),
+                label: const Text('Upgrade your plan'),
+              ),
+            ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(context, 'sign_out'),
+              icon: const Icon(Icons.logout_rounded),
+              label: const Text('Sign out'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SideBar extends StatelessWidget {
   const _SideBar({
     required this.activeView,
     required this.providerName,
     required this.providerStatus,
     required this.subscriptionTier,
+    required this.accountAccess,
     required this.packageCount,
-    required this.isUpgradeRunning,
     required this.pendingRequestCount,
     required this.onViewPressed,
-    required this.onUpgradePressed,
+    required this.onSwitchAccountPressed,
     required this.onLogoutPressed,
   });
 
@@ -1339,58 +2377,75 @@ class _SideBar extends StatelessWidget {
   final String providerName;
   final String providerStatus;
   final String subscriptionTier;
+  final Map<String, dynamic> accountAccess;
   final int packageCount;
-  final bool isUpgradeRunning;
   final int pendingRequestCount;
   final void Function(_ProviderDashView view) onViewPressed;
-  final VoidCallback onUpgradePressed;
+  final VoidCallback onSwitchAccountPressed;
   final VoidCallback onLogoutPressed;
 
   @override
   Widget build(BuildContext context) {
+    final isOwner = accountAccess['is_owner'] != false;
+    final canUpgrade =
+        isOwner && subscriptionTier.trim().toLowerCase() != 'pro';
     final operateItems = <(String, IconData, String, _ProviderDashView)>[
-      ('Dashboard', Icons.home_rounded, '0', _ProviderDashView.dashboard),
-      (
-        'Packages',
-        Icons.router_outlined,
-        packageCount.toString(),
-        _ProviderDashView.packages,
-      ),
-      ('Coverage', Icons.map_outlined, '0', _ProviderDashView.coverage),
-      (
-        'Installation Requests',
-        Icons.groups_2_outlined,
-        pendingRequestCount.toString(),
-        _ProviderDashView.installationRequests,
-      ),
-      (
-        'Customers',
-        Icons.people_outline_rounded,
-        '0',
-        _ProviderDashView.customers,
-      ),
+      if (_accountCanView(accountAccess, 'dashboard'))
+        ('Dashboard', Icons.home_rounded, '0', _ProviderDashView.dashboard),
+      if (_accountCanView(accountAccess, 'packages'))
+        (
+          'Packages',
+          Icons.router_outlined,
+          packageCount.toString(),
+          _ProviderDashView.packages,
+        ),
+      if (_accountCanView(accountAccess, 'coverage'))
+        ('Coverage', Icons.map_outlined, '0', _ProviderDashView.coverage),
+      if (_accountCanView(accountAccess, 'documents'))
+        (
+          'Documents',
+          Icons.verified_user_outlined,
+          '0',
+          _ProviderDashView.documents,
+        ),
+      if (_accountCanView(accountAccess, 'installation_requests'))
+        (
+          'Installation Requests',
+          Icons.groups_2_outlined,
+          pendingRequestCount.toString(),
+          _ProviderDashView.installationRequests,
+        ),
+      if (_accountCanView(accountAccess, 'customers'))
+        (
+          'Customers',
+          Icons.people_outline_rounded,
+          '0',
+          _ProviderDashView.customers,
+        ),
     ];
     final growItems = <(String, IconData, String, _ProviderDashView?)>[
-      ('Reviews', Icons.star_border_rounded, '0', _ProviderDashView.reviews),
-      (
-        'Analytics',
-        Icons.bar_chart_rounded,
-        'PRO',
-        _ProviderDashView.analytics,
-      ),
-      ('Messages', Icons.mail_outline_rounded, '0', _ProviderDashView.messages),
+      if (_accountCanView(accountAccess, 'reviews'))
+        ('Reviews', Icons.star_border_rounded, '0', _ProviderDashView.reviews),
+      if (_accountCanView(accountAccess, 'analytics'))
+        (
+          'Analytics',
+          Icons.bar_chart_rounded,
+          'PRO',
+          _ProviderDashView.analytics,
+        ),
+      if (_accountCanView(accountAccess, 'messages'))
+        (
+          'Messages',
+          Icons.mail_outline_rounded,
+          '0',
+          _ProviderDashView.messages,
+        ),
     ];
     return SizedBox(
       width: 280,
       height: double.infinity,
       child: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF071D2B), Color(0xFF04131E)],
-          ),
-        ),
+        decoration: const BoxDecoration(color: AppTheme.offWhite),
         child: SafeArea(
           child: ListView(
             key: const PageStorageKey<String>('provider-sidebar'),
@@ -1430,7 +2485,7 @@ class _SideBar extends StatelessWidget {
                           TextSpan(
                             text: 'Ona',
                             style: _dashFont(
-                              color: Colors.white,
+                              color: AppTheme.navy,
                               fontSize: 25,
                               fontWeight: FontWeight.w800,
                             ),
@@ -1446,7 +2501,7 @@ class _SideBar extends StatelessWidget {
                           TextSpan(
                             text: '\nProvider workspace',
                             style: _dashFont(
-                              color: Colors.white70,
+                              color: Color(0xFF667085),
                               fontSize: 13,
                               height: 1.2,
                             ),
@@ -1499,13 +2554,38 @@ class _SideBar extends StatelessWidget {
                   ),
                 ),
               const SizedBox(height: 12),
-              _PlanCard(
-                tier: subscriptionTier,
-                packageCount: packageCount,
-                isUpgradeRunning: isUpgradeRunning,
-                onUpgradePressed: onUpgradePressed,
+              if (isOwner)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                  child: _NavItem(
+                    label: 'Team accounts',
+                    icon: Icons.manage_accounts_outlined,
+                    badge: '0',
+                    selected: activeView == _ProviderDashView.teamAccounts,
+                    onTap: () => onViewPressed(_ProviderDashView.teamAccounts),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                child: _NavItem(
+                  label: 'Switch account',
+                  icon: Icons.switch_account_rounded,
+                  badge: '0',
+                  selected: false,
+                  onTap: onSwitchAccountPressed,
+                ),
               ),
-              const SizedBox(height: 8),
+              if (canUpgrade)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                  child: _NavItem(
+                    label: 'Upgrade your plan',
+                    icon: Icons.workspace_premium_outlined,
+                    badge: '0',
+                    selected: activeView == _ProviderDashView.upgradePlan,
+                    onTap: () => onViewPressed(_ProviderDashView.upgradePlan),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
                 child: _NavItem(
@@ -1536,19 +2616,19 @@ class _ProviderIdentity extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .05),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: .08)),
+        border: Border.all(color: const Color(0xFFE0D7F0)),
       ),
       child: Row(
         children: [
           CircleAvatar(
             radius: 17,
-            backgroundColor: Colors.white.withValues(alpha: .1),
+            backgroundColor: AppTheme.amber.withValues(alpha: .12),
             child: Text(
               initial,
               style: const TextStyle(
-                color: Colors.white,
+                color: AppTheme.amberDark,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -1560,10 +2640,8 @@ class _ProviderIdentity extends StatelessWidget {
               children: [
                 Text(
                   name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: AppTheme.navy,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1583,10 +2661,8 @@ class _ProviderIdentity extends StatelessWidget {
                     Expanded(
                       child: Text(
                         status,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Colors.white60,
+                          color: Color(0xFF667085),
                           fontSize: 11,
                         ),
                       ),
@@ -1613,7 +2689,7 @@ class _NavSectionLabel extends StatelessWidget {
       child: Text(
         label,
         style: const TextStyle(
-          color: Colors.white38,
+          color: Color(0xFF7A708B),
           fontSize: 10,
           fontWeight: FontWeight.w800,
         ),
@@ -1639,10 +2715,10 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onTap != null;
     final foreground = selected
-        ? Colors.white
+        ? AppTheme.amberDark
         : enabled
-        ? Colors.white.withValues(alpha: .84)
-        : Colors.white.withValues(alpha: .42);
+        ? AppTheme.navy.withValues(alpha: .82)
+        : AppTheme.navy.withValues(alpha: .40);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1672,8 +2748,6 @@ class _NavItem extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: foreground,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
@@ -1694,7 +2768,6 @@ class _NavItem extends StatelessWidget {
                   ),
                   child: Text(
                     badge,
-                    maxLines: 1,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.white,
@@ -1708,117 +2781,6 @@ class _NavItem extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _PlanCard extends StatelessWidget {
-  const _PlanCard({
-    required this.tier,
-    required this.packageCount,
-    required this.isUpgradeRunning,
-    required this.onUpgradePressed,
-  });
-  final String tier;
-  final int packageCount;
-  final bool isUpgradeRunning;
-  final VoidCallback onUpgradePressed;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(horizontal: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.amber.withValues(alpha: .09),
-        border: Border.all(color: AppTheme.amber.withValues(alpha: .22)),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(
-                Icons.workspace_premium_rounded,
-                color: AppTheme.amber,
-                size: 22,
-              ),
-              SizedBox(width: 12),
-              Text(
-                'SUBSCRIPTION',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '${_titleCase(tier)} plan',
-            style: const TextStyle(
-              color: AppTheme.amber,
-              fontWeight: FontWeight.w800,
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            '$packageCount of 10 packages used',
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          if (tier.toLowerCase() != 'pro') ...[
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: isUpgradeRunning ? null : onUpgradePressed,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppTheme.amber,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (isUpgradeRunning)
-                      const SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    else
-                      const Icon(Icons.bolt_rounded, size: 18),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        isUpgradeRunning
-                            ? 'UPGRADING...'
-                            : 'TEST UPGRADE TO PRO',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  String _titleCase(String value) {
-    final clean = value.trim().isEmpty ? 'free' : value.trim();
-    return '${clean[0].toUpperCase()}${clean.substring(1)}';
   }
 }
 
@@ -1850,7 +2812,6 @@ class _DateButton extends StatelessWidget {
               Flexible(
                 child: Text(
                   label,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: _dashText(context),
                     fontWeight: FontWeight.w700,
@@ -1880,49 +2841,54 @@ class _NotificationButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = count > 99 ? '99+' : count.toString();
+    final dashboard = context.findAncestorStateOfType<_DashboardState>();
     return Tooltip(
-      message: 'Notifications',
-      child: Container(
-        height: 46,
-        width: 46,
-        decoration: BoxDecoration(
-          color: _dashSurface(context),
-          border: Border.all(color: _dashBorder(context)),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.center,
-          children: [
-            Icon(
-              Icons.notifications_none_rounded,
-              color: _dashText(context),
-              size: 25,
-            ),
-            if (count > 0)
-              Positioned(
-                top: 6,
-                right: 6,
-                child: Container(
-                  constraints: const BoxConstraints(minWidth: 18),
-                  height: 18,
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: AppTheme.amber,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
+      message: 'Open installation requests',
+      child: InkWell(
+        onTap: dashboard?._showInstallationRequests,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          height: 46,
+          width: 46,
+          decoration: BoxDecoration(
+            color: _dashSurface(context),
+            border: Border.all(color: _dashBorder(context)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Icon(
+                Icons.notifications_none_rounded,
+                color: _dashText(context),
+                size: 25,
+              ),
+              if (count > 0)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 18),
+                    height: 18,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppTheme.amber,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1933,80 +2899,134 @@ class _ProfileChip extends StatelessWidget {
   const _ProfileChip({
     required this.providerName,
     required this.providerStatus,
-    this.expanded = false,
   });
 
   final String providerName;
   final String providerStatus;
-  final bool expanded;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: expanded ? double.infinity : 250,
-      constraints: const BoxConstraints(minHeight: 56),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: _dashSurface(context),
-        border: Border.all(color: _dashBorder(context)),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
-        children: [
-          Container(
-            height: 40,
-            width: 40,
-            decoration: BoxDecoration(
-              color: AppTheme.navy,
-              shape: BoxShape.circle,
-              border: Border.all(color: _dashSurface(context), width: 2),
-              boxShadow: [
-                BoxShadow(color: _dashShadow(context), blurRadius: 12),
-              ],
-            ),
-            child: Center(
-              child: Text(
-                _initials(providerName),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
+    final dashboard = context.findAncestorStateOfType<_DashboardState>();
+    return PopupMenuButton<_DashboardProfileAction>(
+      tooltip: 'Provider menu',
+      position: PopupMenuPosition.under,
+      onSelected: (action) {
+        switch (action) {
+          case _DashboardProfileAction.dashboard:
+            dashboard?._showDashboard();
+          case _DashboardProfileAction.packages:
+            dashboard?._showView(_ProviderDashView.packages);
+          case _DashboardProfileAction.coverage:
+            dashboard?._showView(_ProviderDashView.coverage);
+          case _DashboardProfileAction.signOut:
+            dashboard?._logoutProvider();
+        }
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem(
+          value: _DashboardProfileAction.dashboard,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.dashboard_outlined),
+            title: Text('Dashboard'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _DashboardProfileAction.packages,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.router_outlined),
+            title: Text('Packages'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _DashboardProfileAction.coverage,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.map_outlined),
+            title: Text('Coverage'),
+          ),
+        ),
+        PopupMenuDivider(),
+        PopupMenuItem(
+          value: _DashboardProfileAction.signOut,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.logout_rounded),
+            title: Text('Sign out'),
+          ),
+        ),
+      ],
+      child: Container(
+        width: 250,
+        constraints: const BoxConstraints(minHeight: 56),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: _dashSurface(context),
+          border: Border.all(color: _dashBorder(context)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              height: 40,
+              width: 40,
+              decoration: BoxDecoration(
+                color: AppTheme.navy,
+                shape: BoxShape.circle,
+                border: Border.all(color: _dashSurface(context), width: 2),
+                boxShadow: [
+                  BoxShadow(color: _dashShadow(context), blurRadius: 12),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  _initials(providerName),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  providerName,
-                  softWrap: true,
-                  style: TextStyle(
-                    color: _dashText(context),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 14,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    providerName,
+                    softWrap: true,
+                    style: TextStyle(
+                      color: _dashText(context),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  providerStatus,
-                  softWrap: true,
-                  style: TextStyle(color: _dashMuted(context), fontSize: 12),
-                ),
-              ],
+                  const SizedBox(height: 2),
+                  Text(
+                    providerStatus,
+                    softWrap: true,
+                    style: TextStyle(color: _dashMuted(context), fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: _dashText(context),
-            size: 20,
-          ),
-        ],
+            const SizedBox(width: 8),
+            Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: _dashText(context),
+              size: 20,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2031,6 +3051,21 @@ class _MetricGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
+        if (maxWidth < 620) {
+          final width = (maxWidth - 10) / 2;
+          return Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: metrics
+                .map(
+                  (metric) => SizedBox(
+                    width: width,
+                    child: _MetricCard(metric: metric),
+                  ),
+                )
+                .toList(),
+          );
+        }
         final columns = maxWidth >= 1300
             ? 5
             : maxWidth >= 900
@@ -2062,85 +3097,12 @@ class _MetricCard extends StatelessWidget {
   final _Metric metric;
   @override
   Widget build(BuildContext context) {
-    return _Surface(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _IconTile(icon: metric.icon),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  metric.title.toUpperCase(),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _dashMuted(context),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 11,
-                    letterSpacing: .65,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            metric.value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: _dashText(context),
-              fontWeight: FontWeight.w900,
-              fontSize: 28,
-              letterSpacing: -.7,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: (metric.positive ? AppTheme.green : Colors.red)
-                      .withValues(alpha: .1),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      metric.positive
-                          ? Icons.trending_up_rounded
-                          : Icons.trending_down_rounded,
-                      color: metric.positive ? AppTheme.green : Colors.red,
-                      size: 13,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      metric.trend,
-                      style: TextStyle(
-                        color: metric.positive ? AppTheme.green : Colors.red,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  metric.helper,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: _dashMuted(context), fontSize: 11),
-                ),
-              ),
-            ],
-          ),
-        ],
+    return OnaBlueprintCard(
+      child: OnaKpiTile(
+        label: metric.title,
+        value: metric.value,
+        icon: metric.icon,
+        helper: '${metric.trend} · ${metric.helper}',
       ),
     );
   }
@@ -2168,18 +3130,10 @@ class _RevenueCard extends StatelessWidget {
             subTitle: '(KES)',
             action: _SmallSelect(label: selectedMonth, onTap: onMonthPressed),
           ),
-          const SizedBox(height: 18),
-          SizedBox(
-            height: 250,
-            child: CustomPaint(
-              painter: _RevenueChartPainter(
-                points,
-                gridColor: _dashBorder(context),
-                axisColor: _dashMuted(context),
-                valueColor: _dashText(context),
-              ),
-              child: const SizedBox.expand(),
-            ),
+          const SizedBox(height: 8),
+          OnaGroupedBarChart(
+            values: points.map((point) => point.amount).toList(),
+            labels: points.map((point) => point.month).toList(),
           ),
           Divider(height: 26, color: _dashBorder(context)),
           Wrap(
@@ -2230,15 +3184,85 @@ class _RevenueCard extends StatelessWidget {
   }
 }
 
-class _PackagesCard extends StatelessWidget {
-  const _PackagesCard({
-    required this.packages,
-    required this.selectedMonth,
-    required this.onMonthPressed,
-  });
+enum _PackageSort { revenue, customers, growth }
+
+class _PackagesCard extends StatefulWidget {
+  const _PackagesCard({required this.packages});
   final List<_PackageRow> packages;
-  final String selectedMonth;
-  final VoidCallback onMonthPressed;
+
+  @override
+  State<_PackagesCard> createState() => _PackagesCardState();
+}
+
+class _PackagesCardState extends State<_PackagesCard> {
+  _PackageSort _sort = _PackageSort.revenue;
+
+  String get _sortLabel => switch (_sort) {
+    _PackageSort.revenue => 'Revenue',
+    _PackageSort.customers => 'Customers',
+    _PackageSort.growth => 'Growth',
+  };
+
+  double _number(String value) {
+    return double.tryParse(value.replaceAll(RegExp(r'[^0-9.-]'), '')) ?? 0;
+  }
+
+  List<_PackageRow> get _sortedPackages {
+    final sorted = [...widget.packages];
+    sorted.sort((a, b) {
+      final aValue = switch (_sort) {
+        _PackageSort.revenue => _number(a.revenue),
+        _PackageSort.customers => _number(a.users),
+        _PackageSort.growth => _number(a.growth),
+      };
+      final bValue = switch (_sort) {
+        _PackageSort.revenue => _number(b.revenue),
+        _PackageSort.customers => _number(b.users),
+        _PackageSort.growth => _number(b.growth),
+      };
+      return bValue.compareTo(aValue);
+    });
+    return sorted;
+  }
+
+  Future<void> _pickSort() async {
+    final selected = await showModalBottomSheet<_PackageSort>(
+      context: context,
+      backgroundColor: _dashSurface(context),
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: _PackageSort.values
+              .map(
+                (sort) => ListTile(
+                  leading: Icon(
+                    switch (sort) {
+                      _PackageSort.revenue =>
+                        Icons.account_balance_wallet_outlined,
+                      _PackageSort.customers => Icons.groups_outlined,
+                      _PackageSort.growth => Icons.trending_up_rounded,
+                    },
+                    color: sort == _sort ? AppTheme.amber : _dashMuted(context),
+                  ),
+                  title: Text(switch (sort) {
+                    _PackageSort.revenue => 'Sort by revenue',
+                    _PackageSort.customers => 'Sort by customers',
+                    _PackageSort.growth => 'Sort by growth',
+                  }),
+                  trailing: sort == _sort
+                      ? const Icon(Icons.check_rounded, color: AppTheme.amber)
+                      : null,
+                  onTap: () => Navigator.pop(context, sort),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+    if (selected != null && mounted) setState(() => _sort = selected);
+  }
+
   @override
   Widget build(BuildContext context) {
     return _Surface(
@@ -2250,10 +3274,7 @@ class _PackagesCard extends StatelessWidget {
             children: [
               _CardHeader(
                 title: 'Top Performing Packages',
-                action: _SmallSelect(
-                  label: selectedMonth,
-                  onTap: onMonthPressed,
-                ),
+                action: _SmallSelect(label: _sortLabel, onTap: _pickSort),
               ),
               const SizedBox(height: 14),
               if (!compact)
@@ -2266,10 +3287,10 @@ class _PackagesCard extends StatelessWidget {
                   ],
                   flexes: const [4, 2, 3, 2],
                 ),
-              if (packages.isEmpty)
+              if (widget.packages.isEmpty)
                 const _EmptyDashboardText(message: 'No packages saved yet.')
               else
-                ...packages.map(
+                ..._sortedPackages.map(
                   (package) => _PackageItem(package: package, compact: compact),
                 ),
               const SizedBox(height: 14),
@@ -2289,6 +3310,7 @@ class _PackageActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dashboard = context.findAncestorStateOfType<_DashboardState>();
     final viewButton = OutlinedButton(
       style: OutlinedButton.styleFrom(
         foregroundColor: _dashText(context),
@@ -2296,8 +3318,8 @@ class _PackageActions extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
       ),
-      onPressed: () {},
-      child: const Text('View all packages', overflow: TextOverflow.ellipsis),
+      onPressed: () => dashboard?._showView(_ProviderDashView.packages),
+      child: const Text('View all packages', softWrap: true),
     );
 
     final addButton = FilledButton.icon(
@@ -2307,9 +3329,9 @@ class _PackageActions extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
       ),
-      onPressed: () {},
+      onPressed: () => dashboard?._showView(_ProviderDashView.packages),
       icon: const Icon(Icons.add_rounded),
-      label: const Text('Add Package', overflow: TextOverflow.ellipsis),
+      label: const Text('Add Package', softWrap: true),
     );
 
     if (compact) {
@@ -2334,64 +3356,61 @@ class _LocationsCard extends StatelessWidget {
   final List<_LocationRow> locations;
   @override
   Widget build(BuildContext context) {
-    return _Surface(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _CardHeader(
-            title: 'Top Locations',
-            subTitle: '(By Active Users)',
+    final dashboard = context.findAncestorStateOfType<_DashboardState>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        OnaBlueprintCard(
+          title: 'Traffic by Top Coverage Areas',
+          action: IconButton(
+            onPressed: () => dashboard?._showView(_ProviderDashView.coverage),
+            tooltip: 'Open coverage areas',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.search_rounded, size: 18),
           ),
-          const SizedBox(height: 16),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final stacked = constraints.maxWidth < 620;
-              final map = SizedBox(
-                height: 230,
-                child: _CoverageMap(locations: locations),
-              );
-              final list = Column(
-                children: [
-                  if (locations.isEmpty)
-                    const _EmptyDashboardText(
-                      message: 'No coverage areas saved yet.',
-                    )
-                  else
-                    for (var i = 0; i < locations.length; i++)
-                      _LocationItem(index: i + 1, location: locations[i]),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: () {},
-                      iconAlignment: IconAlignment.end,
-                      icon: const Icon(Icons.arrow_forward_rounded, size: 16),
-                      label: const Text('View all coverage areas'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: _dashAccentText(context),
-                      ),
-                    ),
+          child: Column(
+            children: [
+              const OnaSegmentedTabs(
+                labels: ['All', 'Users', 'Revenue', 'Radius'],
+                selected: 0,
+                onSelected: _ignoreLocationTab,
+              ),
+              const SizedBox(height: 10),
+              if (locations.isEmpty)
+                const _EmptyDashboardText(
+                  message: 'No coverage areas saved yet.',
+                )
+              else
+                for (var index = 0; index < locations.length; index++)
+                  OnaRankedBar(
+                    label: locations[index].name,
+                    valueLabel:
+                        '${locations[index].users} users · ${locations[index].revenue}',
+                    fraction: locations[index].progress,
+                    icon: Icons.location_on_outlined,
                   ),
-                ],
-              );
-              if (stacked) {
-                return Column(
-                  children: [map, const SizedBox(height: 16), list],
-                );
-              }
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(flex: 5, child: map),
-                  const SizedBox(width: 24),
-                  Expanded(flex: 6, child: list),
-                ],
-              );
-            },
+            ],
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 12),
+        OnaBlueprintCard(
+          title: 'Coverage Areas (${locations.length})',
+          action: IconButton(
+            onPressed: () => dashboard?._showView(_ProviderDashView.coverage),
+            tooltip: 'More coverage options',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.more_vert_rounded, size: 18),
+          ),
+          child: SizedBox(
+            height: 250,
+            child: _CoverageMap(locations: locations),
+          ),
+        ),
+      ],
     );
   }
+
+  static void _ignoreLocationTab(int _) {}
 }
 
 class _CoverageMap extends StatelessWidget {
@@ -2692,6 +3711,7 @@ class _InstallationRequestsPageState extends State<_InstallationRequestsPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _TopBar(
+          pageTitle: 'Installation Requests',
           providerName: widget.providerName,
           providerStatus: widget.providerStatus,
           notificationCount: widget.notificationCount,
@@ -2700,7 +3720,7 @@ class _InstallationRequestsPageState extends State<_InstallationRequestsPage> {
           showMenuButton: widget.showMenuButton,
           onMenuPressed: widget.onMenuPressed,
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 14),
         _Surface(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2712,10 +3732,10 @@ class _InstallationRequestsPageState extends State<_InstallationRequestsPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Installation Requests',
+                        'Request overview',
                         style: TextStyle(
                           color: _dashText(context),
-                          fontSize: 24,
+                          fontSize: 17,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -2945,13 +3965,7 @@ class _DetailedRequestItem extends StatelessWidget {
         ? 'Not set'
         : _inboxDateLabel(request.createdAt!);
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _dashBackground(context),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _dashBorder(context)),
-      ),
+    return OnaBlueprintCard(
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 760;
@@ -2976,8 +3990,6 @@ class _DetailedRequestItem extends StatelessWidget {
                   children: [
                     Text(
                       customer,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: _dashText(context),
                         fontSize: 17,
@@ -2987,8 +3999,6 @@ class _DetailedRequestItem extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       'Customer ID: ${request.userId.isEmpty ? 'Not set' : request.userId}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: _dashMuted(context),
                         fontSize: 12,
@@ -3155,8 +4165,6 @@ class _RequestDetailTile extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: _dashMuted(context),
                     fontSize: 11,
@@ -3295,6 +4303,7 @@ class _ReviewsCard extends StatelessWidget {
   final List<_ReviewRow> reviews;
   @override
   Widget build(BuildContext context) {
+    final dashboard = context.findAncestorStateOfType<_DashboardState>();
     return _Surface(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3302,7 +4311,7 @@ class _ReviewsCard extends StatelessWidget {
           _SectionTitle(
             title: 'Recent Reviews',
             trailing: TextButton(
-              onPressed: () {},
+              onPressed: () => dashboard?._showView(_ProviderDashView.reviews),
               style: TextButton.styleFrom(
                 foregroundColor: _dashAccentText(context),
               ),
@@ -3378,22 +4387,7 @@ class _Surface extends StatelessWidget {
   final Widget child;
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: _dashSurface(context),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _dashBorder(context)),
-        boxShadow: [
-          BoxShadow(
-            color: _dashShadow(context),
-            blurRadius: 26,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: child,
-    );
+    return OnaBlueprintCard(child: child);
   }
 }
 
@@ -3514,7 +4508,6 @@ class _PackageItem extends StatelessWidget {
                       Expanded(
                         child: Text(
                           package.name,
-                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: _dashText(context),
                             fontWeight: FontWeight.w800,
@@ -3572,7 +4565,6 @@ class _PackageItem extends StatelessWidget {
                 Expanded(
                   child: Text(
                     package.name,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: _dashText(context),
                       fontWeight: FontWeight.w800,
@@ -3587,79 +4579,6 @@ class _PackageItem extends StatelessWidget {
           Expanded(
             flex: 2,
             child: _Growth(value: package.growth, positive: package.positive),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LocationItem extends StatelessWidget {
-  const _LocationItem({required this.index, required this.location});
-  final int index;
-  final _LocationRow location;
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 24,
-            child: Text(
-              '$index',
-              style: TextStyle(
-                color: _dashText(context),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          Expanded(
-            flex: 4,
-            child: Text(
-              location.name,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: _dashText(context),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          Expanded(
-            flex: 5,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  location.users,
-                  style: TextStyle(color: _dashMuted(context), fontSize: 12),
-                ),
-                const SizedBox(height: 5),
-                FractionallySizedBox(
-                  widthFactor: location.progress,
-                  child: Container(
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: AppTheme.amber,
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          SizedBox(
-            width: 100,
-            child: Text(
-              location.revenue,
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: _dashText(context),
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
-            ),
           ),
         ],
       ),
@@ -3877,24 +4796,16 @@ class _RequestActionButtons extends StatelessWidget {
 }
 
 class _PackageEditorDialog extends StatefulWidget {
-  const _PackageEditorDialog({this.package});
-
-  final Map<String, dynamic>? package;
+  const _PackageEditorDialog();
 
   @override
   State<_PackageEditorDialog> createState() => _PackageEditorDialogState();
 }
 
 class _PackageEditorDialogState extends State<_PackageEditorDialog> {
-  late final TextEditingController _name = TextEditingController(
-    text: widget.package?['package_name']?.toString(),
-  );
-  late final TextEditingController _speed = TextEditingController(
-    text: widget.package?['speed_mbps']?.toString(),
-  );
-  late final TextEditingController _price = TextEditingController(
-    text: widget.package?['monthly_price']?.toString(),
-  );
+  final TextEditingController _name = TextEditingController();
+  final TextEditingController _speed = TextEditingController();
+  final TextEditingController _price = TextEditingController();
   String? _error;
 
   @override
@@ -3916,19 +4827,17 @@ class _PackageEditorDialogState extends State<_PackageEditorDialog> {
       'package_name': _name.text.trim(),
       'speed_mbps': speedValue,
       'monthly_price': priceValue,
-      if (widget.package == null) ...{
-        'installation_fee': 0,
-        'billing_cycle': 'monthly',
-        'contract_type': 'no_contract',
-        'router_included': false,
-      },
+      'installation_fee': 0,
+      'billing_cycle': 'monthly',
+      'contract_type': 'no_contract',
+      'router_included': false,
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.package == null ? 'Add package' : 'Edit package'),
+      title: const Text('Add package'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -3968,25 +4877,1222 @@ class _PackageEditorDialogState extends State<_PackageEditorDialog> {
   }
 }
 
+class _PackageCardGrid extends StatelessWidget {
+  const _PackageCardGrid({
+    required this.items,
+    required this.onSave,
+    required this.onDelete,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final Future<void> Function(
+    Map<String, dynamic> item,
+    Map<String, dynamic> payload,
+  )
+  onSave;
+  final Future<void> Function(Map<String, dynamic> item) onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 920
+            ? 3
+            : constraints.maxWidth >= 600
+            ? 2
+            : 1;
+        final cardWidth =
+            (constraints.maxWidth - ((columns - 1) * 16)) / columns;
+
+        return Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: items
+              .map(
+                (item) => SizedBox(
+                  width: cardWidth,
+                  child: _PackageFlipCard(
+                    key: ValueKey(item['id']),
+                    item: item,
+                    onSave: (payload) => onSave(item, payload),
+                    onDelete: () => onDelete(item),
+                  ),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+}
+
+class _PackageFlipCard extends StatefulWidget {
+  const _PackageFlipCard({
+    super.key,
+    required this.item,
+    required this.onSave,
+    required this.onDelete,
+  });
+
+  final Map<String, dynamic> item;
+  final Future<void> Function(Map<String, dynamic> payload) onSave;
+  final Future<void> Function() onDelete;
+
+  @override
+  State<_PackageFlipCard> createState() => _PackageFlipCardState();
+}
+
+class _PackageFlipCardState extends State<_PackageFlipCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _flip = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  );
+  late final Animation<double> _turn = CurvedAnimation(
+    parent: _flip,
+    curve: Curves.easeInOutCubic,
+  );
+  late final TextEditingController _name = TextEditingController(
+    text: widget.item['package_name']?.toString() ?? '',
+  );
+  late final TextEditingController _speed = TextEditingController(
+    text: widget.item['speed_mbps']?.toString() ?? '',
+  );
+  late final TextEditingController _price = TextEditingController(
+    text: widget.item['monthly_price']?.toString() ?? '',
+  );
+  String? _error;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _flip.dispose();
+    _name.dispose();
+    _speed.dispose();
+    _price.dispose();
+    super.dispose();
+  }
+
+  void _showEditor() {
+    if (!_flip.isAnimating) _flip.forward();
+  }
+
+  void _closeEditor() {
+    if (_flip.isAnimating) return;
+    _name.text = widget.item['package_name']?.toString() ?? '';
+    _speed.text = widget.item['speed_mbps']?.toString() ?? '';
+    _price.text = widget.item['monthly_price']?.toString() ?? '';
+    setState(() => _error = null);
+    _flip.reverse();
+  }
+
+  Future<void> _save() async {
+    final speed = int.tryParse(_speed.text.trim());
+    final price = double.tryParse(_price.text.trim().replaceAll(',', ''));
+    if (_name.text.trim().isEmpty ||
+        speed == null ||
+        speed <= 0 ||
+        price == null ||
+        price < 0) {
+      setState(() {
+        _error = 'Enter a valid name, speed, and monthly price.';
+      });
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave({
+        'package_name': _name.text.trim(),
+        'speed_mbps': speed,
+        'monthly_price': price,
+      });
+      if (mounted) await _flip.reverse();
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  String _money(Object? value) {
+    final amount = num.tryParse(value?.toString() ?? '') ?? 0;
+    if (amount == amount.roundToDouble()) {
+      return amount.toInt().toString();
+    }
+    return amount.toStringAsFixed(2);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _turn,
+      builder: (context, _) {
+        final angle = _turn.value * math.pi;
+        final showingFront = angle < math.pi / 2;
+        final transform = Matrix4.identity()
+          ..setEntry(3, 2, 0.0015)
+          ..rotateY(angle);
+
+        return Transform(
+          alignment: Alignment.center,
+          transform: transform,
+          child: showingFront
+              ? _front(context)
+              : Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.rotationY(math.pi),
+                  child: _back(context),
+                ),
+        );
+      },
+    );
+  }
+
+  Widget _shell({
+    required BuildContext context,
+    required Widget child,
+    required List<Color> colors,
+  }) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      height: 310,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: colors.last,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: dark
+              ? Colors.white.withValues(alpha: .11)
+              : Colors.black.withValues(alpha: .07),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: dark ? .28 : .12),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _front(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = dark ? Colors.white : const Color(0xFF17202A);
+    final muted = textColor.withValues(alpha: .64);
+    final routerIncluded = widget.item['router_included'] == true;
+    final installation = _money(widget.item['installation_fee']);
+
+    return Semantics(
+      button: true,
+      label: 'Edit ${widget.item['package_name']} package',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _showEditor,
+          child: _shell(
+            context: context,
+            colors: dark
+                ? const [Color(0xFF211A33), Color(0xFF151121)]
+                : const [AppTheme.amberLight, AppTheme.white],
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(22),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppTheme.amber.withValues(alpha: .16),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Icon(
+                              Icons.wifi_rounded,
+                              color: AppTheme.amber,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: 'Delete package',
+                            onPressed: widget.onDelete,
+                            color: muted,
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        widget.item['package_name']?.toString() ?? 'Package',
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        '${widget.item['speed_mbps'] ?? 0} Mbps',
+                        style: const TextStyle(
+                          color: AppTheme.amber,
+                          fontSize: 27,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const Spacer(),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text:
+                                        'KES ${_money(widget.item['monthly_price'])}',
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  TextSpan(
+                                    text: ' / month',
+                                    style: TextStyle(
+                                      color: muted,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            routerIncluded
+                                ? Icons.router_rounded
+                                : Icons.router_outlined,
+                            size: 19,
+                            color: muted,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            routerIncluded ? 'Router included' : 'No router',
+                            style: TextStyle(color: muted, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 13),
+                      Divider(color: textColor.withValues(alpha: .09)),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              installation == '0'
+                                  ? 'Free installation'
+                                  : 'KES $installation installation',
+                              style: TextStyle(
+                                color: muted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Icon(Icons.touch_app_rounded, size: 15, color: muted),
+                          const SizedBox(width: 5),
+                          Text(
+                            'Tap to edit',
+                            style: TextStyle(
+                              color: muted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _back(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = dark ? Colors.white : const Color(0xFF17202A);
+    final fill = dark
+        ? Colors.black.withValues(alpha: .18)
+        : Colors.white.withValues(alpha: .78);
+    InputDecoration fieldDecoration(String label, {String? suffix}) {
+      return InputDecoration(
+        labelText: label,
+        suffixText: suffix,
+        filled: true,
+        fillColor: fill,
+        isDense: true,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      );
+    }
+
+    return _shell(
+      context: context,
+      colors: dark
+          ? const [Color(0xFF251C38), Color(0xFF171220)]
+          : const [AppTheme.amberLight, AppTheme.offWhite],
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.edit_rounded, color: AppTheme.amber, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Edit package',
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Cancel editing',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _saving ? null : _closeEditor,
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            TextField(
+              controller: _name,
+              enabled: !_saving,
+              textInputAction: TextInputAction.next,
+              decoration: fieldDecoration('Package name'),
+            ),
+            const SizedBox(height: 9),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _speed,
+                    enabled: !_saving,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                    decoration: fieldDecoration('Speed', suffix: 'Mbps'),
+                  ),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: TextField(
+                    controller: _price,
+                    enabled: !_saving,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: fieldDecoration('Price', suffix: 'KES'),
+                  ),
+                ),
+              ],
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 7),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 11),
+                ),
+              ),
+            const Spacer(),
+            FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.amber,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(45),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: _saving
+                  ? const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.check_rounded),
+              label: Text(_saving ? 'Saving...' : 'Save changes'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardCoverageEditor extends StatefulWidget {
+  const _DashboardCoverageEditor();
+
+  @override
+  State<_DashboardCoverageEditor> createState() =>
+      _DashboardCoverageEditorState();
+}
+
+class _DashboardCoverageEditorState extends State<_DashboardCoverageEditor> {
+  static const _defaultCenter = LatLng(-1.286389, 36.817223);
+
+  final _mapController = MapController();
+  final _searchController = TextEditingController();
+  final _nameController = TextEditingController();
+  Timer? _searchDebounce;
+  LatLng _center = _defaultCenter;
+  double _radiusKm = 3;
+  bool _hasSelection = false;
+  bool _searching = false;
+  bool _locating = false;
+  List<LocationSuggestion> _suggestions = const [];
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _search(String value) {
+    _searchDebounce?.cancel();
+    final query = value.trim();
+    if (query.length < 2) {
+      setState(() {
+        _suggestions = const [];
+        _searching = false;
+      });
+      return;
+    }
+    setState(() => _searching = true);
+    _searchDebounce = Timer(const Duration(milliseconds: 450), () async {
+      final results = await Location.searchAreas(query);
+      if (!mounted || _searchController.text.trim() != query) return;
+      setState(() {
+        _suggestions = results;
+        _searching = false;
+      });
+    });
+  }
+
+  void _selectSuggestion(LocationSuggestion suggestion) {
+    final point = LatLng(suggestion.latitude, suggestion.longitude);
+    _searchController.text = suggestion.displayName;
+    _nameController.text = suggestion.title;
+    setState(() {
+      _center = point;
+      _hasSelection = true;
+      _suggestions = const [];
+    });
+    _mapController.move(point, _zoomForRadius(_radiusKm));
+  }
+
+  Future<void> _useCurrentLocation() async {
+    if (_locating) return;
+    setState(() => _locating = true);
+    final location = await Location.getCurrentLocation();
+    if (!mounted) return;
+    setState(() => _locating = false);
+    if (location == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not access your current location.'),
+        ),
+      );
+      return;
+    }
+    final point = LatLng(location.latitude, location.longitude);
+    final areaName = location.area?.trim();
+    _nameController.text = areaName == null || areaName.isEmpty
+        ? 'My service area'
+        : areaName;
+    _searchController.text = _nameController.text;
+    setState(() {
+      _center = point;
+      _hasSelection = true;
+      _suggestions = const [];
+    });
+    _mapController.move(point, _zoomForRadius(_radiusKm));
+  }
+
+  void _selectMapPoint(LatLng point) {
+    if (_nameController.text.trim().isEmpty) {
+      _nameController.text = _searchController.text.trim().isEmpty
+          ? 'Selected service area'
+          : _searchController.text.trim();
+    }
+    setState(() {
+      _center = point;
+      _hasSelection = true;
+      _suggestions = const [];
+    });
+  }
+
+  double _zoomForRadius(double radius) {
+    if (radius <= 2) return 14;
+    if (radius <= 5) return 13;
+    if (radius <= 12) return 12;
+    if (radius <= 25) return 11;
+    return 10;
+  }
+
+  void _save() {
+    final name = _nameController.text.trim();
+    if (!_hasSelection || name.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Choose a map location and enter an area name.'),
+        ),
+      );
+      return;
+    }
+    Navigator.pop(context, <String, dynamic>{
+      'area_name': name,
+      'latitude': _center.latitude,
+      'longitude': _center.longitude,
+      'radius_km': _radiusKm,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final panel = dark ? const Color(0xFF0D2231) : Colors.white;
+    final border = _dashBorder(context);
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(16),
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 820),
+        child: Material(
+          color: panel,
+          borderRadius: BorderRadius.circular(24),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: dark
+                        ? const [Color(0xFF17364A), Color(0xFF0D2231)]
+                        : const [AppTheme.amberLight, AppTheme.white],
+                  ),
+                  border: Border(bottom: BorderSide(color: border)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppTheme.amber.withValues(alpha: .15),
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: const Icon(
+                        Icons.add_location_alt_rounded,
+                        color: AppTheme.amber,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Add Coverage Area',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          Text(
+                            'Search, position the map and define your service radius',
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: _searchController,
+                        onChanged: _search,
+                        decoration: InputDecoration(
+                          labelText: 'Search town, estate or landmark',
+                          prefixIcon: const Icon(Icons.search_rounded),
+                          suffixIcon: _searching
+                              ? const Padding(
+                                  padding: EdgeInsets.all(14),
+                                  child: SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              : IconButton(
+                                  tooltip: 'Use current location',
+                                  onPressed: _locating
+                                      ? null
+                                      : _useCurrentLocation,
+                                  icon: _locating
+                                      ? const SizedBox.square(
+                                          dimension: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.my_location_rounded),
+                                ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                      if (_suggestions.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: border),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Column(
+                            children: _suggestions
+                                .map(
+                                  (suggestion) => ListTile(
+                                    dense: true,
+                                    leading: const Icon(
+                                      Icons.location_on_outlined,
+                                      color: AppTheme.amber,
+                                    ),
+                                    title: Text(suggestion.title),
+                                    subtitle: suggestion.subtitle.isEmpty
+                                        ? null
+                                        : Text(suggestion.subtitle),
+                                    onTap: () => _selectSuggestion(suggestion),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: SizedBox(
+                          height: 330,
+                          child: FlutterMap(
+                            mapController: _mapController,
+                            options: MapOptions(
+                              initialCenter: _center,
+                              initialZoom: 11,
+                              onTap: (_, point) => _selectMapPoint(point),
+                            ),
+                            children: [
+                              TileLayer(
+                                urlTemplate:
+                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName:
+                                    'com.onanet.provider.dashboard',
+                              ),
+                              if (_hasSelection)
+                                CircleLayer(
+                                  circles: [
+                                    CircleMarker(
+                                      point: _center,
+                                      radius: _radiusKm * 1000,
+                                      useRadiusInMeter: true,
+                                      color: AppTheme.amber.withValues(
+                                        alpha: .18,
+                                      ),
+                                      borderColor: AppTheme.amber,
+                                      borderStrokeWidth: 2,
+                                    ),
+                                  ],
+                                ),
+                              if (_hasSelection)
+                                MarkerLayer(
+                                  markers: [
+                                    Marker(
+                                      point: _center,
+                                      width: 48,
+                                      height: 48,
+                                      child: const Icon(
+                                        Icons.location_pin,
+                                        color: AppTheme.amber,
+                                        size: 46,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: _nameController,
+                        decoration: InputDecoration(
+                          labelText: 'Public coverage area name',
+                          prefixIcon: const Icon(Icons.label_outline_rounded),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                        decoration: BoxDecoration(
+                          color: AppTheme.amber.withValues(alpha: .08),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: AppTheme.amber.withValues(alpha: .2),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.radar_rounded,
+                                  color: AppTheme.amber,
+                                ),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text(
+                                    'Coverage radius',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '${_radiusKm.toStringAsFixed(0)} km',
+                                  style: const TextStyle(
+                                    color: AppTheme.amber,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Slider(
+                              value: _radiusKm,
+                              min: 1,
+                              max: 50,
+                              divisions: 49,
+                              activeColor: AppTheme.amber,
+                              label: '${_radiusKm.toStringAsFixed(0)} km',
+                              onChanged: (value) {
+                                setState(() => _radiusKm = value);
+                                if (_hasSelection) {
+                                  _mapController.move(
+                                    _center,
+                                    _zoomForRadius(value),
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: panel,
+                  border: Border(top: BorderSide(color: border)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 10),
+                    FilledButton.icon(
+                      onPressed: _save,
+                      icon: const Icon(Icons.check_rounded),
+                      label: const Text('Add coverage'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardCoverageAreas extends StatelessWidget {
+  const _DashboardCoverageAreas({required this.items, required this.onDelete});
+
+  final List<Map<String, dynamic>> items;
+  final Future<void> Function(Map<String, dynamic> item) onDelete;
+
+  double? _number(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final valid = items.where((item) {
+      return _number(item['latitude']) != null &&
+          _number(item['longitude']) != null;
+    }).toList();
+    final points = valid
+        .map(
+          (item) =>
+              LatLng(_number(item['latitude'])!, _number(item['longitude'])!),
+        )
+        .toList();
+    final center = points.isEmpty
+        ? const LatLng(-1.286389, 36.817223)
+        : LatLng(
+            points.map((point) => point.latitude).reduce((a, b) => a + b) /
+                points.length,
+            points.map((point) => point.longitude).reduce((a, b) => a + b) /
+                points.length,
+          );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: SizedBox(
+            height: 320,
+            child: FlutterMap(
+              key: ValueKey(
+                items.map((item) => item['id']?.toString()).join('|'),
+              ),
+              options: MapOptions(
+                initialCenter: center,
+                initialZoom: points.length <= 1 ? 12 : 9,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.onanet.provider.dashboard',
+                ),
+                CircleLayer(
+                  circles: valid.map((item) {
+                    return CircleMarker(
+                      point: LatLng(
+                        _number(item['latitude'])!,
+                        _number(item['longitude'])!,
+                      ),
+                      radius: (_number(item['radius_km']) ?? 3) * 1000,
+                      useRadiusInMeter: true,
+                      color: AppTheme.amber.withValues(alpha: .14),
+                      borderColor: AppTheme.amber,
+                      borderStrokeWidth: 1.5,
+                    );
+                  }).toList(),
+                ),
+                MarkerLayer(
+                  markers: valid.asMap().entries.map((entry) {
+                    final item = entry.value;
+                    return Marker(
+                      point: LatLng(
+                        _number(item['latitude'])!,
+                        _number(item['longitude'])!,
+                      ),
+                      width: 38,
+                      height: 38,
+                      child: Container(
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppTheme.navy,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: .2),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          '${entry.key + 1}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = constraints.maxWidth >= 850
+                ? 3
+                : constraints.maxWidth >= 540
+                ? 2
+                : 1;
+            final width =
+                (constraints.maxWidth - ((columns - 1) * 12)) / columns;
+            return Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: items.asMap().entries.map((entry) {
+                final item = entry.value;
+                final latitude = _number(item['latitude']);
+                final longitude = _number(item['longitude']);
+                final radius = _number(item['radius_km']) ?? 3;
+                final areaName =
+                    item['area_name']?.toString().trim().isNotEmpty == true
+                    ? item['area_name'].toString().trim()
+                    : 'Coverage area';
+                return SizedBox(
+                  width: width,
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: _dashSurface(context),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: _dashBorder(context)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _dashShadow(context),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 19,
+                              backgroundColor: AppTheme.amber.withValues(
+                                alpha: .12,
+                              ),
+                              child: const Icon(
+                                Icons.location_on_rounded,
+                                color: AppTheme.amber,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                areaName,
+                                softWrap: true,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Remove coverage area',
+                              onPressed: () => onDelete(item),
+                              icon: const Icon(Icons.delete_outline_rounded),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.amber.withValues(alpha: .09),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.radar_rounded,
+                                    size: 16,
+                                    color: AppTheme.amber,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${radius.toStringAsFixed(radius % 1 == 0 ? 0 : 1)} km radius',
+                                    style: const TextStyle(
+                                      color: AppTheme.amberDark,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.green.withValues(alpha: .09),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.check_circle_rounded,
+                                    size: 15,
+                                    color: AppTheme.green,
+                                  ),
+                                  SizedBox(width: 5),
+                                  Text(
+                                    'Active',
+                                    style: TextStyle(
+                                      color: AppTheme.green,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(11),
+                          decoration: BoxDecoration(
+                            color: _dashBackground(context),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.near_me_outlined,
+                                size: 17,
+                                color: _dashMuted(context),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Your service coverage is centered around $areaName.',
+                                  softWrap: true,
+                                  style: TextStyle(
+                                    color: _dashMuted(context),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (latitude != null && longitude != null) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: () => _openMapLocation(
+                                context,
+                                'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude',
+                              ),
+                              icon: const Icon(Icons.map_outlined, size: 17),
+                              label: const Text('Open on map'),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
 class _ProviderSectionPage extends StatefulWidget {
   const _ProviderSectionPage({
     required this.view,
     required this.providerId,
+    required this.subscriptionTier,
     required this.providerName,
     required this.providerStatus,
     required this.requests,
     required this.showMenuButton,
     required this.onMenuPressed,
+    required this.onViewChanged,
     required this.onChanged,
   });
 
   final _ProviderDashView view;
   final String providerId;
+  final String subscriptionTier;
   final String providerName;
   final String providerStatus;
   final List<ProviderInboxItem> requests;
   final bool showMenuButton;
   final VoidCallback onMenuPressed;
+  final ValueChanged<_ProviderDashView> onViewChanged;
   final VoidCallback onChanged;
 
   @override
@@ -3996,6 +6102,15 @@ class _ProviderSectionPage extends StatefulWidget {
 class _ProviderSectionPageState extends State<_ProviderSectionPage> {
   final _service = AuthService();
   late Future<List<Map<String, dynamic>>> _items = _load();
+  bool _isAddingPackage = false;
+  bool _isRefreshing = false;
+
+  int? get _coverageAreaLimit =>
+      switch (widget.subscriptionTier.trim().toLowerCase()) {
+        'pro' => null,
+        'growth' => 5,
+        _ => 3,
+      };
 
   Future<List<Map<String, dynamic>>> _load() {
     return switch (widget.view) {
@@ -4026,8 +6141,35 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
   }
 
   void _reload() {
+    if (!mounted) return;
     setState(() => _items = _load());
     widget.onChanged();
+  }
+
+  Future<void> _refreshItems({bool showConfirmation = false}) async {
+    if (_isRefreshing || !mounted) return;
+    final nextItems = _load();
+    setState(() {
+      _isRefreshing = true;
+      _items = nextItems;
+    });
+    try {
+      await nextItems;
+      if (!mounted) return;
+      widget.onChanged();
+      if (showConfirmation) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('Packages refreshed.'),
+          ),
+        );
+      }
+    } catch (_) {
+      // The FutureBuilder below presents the request error with a retry action.
+    } finally {
+      if (mounted) setState(() => _isRefreshing = false);
+    }
   }
 
   String get _title => switch (widget.view) {
@@ -4039,33 +6181,97 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
     _ => 'Provider Workspace',
   };
 
-  Future<void> _packageDialog([Map<String, dynamic>? item]) async {
+  Future<void> _pickSection() async {
+    const sections = [
+      (_ProviderDashView.packages, 'Packages', Icons.router_outlined),
+      (_ProviderDashView.coverage, 'Coverage Areas', Icons.map_outlined),
+      (_ProviderDashView.customers, 'Customers', Icons.people_outline_rounded),
+      (_ProviderDashView.reviews, 'Reviews', Icons.star_border_rounded),
+      (_ProviderDashView.messages, 'Messages', Icons.mail_outline_rounded),
+    ];
+    final selected = await showModalBottomSheet<_ProviderDashView>(
+      context: context,
+      backgroundColor: _dashSurface(context),
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 12),
+          children: sections
+              .map(
+                (section) => ListTile(
+                  leading: Icon(
+                    section.$3,
+                    color: section.$1 == widget.view
+                        ? AppTheme.amber
+                        : _dashMuted(context),
+                  ),
+                  title: Text(
+                    section.$2,
+                    style: TextStyle(
+                      fontWeight: section.$1 == widget.view
+                          ? FontWeight.w900
+                          : FontWeight.w700,
+                    ),
+                  ),
+                  trailing: section.$1 == widget.view
+                      ? const Icon(Icons.check_rounded, color: AppTheme.amber)
+                      : null,
+                  onTap: () => Navigator.pop(context, section.$1),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+    if (selected != null && mounted) widget.onViewChanged(selected);
+  }
+
+  Future<void> _addPackage() async {
+    if (_isAddingPackage) return;
     final payload = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _PackageEditorDialog(package: item),
+      builder: (_) => const _PackageEditorDialog(),
     );
-    if (payload == null) return;
+    if (payload == null || !mounted) return;
+    setState(() => _isAddingPackage = true);
     try {
-      if (item == null) {
-        await _service.submitProviderPackage(
-          providerId: widget.providerId,
-          payload: payload,
-        );
-      } else {
-        await _service.updateProviderPackage(
-          widget.providerId,
-          item['id'].toString(),
-          payload,
-        );
-      }
-      _reload();
+      await _service.submitProviderPackage(
+        providerId: widget.providerId,
+        payload: payload,
+      );
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      await _refreshItems();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Package added.'),
+        ),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
+    } finally {
+      if (mounted) setState(() => _isAddingPackage = false);
     }
+  }
+
+  Future<void> _savePackageEdits(
+    Map<String, dynamic> item,
+    Map<String, dynamic> payload,
+  ) async {
+    await _service.updateProviderPackage(
+      widget.providerId,
+      item['id'].toString(),
+      payload,
+    );
+    if (!mounted) return;
+    _reload();
   }
 
   Future<void> _deletePackage(Map<String, dynamic> item) async {
@@ -4088,13 +6294,22 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
         ],
       ),
     );
-    if (yes != true) return;
+    if (yes != true || !mounted) return;
     try {
       await _service.deleteProviderPackage(
         widget.providerId,
         item['id'].toString(),
       );
-      _reload();
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      await _refreshItems();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Package deleted.'),
+        ),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -4105,29 +6320,13 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
   }
 
   Future<void> _addCoverage(List<Map<String, dynamic>> existing) async {
-    final name = TextEditingController();
-    final value = await showDialog<String>(
+    final area = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add coverage area'),
-        content: TextField(
-          controller: name,
-          decoration: const InputDecoration(labelText: 'Area name'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, name.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (_) => const _DashboardCoverageEditor(),
     );
-    name.dispose();
-    if (value == null || value.isEmpty) return;
+    if (area == null || !mounted) return;
+
     final areas = [
       ...existing.map(
         (e) => {
@@ -4137,14 +6336,22 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
           'radius_km': e['radius_km'],
         },
       ),
-      {'area_name': value, 'latitude': 0.0, 'longitude': 0.0, 'radius_km': 5.0},
+      area,
     ];
     try {
       await _service.submitProviderCoverageAreas(
         providerId: widget.providerId,
         payload: {'coverage_areas': areas},
       );
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       _reload();
+      messenger.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('${area['area_name']} coverage added.'),
+        ),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -4154,17 +6361,85 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
     }
   }
 
+  Future<void> _deleteCoverage(
+    List<Map<String, dynamic>> existing,
+    Map<String, dynamic> item,
+  ) async {
+    final areaName = item['area_name']?.toString() ?? 'this area';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove coverage area?'),
+        content: Text('Remove $areaName from your provider coverage?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final remaining = existing
+        .where((area) => area['id']?.toString() != item['id']?.toString())
+        .map(
+          (area) => {
+            'area_name': area['area_name'],
+            'latitude': area['latitude'],
+            'longitude': area['longitude'],
+            'radius_km': area['radius_km'],
+          },
+        )
+        .toList();
+    if (remaining.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('A provider must keep at least one coverage area.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      await _service.submitProviderCoverageAreas(
+        providerId: widget.providerId,
+        payload: {'coverage_areas': remaining},
+      );
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      _reload();
+      messenger.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('$areaName removed.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _TopBar(
+          pageTitle: _title,
           providerName: widget.providerName,
           providerStatus: widget.providerStatus,
           notificationCount: 0,
           dateRangeLabel: _title,
-          onDateRangePressed: () {},
+          onDateRangePressed: _pickSection,
           showMenuButton: widget.showMenuButton,
           onMenuPressed: widget.onMenuPressed,
         ),
@@ -4177,29 +6452,74 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 10,
+                    runSpacing: 10,
                     children: [
-                      Expanded(
-                        child: Text(
-                          _title,
-                          style: TextStyle(
-                            color: _dashText(context),
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                          ),
+                      Text(
+                        '${items.length} ${_title.toLowerCase()}',
+                        softWrap: true,
+                        style: TextStyle(
+                          color: _dashMuted(context),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      if (widget.view == _ProviderDashView.packages)
-                        FilledButton.icon(
-                          onPressed: () => _packageDialog(),
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add package'),
+                      if (widget.view == _ProviderDashView.packages) ...[
+                        IconButton.filledTonal(
+                          tooltip: 'Refresh packages',
+                          onPressed: _isRefreshing
+                              ? null
+                              : () {
+                                  _refreshItems(showConfirmation: true);
+                                },
+                          icon: _isRefreshing
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.refresh_rounded),
                         ),
+                        const SizedBox(width: 10),
+                        FilledButton.icon(
+                          onPressed: _isAddingPackage
+                              ? null
+                              : () {
+                                  _addPackage();
+                                },
+                          icon: _isAddingPackage
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.add),
+                          label: Text(
+                            _isAddingPackage ? 'Adding...' : 'Add package',
+                          ),
+                        ),
+                      ],
                       if (widget.view == _ProviderDashView.coverage)
                         FilledButton.icon(
-                          onPressed: () => _addCoverage(items),
+                          onPressed:
+                              _coverageAreaLimit != null &&
+                                  items.length >= _coverageAreaLimit!
+                              ? null
+                              : () => _addCoverage(items),
                           icon: const Icon(Icons.add_location_alt),
-                          label: const Text('Add area'),
+                          label: Text(
+                            _coverageAreaLimit == null
+                                ? 'Add area'
+                                : '${items.length}/$_coverageAreaLimit areas',
+                          ),
                         ),
                     ],
                   ),
@@ -4207,21 +6527,54 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
                   if (snapshot.connectionState == ConnectionState.waiting)
                     const Center(child: CircularProgressIndicator())
                   else if (snapshot.hasError)
-                    Text(
-                      snapshot.error.toString(),
-                      style: const TextStyle(color: Colors.red),
+                    Column(
+                      children: [
+                        Text(
+                          snapshot.error.toString(),
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            _refreshItems();
+                          },
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Try again'),
+                        ),
+                      ],
                     )
                   else if (items.isEmpty)
                     Text(
                       'No ${_title.toLowerCase()} yet.',
                       style: TextStyle(color: _dashMuted(context)),
                     )
+                  else if (widget.view == _ProviderDashView.packages)
+                    _PackageCardGrid(
+                      items: items,
+                      onSave: _savePackageEdits,
+                      onDelete: _deletePackage,
+                    )
+                  else if (widget.view == _ProviderDashView.coverage)
+                    _DashboardCoverageAreas(
+                      items: items,
+                      onDelete: (item) => _deleteCoverage(items, item),
+                    )
                   else
                     ...items.map(
                       (item) => widget.view == _ProviderDashView.customers
                           ? _ProviderCustomerCard(item: item)
                           : Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              color: _dashSurface(context),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                side: BorderSide(color: _dashBorder(context)),
+                              ),
                               child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
                                 leading: Icon(
                                   widget.view == _ProviderDashView.reviews
                                       ? Icons.star
@@ -4234,24 +6587,15 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
                                 title: Text(_itemTitle(item)),
                                 subtitle: Text(_itemSubtitle(item)),
                                 trailing:
-                                    widget.view == _ProviderDashView.packages
-                                    ? Wrap(
-                                        children: [
-                                          IconButton(
-                                            onPressed: () =>
-                                                _packageDialog(item),
-                                            icon: const Icon(
-                                              Icons.edit_outlined,
-                                            ),
-                                          ),
-                                          IconButton(
-                                            onPressed: () =>
-                                                _deletePackage(item),
-                                            icon: const Icon(
-                                              Icons.delete_outline,
-                                            ),
-                                          ),
-                                        ],
+                                    widget.view == _ProviderDashView.coverage
+                                    ? IconButton(
+                                        tooltip: 'Remove coverage area',
+                                        onPressed: () {
+                                          _deleteCoverage(items, item);
+                                        },
+                                        icon: const Icon(
+                                          Icons.delete_outline_rounded,
+                                        ),
                                       )
                                     : null,
                               ),
@@ -4326,7 +6670,12 @@ class _ProviderCustomerCard extends StatelessWidget {
     ].join().toUpperCase();
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
+      color: _dashSurface(context),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: _dashBorder(context)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -4360,8 +6709,6 @@ class _ProviderCustomerCard extends StatelessWidget {
                       if (email.isNotEmpty)
                         Text(
                           email,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(color: _dashMuted(context)),
                         ),
                     ],
@@ -4497,7 +6844,6 @@ class _DeclineReasonSheetState extends State<_DeclineReasonSheet> {
               TextField(
                 controller: _controller,
                 minLines: 3,
-                maxLines: 5,
                 maxLength: 500,
                 onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
@@ -4623,7 +6969,6 @@ class _ReviewItem extends StatelessWidget {
                     Expanded(
                       child: Text(
                         review.name,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: _dashText(context),
                           fontWeight: FontWeight.w900,
@@ -4636,7 +6981,6 @@ class _ReviewItem extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   review.plan,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: _dashMuted(context), fontSize: 12),
                 ),
                 const SizedBox(height: 9),
@@ -4650,163 +6994,6 @@ class _ReviewItem extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-class _RevenueChartPainter extends CustomPainter {
-  const _RevenueChartPainter(
-    this.points, {
-    required this.gridColor,
-    required this.axisColor,
-    required this.valueColor,
-  });
-  final List<_RevenuePoint> points;
-  final Color gridColor;
-  final Color axisColor;
-  final Color valueColor;
-  @override
-  void paint(Canvas canvas, Size size) {
-    const left = 64.0;
-    const top = 14.0;
-    const right = 14.0;
-    const bottom = 42.0;
-    final chart = Rect.fromLTRB(
-      left,
-      top,
-      size.width - right,
-      size.height - bottom,
-    );
-    final gridPaint = Paint()
-      ..color = gridColor
-      ..strokeWidth = 1;
-    final axisText = TextStyle(color: axisColor, fontSize: 11);
-    final valueText = TextStyle(
-      color: valueColor,
-      fontSize: 11,
-      fontWeight: FontWeight.w800,
-    );
-    final highestPoint = points.fold<double>(
-      0,
-      (highest, point) => point.amount > highest ? point.amount : highest,
-    );
-    final maxY = _niceChartMax(highestPoint);
-    for (var i = 0; i <= 5; i++) {
-      final value = maxY * i / 5;
-      final y = chart.bottom - (chart.height * i / 5);
-      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
-      _drawText(
-        canvas,
-        i == 0 ? 'KES 0' : 'KES ${_compactAmount(value)}',
-        Offset(0, y - 7),
-        axisText,
-        width: 54,
-        align: TextAlign.right,
-      );
-    }
-    final offsets = <Offset>[];
-    for (var i = 0; i < points.length; i++) {
-      final x = points.length == 1
-          ? chart.center.dx
-          : chart.left + (chart.width * i / (points.length - 1));
-      final normalizedAmount = (points[i].amount / maxY).clamp(0.0, 1.0);
-      final y = chart.bottom - (chart.height * normalizedAmount);
-      offsets.add(Offset(x, y));
-      _drawText(
-        canvas,
-        points[i].month,
-        Offset(x - 18, chart.bottom + 18),
-        axisText,
-        width: 36,
-        align: TextAlign.center,
-      );
-      _drawText(
-        canvas,
-        'KES ${_compactAmount(points[i].amount)}',
-        Offset(x - 34, y - 24),
-        valueText,
-        width: 72,
-        align: TextAlign.center,
-      );
-    }
-    if (offsets.isEmpty) return;
-    final fillPath = ui.Path()
-      ..moveTo(offsets.first.dx, chart.bottom)
-      ..lineTo(offsets.first.dx, offsets.first.dy);
-    final linePath = ui.Path()..moveTo(offsets.first.dx, offsets.first.dy);
-    for (final point in offsets.skip(1)) {
-      linePath.lineTo(point.dx, point.dy);
-      fillPath.lineTo(point.dx, point.dy);
-    }
-    fillPath
-      ..lineTo(offsets.last.dx, chart.bottom)
-      ..close();
-    canvas.drawPath(
-      fillPath,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            AppTheme.amber.withValues(alpha: .28),
-            AppTheme.amber.withValues(alpha: .02),
-          ],
-        ).createShader(chart),
-    );
-    canvas.drawPath(
-      linePath,
-      Paint()
-        ..color = AppTheme.amber
-        ..strokeWidth = 2.5
-        ..style = PaintingStyle.stroke,
-    );
-    for (final point in offsets) {
-      canvas.drawCircle(point, 4, Paint()..color = AppTheme.amber);
-    }
-  }
-
-  static String _compactAmount(double amount) {
-    return amount >= 1000000
-        ? '${(amount / 1000000).toStringAsFixed(1)}M'
-        : amount >= 1000
-        ? '${(amount / 1000).toStringAsFixed(0)}K'
-        : amount
-              .toStringAsFixed(0)
-              .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
-  }
-
-  static double _niceChartMax(double highestPoint) {
-    if (highestPoint <= 0) return 100000;
-    final padded = highestPoint * 1.25;
-    if (padded <= 100000) return 100000;
-    if (padded <= 250000) return 250000;
-    if (padded <= 500000) return 500000;
-    if (padded <= 1000000) return 1000000;
-    return ((padded / 1000000).ceil() * 1000000).toDouble();
-  }
-
-  static void _drawText(
-    Canvas canvas,
-    String text,
-    Offset offset,
-    TextStyle style, {
-    required double width,
-    TextAlign align = TextAlign.left,
-  }) {
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-      textAlign: align,
-      maxLines: 1,
-    )..layout(maxWidth: width);
-    painter.paint(canvas, offset);
-  }
-
-  @override
-  bool shouldRepaint(covariant _RevenueChartPainter oldDelegate) {
-    return oldDelegate.points != points ||
-        oldDelegate.gridColor != gridColor ||
-        oldDelegate.axisColor != axisColor ||
-        oldDelegate.valueColor != valueColor;
   }
 }
 
@@ -4863,24 +7050,6 @@ class _SmallSelect extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _IconTile extends StatelessWidget {
-  const _IconTile({required this.icon});
-  final IconData icon;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 58,
-      width: 58,
-      decoration: BoxDecoration(
-        color: _dashSoftAmber(context),
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: AppTheme.amber.withValues(alpha: .16)),
-      ),
-      child: Icon(icon, color: AppTheme.amber, size: 27),
     );
   }
 }
@@ -4951,8 +7120,6 @@ class _Cell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       value,
-      maxLines: full ? 3 : 1,
-      overflow: TextOverflow.ellipsis,
       softWrap: full,
       style: TextStyle(
         color: _dashText(context),
@@ -4982,8 +7149,6 @@ class _StatusPill extends StatelessWidget {
       ),
       child: Text(
         label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: foreground,
           fontSize: 12,

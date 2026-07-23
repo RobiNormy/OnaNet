@@ -1,9 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:ona_net/services/api_client.dart';
+import 'package:ona_net/utils/provider_filters.dart';
 
 class ProviderPackageService {
   ProviderPackageService({Dio? dio, String? apiBaseUrl})
-    : _dio = dio ?? Dio(),
+    : _dio = dio ?? sharedApiClient,
       _apiBaseUrl =
           apiBaseUrl ?? const String.fromEnvironment('ONA_NET_API_BASE_URL');
 
@@ -40,10 +42,6 @@ class ProviderPackageService {
           .map(ProviderPackage.fromJson)
           .toList();
     } on DioException catch (e) {
-      print('PACKAGE FETCH ERROR: ${e.message}');
-      print('PACKAGE FETCH URL: $_apiBaseUrl/providers/$providerId/packages');
-      print('PACKAGE FETCH RESPONSE: ${e.response?.data}');
-      print('PACKAGE FETCH STATUS: ${e.response?.statusCode}');
       throw PackageServiceException(_errorMessage(e));
     }
   }
@@ -107,27 +105,42 @@ class ProviderPackage {
     return amount.toString();
   }
 
+  static String? _optionalDisplayLabel(dynamic value) {
+    if (value == null) return null;
+    return humanizeBackendValue(value.toString());
+  }
+
   factory ProviderPackage.fromJson(Map<String, dynamic> json) {
     return ProviderPackage(
       id: (json['id'] ?? '').toString(),
-      providerId: (json['provider_id'] ?? '').toString(),
+      providerId: (json['provider_id'] ?? json['providerId'] ?? '').toString(),
       name: (json['package_name'] ?? json['name'] ?? '').toString(),
       speed: _speedLabel(json['speed_mbps'], json['speed']),
-      contract: (json['contract_type'] ?? json['contract'] ?? 'No contract')
-          .toString(),
+      contract: humanizeBackendValue(
+        (json['contract_type'] ?? json['contract'] ?? 'No contract').toString(),
+      ),
       price: _formatMoney(json['monthly_price'] ?? json['price']),
-      installationFee: _formatMoney(json['installation_fee']),
-      fairUsage: (json['fair_usage_policy'] ?? json['fair_usage'])?.toString(),
-      routerIncluded: json['router_included'] as bool? ?? false,
-      installationTime:
-          (json['installation_period'] ?? json['installation_time'])
+      installationFee: _formatMoney(
+        json['installation_fee'] ?? json['installationFee'],
+      ),
+      fairUsage:
+          (json['fair_usage_policy'] ?? json['fair_usage'] ?? json['fairUsage'])
               ?.toString(),
+      routerIncluded:
+          (json['router_included'] ?? json['routerIncluded']) as bool? ?? false,
+      installationTime: _optionalDisplayLabel(
+        json['installation_period'] ??
+            json['installation_time'] ??
+            json['installationTime'],
+      ),
       coverageAreas:
           ((json['coverage_areas'] ?? json['coverageAreas']) as List?)
               ?.whereType<String>()
               .toList() ??
           const [],
-      trustLabel: (json['trust_label'] ?? json['trustLabel'])?.toString(),
+      trustLabel: _optionalDisplayLabel(
+        json['trust_label'] ?? json['trustLabel'],
+      ),
       subscriberCount: (json['subscriber_count'] ?? json['subscriberCount'])
           ?.toString(),
       popular: json['popular'] as bool? ?? false,

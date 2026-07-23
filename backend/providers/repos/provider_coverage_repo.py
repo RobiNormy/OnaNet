@@ -6,13 +6,28 @@ from backend.providers.schema.provider_coverage_schema import (
 )
 
 
+class CoverageAreaLimitExceeded(ValueError):
+    def __init__(self, tier: str, limit: int) -> None:
+        self.tier = tier
+        self.limit = limit
+        super().__init__(
+            f"Your {tier.capitalize()} plan allows up to {limit} coverage areas."
+        )
+
+
 async def replace_provider_coverage_areas(
     db: Any,
     provider_id: UUID,
     firebase_uid: str,
     coverage_areas: list[ProviderCoverageAreaCreate],
+    *,
+    tier: str,
+    max_coverage_areas: int | None,
 ) -> list[dict[str, Any]]:
     await _get_owned_provider(db, provider_id, firebase_uid)
+
+    if max_coverage_areas is not None and len(coverage_areas) > max_coverage_areas:
+        raise CoverageAreaLimitExceeded(tier, max_coverage_areas)
 
     async with db.transaction():
         await db.execute(

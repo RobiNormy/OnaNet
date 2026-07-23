@@ -8,6 +8,7 @@ from backend.db.session import get_db_connection
 from backend.core.firebase import create_firebase_user_rest,verify_firebase_token
 from backend.core.security import create_access_token
 from backend.schemas.user import AuthResponse
+from backend.services.provider_access import current_staff_actor
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = logging.getLogger(__name__)
@@ -45,6 +46,15 @@ async def _get_current_firebase_user(authorization: str | None) -> dict:
             status_code=401,
             detail="Invalid or expired token",
         )
+
+    staff_actor = current_staff_actor()
+    if staff_actor and staff_actor["staff_firebase_uid"] == decoded.get("uid"):
+        return {
+            **decoded,
+            "actor_uid": decoded["uid"],
+            "uid": staff_actor["owner_firebase_uid"],
+            "provider_staff": staff_actor,
+        }
 
     return decoded
 

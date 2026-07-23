@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -9,15 +8,7 @@ import 'package:ona_net/provider/packages.dart';
 import 'package:ona_net/provider/provider_flow_widgets.dart';
 import 'package:ona_net/provider/provider_registration_data.dart';
 import 'package:ona_net/themes/app_theme.dart';
-import 'package:permission_handler/permission_handler.dart';
-
-Future<Uint8List?> _readPlatformFileBytes(PlatformFile file) async {
-  try {
-    return await file.readAsBytes();
-  } catch (_) {
-    return null;
-  }
-}
+import 'package:ona_net/utils/platform_file_reader.dart';
 
 class VerificationScreen extends StatefulWidget {
   const VerificationScreen({
@@ -46,16 +37,29 @@ class _VerificationScreenState extends State<VerificationScreen> {
     'businessPermit': 'business_permit',
     'premisesPhoto': 'premises_photo',
   };
+  static const Map<String, String> _documentLabels = {
+    'nationalIdFront': 'National ID front',
+    'nationalIdBack': 'National ID back',
+    'selfie': 'Selfie verification',
+    'businessRegistration': 'Business registration',
+    'kraPin': 'KRA PIN certificate',
+    'businessPermit': 'Business permit',
+    'premisesPhoto': 'Premises photo',
+  };
+
+  Map<String, String> _selectedDocumentInfo(Iterable<String> ids) {
+    final documents = <String, String>{};
+    for (final id in ids) {
+      final file = _selectedFiles[id];
+      if (file != null) documents[_documentLabels[id]!] = file.name;
+    }
+    return documents;
+  }
 
   Future<void> _pickFile(
     String id, {
     List<String> allowedExtensions = const ['jpg', 'jpeg', 'png', 'pdf'],
   }) async {
-    final hasPermission = await _requestFileAccessPermission(
-      allowedExtensions: allowedExtensions,
-    );
-    if (!hasPermission) return;
-
     final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: allowedExtensions,
@@ -69,7 +73,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
       return;
     }
 
-    final bytes = await _readPlatformFileBytes(file);
+    final bytes = await readPlatformFileBytes(file);
     if (bytes == null) {
       _showSnackBar('Could not read the selected file.');
       return;
@@ -83,85 +87,6 @@ class _VerificationScreenState extends State<VerificationScreen> {
         bytes: bytes,
       );
     });
-  }
-
-  Future<bool> _requestFileAccessPermission({
-    required List<String> allowedExtensions,
-  }) async {
-    if (_usesOnlyImages(allowedExtensions)) {
-      return _requestPhotoAccessPermission();
-    }
-
-    final current = await Permission.storage.status;
-    if (_isAllowedPermission(current)) return true;
-
-    final requested = await Permission.storage.request();
-    if (_isAllowedPermission(requested)) return true;
-
-    if (requested.isPermanentlyDenied || requested.isRestricted) {
-      return _confirmScopedFilePickerAccess();
-    }
-
-    return _confirmScopedFilePickerAccess();
-  }
-
-  Future<bool> _requestPhotoAccessPermission() async {
-    final current = await Permission.photos.status;
-    if (_isAllowedPermission(current)) return true;
-
-    final requested = await Permission.photos.request();
-    if (_isAllowedPermission(requested)) return true;
-
-    if (Platform.isAndroid) {
-      final storage = await Permission.storage.request();
-      if (_isAllowedPermission(storage)) return true;
-    }
-
-    if (requested.isPermanentlyDenied || requested.isRestricted) {
-      _showSnackBar('Allow photo access in settings to choose images.');
-      await openAppSettings();
-      return false;
-    }
-
-    _showSnackBar('Photo access permission is needed to choose images.');
-    return false;
-  }
-
-  Future<bool> _confirmScopedFilePickerAccess() async {
-    if (!mounted) return false;
-
-    final allowed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Allow File Access?'),
-        content: const Text(
-          'Ona Net will open your file picker so you can choose the exact document to share.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-    );
-
-    return allowed ?? false;
-  }
-
-  bool _usesOnlyImages(List<String> allowedExtensions) {
-    const imageExtensions = {'jpg', 'jpeg', 'png'};
-    return allowedExtensions.every(
-      (extension) => imageExtensions.contains(extension.toLowerCase()),
-    );
-  }
-
-  bool _isAllowedPermission(PermissionStatus status) {
-    return status.isGranted || status.isLimited;
   }
 
   Future<void> _capturePhoto(String id) async {
@@ -257,7 +182,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
             constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
             child: isImage
                 ? FutureBuilder<Uint8List?>(
-                    future: _readPlatformFileBytes(file),
+                    future: readPlatformFileBytes(file),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(child: CircularProgressIndicator());
@@ -323,7 +248,7 @@ class _VerificationScreenState extends State<VerificationScreen> {
               const SizedBox(width: 14),
               Expanded(
                 child: Text(
-                  'Help customers trust your business. Your documents are private and will only be used for verification purposes.',
+                  'Submit documents for OnaNet review. Uploading documents does not grant a Verified badge; the badge appears only after approval.',
                   style: GoogleFonts.urbanist(
                     color: subtitleColor,
                     fontSize: 14,
@@ -451,9 +376,26 @@ class _VerificationScreenState extends State<VerificationScreen> {
             ],
           ),
           const SizedBox(height: 18),
-          const _BenefitsPanel(),
+          const _VerificationProcessPanel(),
           const SizedBox(height: 18),
-          _StatusPanel(hasSelections: _selectedFiles.isNotEmpty),
+          _StatusPanel(
+            providerName: widget.draft.businessName?.trim().isNotEmpty == true
+                ? widget.draft.businessName!.trim()
+                : widget.draft.providerName?.trim().isNotEmpty == true
+                ? widget.draft.providerName!.trim()
+                : 'Provider name unavailable',
+            identityDocuments: _selectedDocumentInfo(const {
+              'nationalIdFront',
+              'nationalIdBack',
+              'selfie',
+            }),
+            businessDocuments: _selectedDocumentInfo(const {
+              'businessRegistration',
+              'kraPin',
+              'businessPermit',
+              'premisesPhoto',
+            }),
+          ),
           const SizedBox(height: 26),
           Row(
             children: [
@@ -489,7 +431,10 @@ class _VerificationScreenState extends State<VerificationScreen> {
             ],
           ),
           const SizedBox(height: 24),
-          const SecureFooter(),
+          const SecureFooter(
+            message:
+                'Selected documents will be submitted for verification review.',
+          ),
         ],
       ),
     );
@@ -754,7 +699,7 @@ class _SelectedFilePreview extends StatelessWidget {
           ? Center(child: Icon(fallbackIcon, color: AppTheme.amber, size: 42))
           : isImage
           ? FutureBuilder<Uint8List?>(
-              future: _readPlatformFileBytes(selectedFile),
+              future: readPlatformFileBytes(selectedFile),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -885,8 +830,8 @@ String _formatFileSize(int bytes) {
   return '$bytes B';
 }
 
-class _BenefitsPanel extends StatelessWidget {
-  const _BenefitsPanel();
+class _VerificationProcessPanel extends StatelessWidget {
+  const _VerificationProcessPanel();
 
   @override
   Widget build(BuildContext context) {
@@ -917,7 +862,7 @@ class _BenefitsPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Business Verified Benefits',
+                  'How verification works',
                   style: GoogleFonts.plusJakartaSans(
                     color: textColor,
                     fontSize: 15,
@@ -933,20 +878,20 @@ class _BenefitsPanel extends StatelessWidget {
             runSpacing: 12,
             children: const [
               _BenefitItem(
-                icon: Icons.leaderboard_outlined,
-                label: 'Higher search ranking',
+                icon: Icons.upload_file_outlined,
+                label: 'Submit clear, valid documents',
               ),
               _BenefitItem(
-                icon: Icons.verified_user_outlined,
-                label: 'Trusted badge on your profile',
+                icon: Icons.fact_check_outlined,
+                label: 'OnaNet reviews your submission',
               ),
               _BenefitItem(
-                icon: Icons.groups_outlined,
-                label: 'More customer confidence',
+                icon: Icons.verified_outlined,
+                label: 'Verified badge after approval',
               ),
               _BenefitItem(
-                icon: Icons.support_agent_rounded,
-                label: 'Priority support',
+                icon: Icons.workspace_premium_outlined,
+                label: 'Plan badges remain separate',
               ),
             ],
           ),
@@ -1464,9 +1409,15 @@ class _BenefitItem extends StatelessWidget {
 }
 
 class _StatusPanel extends StatelessWidget {
-  const _StatusPanel({required this.hasSelections});
+  const _StatusPanel({
+    required this.providerName,
+    required this.identityDocuments,
+    required this.businessDocuments,
+  });
 
-  final bool hasSelections;
+  final String providerName;
+  final Map<String, String> identityDocuments;
+  final Map<String, String> businessDocuments;
 
   @override
   Widget build(BuildContext context) {
@@ -1486,7 +1437,7 @@ class _StatusPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Verification Status',
+            'Submission summary',
             style: GoogleFonts.plusJakartaSans(
               color: textColor,
               fontSize: 14,
@@ -1494,24 +1445,55 @@ class _StatusPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          _StatusRow(
-            icon: Icons.phone_outlined,
-            label: 'Phone Verified',
-            status: 'Verified',
-            color: AppTheme.green,
-          ),
+          _SummaryTextRow(label: 'Provider', value: providerName),
           _StatusRow(
             icon: Icons.person_outline_rounded,
-            label: 'Identity Verified',
-            status: hasSelections ? 'Pending' : 'Optional',
-            color: hasSelections ? AppTheme.amber : AppTheme.gray,
+            label: 'Identity documents',
+            status: identityDocuments.isEmpty
+                ? 'Not selected'
+                : '${identityDocuments.length} selected',
+            color: identityDocuments.isEmpty ? AppTheme.gray : AppTheme.amber,
           ),
           _StatusRow(
             icon: Icons.business_center_outlined,
-            label: 'Business Verified',
-            status: hasSelections ? 'Pending' : 'Not Submitted',
-            color: hasSelections ? AppTheme.amber : AppTheme.gray,
+            label: 'Business documents',
+            status: businessDocuments.isEmpty
+                ? 'Not selected'
+                : '${businessDocuments.length} selected',
+            color: businessDocuments.isEmpty ? AppTheme.gray : AppTheme.amber,
           ),
+          _StatusRow(
+            icon: Icons.verified_outlined,
+            label: 'Verified badge',
+            status: 'Not reviewed',
+            color: AppTheme.gray,
+          ),
+          if (identityDocuments.isNotEmpty || businessDocuments.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Divider(color: borderColor),
+            const SizedBox(height: 4),
+            Text(
+              'Files ready to submit',
+              style: GoogleFonts.plusJakartaSans(
+                color: textColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 6),
+            for (final document in identityDocuments.entries)
+              _DocumentSummaryRow(
+                category: 'Identity',
+                label: document.key,
+                fileName: document.value,
+              ),
+            for (final document in businessDocuments.entries)
+              _DocumentSummaryRow(
+                category: 'Business',
+                label: document.key,
+                fileName: document.value,
+              ),
+          ],
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(14),
@@ -1532,13 +1514,118 @@ class _StatusPanel extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Your documents are safe and secure. We do not share your documents with third parties.',
+                    'Selected documents are submitted for verification review. They are not displayed on your public provider profile.',
                     style: GoogleFonts.urbanist(
                       color: textColor,
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                       height: 1.35,
                     ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryTextRow extends StatelessWidget {
+  const _SummaryTextRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: GoogleFonts.urbanist(
+                color: isDark ? AppTheme.gray : AppTheme.darkGray,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            flex: 2,
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: GoogleFonts.urbanist(
+                color: textColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DocumentSummaryRow extends StatelessWidget {
+  const _DocumentSummaryRow({
+    required this.category,
+    required this.label,
+    required this.fileName,
+  });
+
+  final String category;
+  final String label;
+  final String fileName;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+    final mutedColor = isDark ? AppTheme.gray : AppTheme.darkGray;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.description_outlined,
+            color: AppTheme.amber,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.urbanist(
+                    color: textColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$category · $fileName',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.urbanist(
+                    color: mutedColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],

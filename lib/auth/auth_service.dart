@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
+import 'package:ona_net/services/api_client.dart';
 
 class AuthServiceException implements Exception {
   const AuthServiceException(this.message);
@@ -18,7 +19,7 @@ class AuthServiceException implements Exception {
 
 class AuthService {
   AuthService({Dio? dio, String? apiBaseUrl})
-    : _dio = dio ?? Dio(),
+    : _dio = dio ?? sharedApiClient,
       _apiBaseUrl =
           apiBaseUrl ?? const String.fromEnvironment('ONA_NET_API_BASE_URL');
 
@@ -26,6 +27,9 @@ class AuthService {
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   final Dio _dio;
   final String _apiBaseUrl;
+
+  static const _providerCacheTtl = Duration(minutes: 1);
+  static final Map<String, _ProviderCatalogCache> _providerCaches = {};
 
   Stream<User?> get authStateChanges => _auth.authStateChanges();
 
@@ -116,8 +120,26 @@ class AuthService {
   }
 
   Future<Map<String, dynamic>> getMyProvider() async {
-    final response = await _getJson('/providers/me');
-    return _asMap(response.data);
+    final provider = await findMyProvider();
+    if (provider == null) {
+      throw const AuthServiceException(
+        'Provider profile not found for this account.',
+      );
+    }
+    return provider;
+  }
+
+  Future<Map<String, dynamic>?> findMyProvider() async {
+    try {
+      final response = await _dio.get<dynamic>(
+        _url('/providers/me'),
+        options: await _authorizedOptions(),
+      );
+      return _asMap(response.data);
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      throw AuthServiceException(_errorMessage(error));
+    }
   }
 
   Future<Map<String, dynamic>> getProviderDashboardData() async {
@@ -129,11 +151,87 @@ class AuthService {
       );
     }
 
-    final dashboard = await getDashboard(providerId);
-    return {...provider, ...dashboard, 'id': providerId};
+    try {
+      final dashboard = await getDashboard(providerId);
+      return {...provider, ...dashboard, 'id': providerId};
+    } on AuthServiceException catch (error) {
+      if (!error.message.toLowerCase().contains(
+        'permission to view dashboard',
+      )) {
+        rethrow;
+      }
+      return {...provider, 'id': providerId};
+    }
   }
 
-  Future<List<Map<String, dynamic>>> getPublicProviders() async {
+  Future<Map<String, dynamic>> getProviderAccountAccess() async {
+    final response = await _getJson('/provider-staff/me');
+    return _asMap(response.data);
+  }
+
+  Future<Map<String, dynamic>> getProviderStaffAccounts() async {
+    final response = await _getJson('/provider-staff');
+    return _asMap(response.data);
+  }
+
+  Future<Map<String, dynamic>> createProviderStaffAccount(
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _postJson('/provider-staff', payload);
+    return _asMap(response.data);
+  }
+
+  Future<Map<String, dynamic>> updateProviderStaffAccount(
+    String staffId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final response = await _dio.patch<dynamic>(
+        _url('/provider-staff/$staffId'),
+        data: payload,
+        options: await _authorizedOptions(),
+      );
+      return _asMap(response.data);
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getPublicProviders({
+    bool forceRefresh = false,
+  }) async {
+    final cacheKey = _apiBaseUrl.trim();
+    final cache = _providerCaches.putIfAbsent(
+      cacheKey,
+      _ProviderCatalogCache.new,
+    );
+    final now = DateTime.now();
+
+    if (forceRefresh) {
+      cache.data = null;
+      cache.loadedAt = null;
+    } else if (cache.data != null &&
+        cache.loadedAt != null &&
+        now.difference(cache.loadedAt!) < _providerCacheTtl) {
+      return cache.data!;
+    }
+
+    final pending = cache.pending;
+    if (pending != null) return pending;
+
+    final request = _fetchPublicProviders();
+    cache.pending = request;
+    try {
+      final providers = await request;
+      cache.data = providers;
+      cache.loadedAt = DateTime.now();
+      return providers;
+    } finally {
+      if (identical(cache.pending, request)) cache.pending = null;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchPublicProviders() async {
     final response = await _getJson('/providers');
     return _asMapList(response.data);
   }
@@ -188,6 +286,16 @@ class AuthService {
     required Map<String, dynamic> payload,
   }) async {
     await _postJson('/providers/$providerId/packages', payload);
+  }
+
+  Future<Map<String, dynamic>> completeProviderRegistration(
+    String providerId,
+  ) async {
+    final response = await _postJson(
+      '/providers/$providerId/complete-registration',
+      const {},
+    );
+    return _asMap(response.data);
   }
 
   Future<List<Map<String, dynamic>>> getProviderPackages(
@@ -255,6 +363,11 @@ class AuthService {
       file: file,
       fields: {'document_type': documentType},
     );
+  }
+
+  Future<List<Map<String, dynamic>>> getProviderDocuments() async {
+    final response = await _getJson('/providers/me/documents');
+    return _asMapList(response.data);
   }
 
   Future<void> signOut() async {
@@ -413,4 +526,10 @@ class AuthService {
     if (data is String && data.trim().isNotEmpty) return data;
     return error.message ?? 'Request failed.';
   }
+}
+
+class _ProviderCatalogCache {
+  List<Map<String, dynamic>>? data;
+  DateTime? loadedAt;
+  Future<List<Map<String, dynamic>>>? pending;
 }

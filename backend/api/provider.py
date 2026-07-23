@@ -14,12 +14,14 @@ from backend.providers.repos.provider_contact import (
     replace_provider_contacts,
 )
 from backend.providers.repos.provider_coverage_repo import (
+    CoverageAreaLimitExceeded,
     get_provider_coverage_areas,
     replace_provider_coverage_areas,
 )
 from backend.providers.repos.provider_repo import (
     create_provider_registration,
     get_provider_by_firebase_uid,
+    serialize_provider,
 )
 from backend.providers.repos.provider_service_repo import (
     get_provider_services,
@@ -40,6 +42,7 @@ from backend.providers.schema.provider_contact import (
 from backend.providers.schema.provider_package import (
     ProviderPackageCreate,
     ProviderPackageOut,
+    ProviderPackageUpdate,
 )
 from backend.providers.schema.schema import (
     ProviderRegistrationRequest,
@@ -99,6 +102,15 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 p.provider_type,
                 p.primary_city,
                 p.is_verified,
+                CASE
+                    WHEN p.subscription_tier IN ('growth', 'pro')
+                      AND (
+                        p.subscription_expires_at IS NULL
+                        OR p.subscription_expires_at >= now()
+                      )
+                    THEN p.subscription_tier
+                    ELSE 'free'
+                END AS active_subscription_tier,
                 p.logo_url,
                 p.logo_display_size,
                 p.logo_offset_x,
@@ -115,6 +127,8 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 p.provider_type,
                 p.primary_city,
                 p.is_verified,
+                p.subscription_tier,
+                p.subscription_expires_at,
                 p.logo_url,
                 p.logo_display_size,
                 p.logo_offset_x,
@@ -142,6 +156,7 @@ async def list_public_providers() -> list[dict[str, Any]]:
             package_rows = await db.fetch(
                 """
                 SELECT
+                    id,
                     provider_id,
                     package_name,
                     speed_mbps,
@@ -160,6 +175,8 @@ async def list_public_providers() -> list[dict[str, Any]]:
             for row in package_rows:
                 packages_by_provider[row["provider_id"]].append(
                     {
+                        "id": str(row["id"]),
+                        "providerId": str(row["provider_id"]),
                         "name": row["package_name"],
                         "speed": f"{row['speed_mbps']}Mbps",
                         "contract": _format_contract_type(row["contract_type"]),
@@ -272,6 +289,7 @@ async def list_public_providers() -> list[dict[str, Any]]:
                 "speed": max_speed,
                 "distance": 0.0,
                 "verified": provider["is_verified"],
+                "planTier": provider["active_subscription_tier"],
                 "providerType": provider["provider_type"],
                 "primaryCity": provider["primary_city"],
                 "logoUrl": provider["logo_url"],
@@ -562,6 +580,7 @@ async def save_provider_coverage_areas(
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
     firebase_user = await _get_current_firebase_user(authorization)
+    tier, limits = await get_provider_tier(provider_id)
 
     async with get_db_connection() as db:
         try:
@@ -570,7 +589,19 @@ async def save_provider_coverage_areas(
                 provider_id,
                 firebase_user["uid"],
                 coverage_in.coverage_areas,
+                tier=tier,
+                max_coverage_areas=limits["max_coverage_areas"],
             )
+        except CoverageAreaLimitExceeded as exc:
+            upgrade_hint = (
+                "Upgrade to Growth for up to 5 areas or Pro for unlimited coverage."
+                if exc.tier == "free"
+                else "Upgrade to Pro for unlimited coverage."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"{exc} {upgrade_hint}",
+            ) from exc
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -843,6 +874,35 @@ async def upload_provider_document(
         "file_url": public_url,
     }
 
+
+@router.get("/me/documents")
+async def list_provider_documents(
+    authorization: str | None = Header(default=None),
+) -> list[dict[str, str]]:
+    firebase_user = await _get_current_firebase_user(authorization)
+
+    async with get_db_connection() as db:
+        rows = await db.fetch(
+            """
+            SELECT documents.id, documents.document_type, documents.status
+            FROM provider_documents AS documents
+            JOIN providers ON providers.id = documents.provider_id
+            JOIN users ON users.id = providers.user_id
+            WHERE users.firebase_uid = $1;
+            """,
+            firebase_user["uid"],
+        )
+
+    return [
+        {
+            "id": str(row["id"]),
+            "document_type": row["document_type"],
+            "status": row["status"] or "pending",
+        }
+        for row in rows
+    ]
+
+
 @router.post("/{provider_id}/packages", response_model=ProviderPackageOut)
 async def create_provider_package(
     provider_id: UUID,
@@ -904,6 +964,81 @@ async def create_provider_package(
         return dict(row)
 
 
+@router.post(
+    "/{provider_id}/complete-registration",
+    response_model=ProviderRegistrationResponse,
+)
+async def complete_provider_registration(
+    provider_id: UUID,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    firebase_user = await _get_current_firebase_user(authorization)
+
+    async with get_db_connection() as db:
+        provider = await db.fetchrow(
+            """
+            SELECT providers.id
+            FROM providers
+            JOIN users ON users.id = providers.user_id
+            WHERE providers.id = $1
+              AND users.firebase_uid = $2;
+            """,
+            provider_id,
+            firebase_user["uid"],
+        )
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider profile not found for this user",
+            )
+
+        setup = await db.fetchrow(
+            """
+            SELECT
+              EXISTS(
+                SELECT 1 FROM provider_packages WHERE provider_id = $1
+              ) AS has_package,
+              EXISTS(
+                SELECT 1 FROM provider_coverage_areas WHERE provider_id = $1
+              ) AS has_coverage,
+              EXISTS(
+                SELECT 1 FROM provider_services WHERE provider_id = $1
+              ) AS has_service;
+            """,
+            provider_id,
+        )
+        missing = [
+            label
+            for present, label in (
+                (setup["has_package"], "a package"),
+                (setup["has_coverage"], "a coverage area"),
+                (setup["has_service"], "a service"),
+            )
+            if not present
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Complete provider setup before registering: {', '.join(missing)}.",
+            )
+
+        row = await db.fetchrow(
+            """
+            UPDATE providers
+            SET status = 'pending_review', updated_at = now()
+            WHERE id = $1
+            RETURNING
+              id, user_id, provider_type, provider_name, business_name,
+              logo_url, logo_display_size, logo_offset_x, logo_offset_y,
+              year_started, upstream_provider, primary_city, description,
+              status, is_verified, subscription_tier, created_at, updated_at;
+            """,
+            provider_id,
+        )
+
+    return serialize_provider(row)
+
+
 @router.get("/{provider_id}/packages", response_model=list[ProviderPackageOut])
 async def get_provider_packages(
     provider_id: UUID,
@@ -921,6 +1056,126 @@ async def get_provider_packages(
         )
 
         return [dict(row) for row in rows]
+
+
+@router.patch(
+    "/{provider_id}/packages/{package_id}",
+    response_model=ProviderPackageOut,
+)
+async def update_provider_package(
+    provider_id: UUID,
+    package_id: UUID,
+    package_in: ProviderPackageUpdate,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    firebase_user = await _get_current_firebase_user(authorization)
+    changes = package_in.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No package changes were provided",
+        )
+
+    allowed_columns = {
+        "package_name",
+        "speed_mbps",
+        "monthly_price",
+        "installation_fee",
+        "fair_usage_policy",
+        "billing_cycle",
+        "contract_type",
+        "installation_period",
+        "router_included",
+    }
+    assignments: list[str] = []
+    values: list[Any] = []
+    for column, value in changes.items():
+        if column not in allowed_columns:
+            continue
+        values.append(value)
+        assignments.append(f"{column} = ${len(values)}")
+
+    values.extend([package_id, provider_id, firebase_user["uid"]])
+    package_param = len(values) - 2
+    provider_param = len(values) - 1
+    firebase_param = len(values)
+
+    async with get_db_connection() as db:
+        row = await db.fetchrow(
+            f"""
+            UPDATE provider_packages AS package
+            SET {', '.join(assignments)}
+            FROM providers
+            JOIN users ON users.id = providers.user_id
+            WHERE package.id = ${package_param}
+              AND package.provider_id = ${provider_param}
+              AND providers.id = package.provider_id
+              AND users.firebase_uid = ${firebase_param}
+            RETURNING package.*;
+            """,
+            *values,
+        )
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Package not found",
+        )
+    return dict(row)
+
+
+@router.delete("/{provider_id}/packages/{package_id}")
+async def delete_provider_package(
+    provider_id: UUID,
+    package_id: UUID,
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
+    firebase_user = await _get_current_firebase_user(authorization)
+
+    async with get_db_connection() as db:
+        package = await db.fetchrow(
+            """
+            SELECT package.id
+            FROM provider_packages AS package
+            JOIN providers ON providers.id = package.provider_id
+            JOIN users ON users.id = providers.user_id
+            WHERE package.id = $1
+              AND package.provider_id = $2
+              AND users.firebase_uid = $3;
+            """,
+            package_id,
+            provider_id,
+            firebase_user["uid"],
+        )
+        if package is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Package not found",
+            )
+
+        referenced = await db.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM installation_requests
+                WHERE package_id = $1
+            );
+            """,
+            package_id,
+        )
+        if referenced:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This package has installation requests and cannot be deleted",
+            )
+
+        await db.execute(
+            "DELETE FROM provider_packages WHERE id = $1 AND provider_id = $2",
+            package_id,
+            provider_id,
+        )
+
+    return {"message": "Package deleted successfully"}
 
 
 def _provider_initials(name: str) -> str:
@@ -964,16 +1219,32 @@ def _format_contract_type(value: str | None) -> str:
 
 
 @router.get("/{provider_id}/dashboard")
-async def get_dashboard(provider_id: UUID):
+async def get_dashboard(
+    provider_id: UUID,
+    authorization: str | None = Header(default=None),
+):
+    firebase_user = await _get_current_firebase_user(authorization)
     async with get_db_connection() as db:
         provider = await db.fetchrow(
             """
-            SELECT provider_name,status,is_verified,created_at
-            FROM providers
-            WHERE id = $1
+            SELECT
+              provider.provider_name,
+              provider.status,
+              provider.is_verified,
+              provider.created_at
+            FROM providers provider
+            JOIN users owner ON owner.id = provider.user_id
+            WHERE provider.id = $1
+              AND owner.firebase_uid = $2
             """,
             provider_id,
+            firebase_user["uid"],
         )
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Provider dashboard not found for this account.",
+            )
         packages_count = await db.fetchval(
             """
             SELECT count(*)

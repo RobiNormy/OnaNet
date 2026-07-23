@@ -66,7 +66,7 @@ async def create_provider_registration(
         provider_in.primary_city,
         provider_in.description,
     )
-    return _serialize_provider(row)
+    return serialize_provider(row)
 
 
 async def get_provider_by_firebase_uid(
@@ -94,10 +94,10 @@ async def get_provider_by_firebase_uid(
     )
     if row is None:
         raise ValueError("Provider profile not found for this user")
-    return _serialize_provider(row)
+    return serialize_provider(row)
 
 
-def _serialize_provider(row: Any) -> dict[str, Any]:
+def serialize_provider(row: Any) -> dict[str, Any]:
     data = dict(row)
     for key in ("id", "user_id"):
         data[key] = str(data[key])

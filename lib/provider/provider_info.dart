@@ -9,15 +9,8 @@ import 'package:ona_net/provider/provider_flow_widgets.dart';
 import 'package:ona_net/provider/provider_registration_data.dart';
 import 'package:ona_net/provider/services_offered.dart';
 import 'package:ona_net/themes/app_theme.dart';
+import 'package:ona_net/utils/platform_file_reader.dart';
 import 'package:permission_handler/permission_handler.dart';
-
-Future<Uint8List?> _readPlatformFileBytes(PlatformFile file) async {
-  try {
-    return await file.readAsBytes();
-  } catch (_) {
-    return null;
-  }
-}
 
 class ProviderInfoScreen extends StatefulWidget {
   const ProviderInfoScreen({
@@ -111,7 +104,7 @@ class _ProviderInfoScreenState extends State<ProviderInfoScreen> {
     if (file == null) return;
     if (!_isValidLogoSize(file.size)) return;
 
-    final bytes = await _readPlatformFileBytes(file);
+    final bytes = await readPlatformFileBytes(file);
     if (bytes == null) {
       _showSnackBar('Could not read the selected image.');
       return;
@@ -518,7 +511,7 @@ class _LogoPreview extends StatelessWidget {
       child: file == null
           ? const Icon(Icons.image_outlined, color: AppTheme.amber, size: 28)
           : FutureBuilder<Uint8List?>(
-              future: _readPlatformFileBytes(file!),
+              future: readPlatformFileBytes(file!),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const SizedBox(
@@ -653,7 +646,7 @@ class _LogoEditorScreenState extends State<_LogoEditorScreen> {
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: FutureBuilder<Uint8List?>(
-                    future: _readPlatformFileBytes(widget.file),
+                    future: readPlatformFileBytes(widget.file),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(

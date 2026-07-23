@@ -17,6 +17,7 @@ import 'package:ona_net/themes/theme_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:ona_net/utils/location.dart';
 import 'package:ona_net/utils/provider_filters.dart';
+import 'package:ona_net/widgets/provider_badges.dart';
 
 class OnaNet extends StatelessWidget {
   const OnaNet({super.key});
@@ -31,6 +32,7 @@ class OnaNet extends StatelessWidget {
       darkTheme: AppTheme.dark(),
       themeMode: themeProvider.themeMode,
       home: const AuthenticatedLanding(),
+      routes: {'/customer': (_) => const MainWrapper()},
     );
   }
 }
@@ -153,7 +155,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _fetchProviders({bool showLoading = true}) async {
+  Future<void> _fetchProviders({
+    bool showLoading = true,
+    bool forceRefresh = false,
+  }) async {
     if (showLoading) {
       setState(() {
         _loadingProviders = true;
@@ -162,7 +167,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
-      final providers = await AuthService().getPublicProviders();
+      final providers = await AuthService().getPublicProviders(
+        forceRefresh: forceRefresh,
+      );
       if (!mounted) return;
       setState(() {
         _providers = providers;
@@ -185,7 +192,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshHome() async {
-    await Future.wait([_fetchLocation(), _fetchProviders(showLoading: false)]);
+    await Future.wait([
+      _fetchLocation(),
+      _fetchProviders(showLoading: false, forceRefresh: true),
+    ]);
   }
 
   @override
@@ -968,7 +978,6 @@ class _ProviderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final name = providerName(provider);
-    final verified = isVerifiedProvider(provider);
     final price = providerPrice(provider);
     final speed = providerSpeed(provider);
     final savedProviders = context.watch<SavedProvidersStore>();
@@ -1011,21 +1020,6 @@ class _ProviderCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                     ),
-                    if (verified) ...[
-                      SizedBox(width: 5),
-                      Container(
-                        padding: EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: AppTheme.green,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.check,
-                          color: AppTheme.white,
-                          size: 9,
-                        ),
-                      ),
-                    ],
                     SizedBox(width: 4),
                     IconButton(
                       tooltip: isSaved
@@ -1048,6 +1042,7 @@ class _ProviderCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                ProviderBadges(provider: provider),
                 SizedBox(height: 4),
                 Row(
                   children: [
@@ -1083,8 +1078,10 @@ class _ProviderCard extends StatelessWidget {
                             flex: 6,
                             child: _metaItem(
                               context,
-                              label: 'From',
-                              value: price > 0 ? 'KES $price/mo' : 'Ask',
+                              label: 'From / month',
+                              value: price > 0
+                                  ? 'KES ${formatKesPrice(price)}'
+                                  : 'Ask',
                             ),
                           ),
                           SizedBox(width: 4),

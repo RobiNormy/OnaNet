@@ -70,7 +70,7 @@ Map<String, dynamic> enrichProvider(
   final copy = Map<String, dynamic>.from(provider);
   final price = providerPrice(copy);
   final speed = providerSpeed(copy);
-  final distanceKm = distanceToProviderKm(
+  final nearestCoverage = _nearestCoverage(
     copy,
     userLatitude: userLatitude,
     userLongitude: userLongitude,
@@ -79,9 +79,13 @@ Map<String, dynamic> enrichProvider(
   copy['price'] = price > 0 ? price : copy['price'];
   copy['speed'] = speed > 0 ? speed : copy['speed'];
   copy['verified'] = isVerifiedProvider(copy);
-  if (distanceKm != null) {
+  if (nearestCoverage != null) {
+    final distanceKm = nearestCoverage.distanceKm;
     copy['distance'] = double.parse(distanceKm.toStringAsFixed(1));
-    copy['distanceLabel'] = '${_formatDistance(distanceKm)} away';
+    copy['nearestCoverageArea'] = nearestCoverage.name;
+    copy['distanceLabel'] = nearestCoverage.name.isEmpty
+        ? '${_formatDistance(distanceKm)} to nearest coverage'
+        : '${_formatDistance(distanceKm)} to ${nearestCoverage.name}';
   } else if (_matchesAreaText(copy, userArea)) {
     copy['distanceLabel'] = 'Covers ${userArea!.trim()}';
   } else {
@@ -99,17 +103,47 @@ String providerName(Map<String, dynamic> provider) {
 }
 
 String providerType(Map<String, dynamic> provider) {
-  return (provider['providerType'] ??
-          provider['provider_type'] ??
-          provider['service_type'] ??
-          'Internet provider')
-      .toString();
+  return humanizeBackendValue(
+    (provider['providerType'] ??
+            provider['provider_type'] ??
+            provider['service_type'] ??
+            'Internet provider')
+        .toString(),
+  );
+}
+
+String providerPlanTier(Map<String, dynamic> provider) {
+  final value =
+      (provider['planTier'] ??
+              provider['subscriptionTier'] ??
+              provider['subscription_tier'] ??
+              provider['tier'] ??
+              'free')
+          .toString()
+          .trim()
+          .toLowerCase();
+  return value == 'growth' || value == 'pro' ? value : 'free';
+}
+
+String humanizeBackendValue(String value) {
+  final words = value
+      .trim()
+      .replaceAll(RegExp(r'[_-]+'), ' ')
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .map(
+        (word) => word.length == 1
+            ? word.toUpperCase()
+            : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+      )
+      .toList();
+  return words.isEmpty ? '' : words.join(' ');
 }
 
 List<String> providerCoverageAreas(Map<String, dynamic> provider) {
   final value = provider['coverageAreas'] ?? provider['coverage_areas'];
   if (value is! List) return [];
-  return value
+  final areas = value
       .map((area) {
         if (area is Map) {
           return area['name'] ?? area['area_name'] ?? area['areaName'];
@@ -119,13 +153,16 @@ List<String> providerCoverageAreas(Map<String, dynamic> provider) {
       .where((area) => area != null && area.toString().trim().isNotEmpty)
       .map((area) => area.toString().trim())
       .toList();
+  final namedAreas = areas
+      .where((area) => !_isGenericCoverageName(area))
+      .toList();
+  return namedAreas.isEmpty ? areas : namedAreas;
 }
 
 bool isVerifiedProvider(Map<String, dynamic> provider) {
   final status =
       (provider['document_verification_status'] ??
-              provider['verification_status'] ??
-              provider['status'])
+              provider['verification_status'])
           ?.toString()
           .toLowerCase();
   return provider['verified'] == true ||
@@ -133,7 +170,7 @@ bool isVerifiedProvider(Map<String, dynamic> provider) {
       provider['is_verified'] == true ||
       provider['documents_verified'] == true ||
       status == 'verified' ||
-      status == 'approved';
+      status == 'documents_approved';
 }
 
 int providerSpeed(Map<String, dynamic> provider) {
@@ -164,6 +201,16 @@ int providerPrice(Map<String, dynamic> provider) {
   ].where((price) => price > 0).toList();
   if (prices.isEmpty) return 0;
   return prices.reduce(math.min);
+}
+
+String formatKesPrice(int price) {
+  final sign = price < 0 ? '-' : '';
+  final digits = price.abs().toString();
+  final grouped = digits.replaceAllMapped(
+    RegExp(r'\B(?=(\d{3})+(?!\d))'),
+    (_) => ',',
+  );
+  return '$sign$grouped';
 }
 
 List<Map<String, dynamic>> providerPackages(Map<String, dynamic> provider) {
@@ -220,20 +267,20 @@ bool providerMatchesUserLocation(
   final hasArea = userArea != null && userArea.trim().isNotEmpty;
   if (!hasGps && !hasArea) return true;
 
-  final coverage = _coverageMaps(provider);
+  final coverage = _coverageMapsForDistance(provider);
   if (hasGps && coverage.any(_hasCoordinates)) {
     return coverage.any((area) {
       final latitude = _asDouble(area['latitude'] ?? area['lat']);
       final longitude = _asDouble(
         area['longitude'] ?? area['lng'] ?? area['lon'],
       );
-      if (latitude == null || longitude == null) return false;
+      if (!_validCoordinates(latitude, longitude)) return false;
       final radius = _asDouble(area['radius_km'] ?? area['radiusKm']) ?? 5;
       final distance = _haversineKm(
         userLatitude,
         userLongitude,
-        latitude,
-        longitude,
+        latitude!,
+        longitude!,
       );
       return distance <= radius;
     });
@@ -247,20 +294,42 @@ double? distanceToProviderKm(
   double? userLatitude,
   double? userLongitude,
 }) {
-  if (userLatitude == null || userLongitude == null) return null;
-  final distances = _coverageMaps(provider)
-      .map((area) {
-        final latitude = _asDouble(area['latitude'] ?? area['lat']);
-        final longitude = _asDouble(
-          area['longitude'] ?? area['lng'] ?? area['lon'],
-        );
-        if (latitude == null || longitude == null) return null;
-        return _haversineKm(userLatitude, userLongitude, latitude, longitude);
-      })
-      .whereType<double>()
-      .toList();
-  if (distances.isEmpty) return null;
-  return distances.reduce(math.min);
+  return _nearestCoverage(
+    provider,
+    userLatitude: userLatitude,
+    userLongitude: userLongitude,
+  )?.distanceKm;
+}
+
+_NearestCoverage? _nearestCoverage(
+  Map<String, dynamic> provider, {
+  required double? userLatitude,
+  required double? userLongitude,
+}) {
+  if (!_validCoordinates(userLatitude, userLongitude)) return null;
+  _NearestCoverage? nearest;
+  for (final area in _coverageMapsForDistance(provider)) {
+    final latitude = _asDouble(area['latitude'] ?? area['lat']);
+    final longitude = _asDouble(
+      area['longitude'] ?? area['lng'] ?? area['lon'],
+    );
+    if (!_validCoordinates(latitude, longitude)) continue;
+    final distance = _haversineKm(
+      userLatitude!,
+      userLongitude!,
+      latitude!,
+      longitude!,
+    );
+    if (nearest == null || distance < nearest.distanceKm) {
+      nearest = _NearestCoverage(
+        name: (area['name'] ?? area['area_name'] ?? area['areaName'] ?? '')
+            .toString()
+            .trim(),
+        distanceKm: distance,
+      );
+    }
+  }
+  return nearest;
 }
 
 String providerDistanceLabel(Map<String, dynamic> provider) {
@@ -323,9 +392,38 @@ List<Map<String, dynamic>> _coverageMaps(Map<String, dynamic> provider) {
   }).toList();
 }
 
+List<Map<String, dynamic>> _coverageMapsForDistance(
+  Map<String, dynamic> provider,
+) {
+  final areas = _coverageMaps(provider);
+  final namedAreas = areas.where((area) {
+    final name = area['name'] ?? area['area_name'] ?? area['areaName'];
+    return !_isGenericCoverageName(name);
+  }).toList();
+  return namedAreas.isEmpty ? areas : namedAreas;
+}
+
+bool _isGenericCoverageName(Object? value) {
+  final name = _normalize(value);
+  return name == 'current location' ||
+      name == 'dropped pin' ||
+      name.startsWith('coverage area');
+}
+
 bool _hasCoordinates(Map<String, dynamic> area) {
-  return _asDouble(area['latitude'] ?? area['lat']) != null &&
-      _asDouble(area['longitude'] ?? area['lng'] ?? area['lon']) != null;
+  return _validCoordinates(
+    _asDouble(area['latitude'] ?? area['lat']),
+    _asDouble(area['longitude'] ?? area['lng'] ?? area['lon']),
+  );
+}
+
+bool _validCoordinates(double? latitude, double? longitude) {
+  if (latitude == null || longitude == null) return false;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return false;
+  }
+  // The dashboard previously stored 0,0 when an area had not been geocoded.
+  return latitude.abs() > 0.000001 || longitude.abs() > 0.000001;
 }
 
 bool _matchesAreaText(Map<String, dynamic> provider, String? userArea) {
@@ -356,7 +454,8 @@ String _normalize(Object? value) {
 
 int _asInt(Object? value) {
   if (value is num) return value.round();
-  final match = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(value?.toString() ?? '');
+  final normalized = (value?.toString() ?? '').replaceAll(',', '');
+  final match = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(normalized);
   if (match == null) return 0;
   return double.tryParse(match.group(1)!)?.round() ?? 0;
 }
@@ -390,4 +489,11 @@ double _degreesToRadians(double degrees) => degrees * math.pi / 180;
 String _formatDistance(double distanceKm) {
   if (distanceKm < 1) return '${(distanceKm * 1000).round()}m';
   return '${distanceKm.toStringAsFixed(distanceKm < 10 ? 1 : 0)}km';
+}
+
+class _NearestCoverage {
+  const _NearestCoverage({required this.name, required this.distanceKm});
+
+  final String name;
+  final double distanceKm;
 }

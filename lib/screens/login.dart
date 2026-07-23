@@ -34,27 +34,42 @@ class _LoginState extends State<Login> {
 
     final authService = AuthService();
     try {
-      await authService.getMyProvider();
+      final provider = await authService.findMyProvider();
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const Dashboard()),
-        (route) => false,
-      );
-    } catch (_) {
-      if (!mounted) return;
-      if (!widget.providerMode) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      if (provider != null) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const Dashboard()),
+          (route) => false,
+        );
         return;
       }
+
+      if (widget.providerMode) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Finish provider registration to open your dashboard.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const ProviderReg()),
+          (route) => false,
+        );
+        return;
+      }
+
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil('/customer', (route) => false);
+    } on AuthServiceException catch (error) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Finish provider registration to open your dashboard.'),
+        SnackBar(
+          content: Text(error.message),
           behavior: SnackBarBehavior.floating,
         ),
-      );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const ProviderReg()),
-        (route) => false,
       );
     }
   }
