@@ -6142,7 +6142,10 @@ class _ProviderSectionPageState extends State<_ProviderSectionPage> {
 
   void _reload() {
     if (!mounted) return;
-    setState(() => _items = _load());
+    final nextItems = _load();
+    setState(() {
+      _items = nextItems;
+    });
     widget.onChanged();
   }
 

@@ -35,7 +35,12 @@ class _ProAnalyticsPageState extends State<ProAnalyticsPage> {
       ? _service.load()
       : Future.value(const {});
 
-  void _reload() => setState(() => _future = _service.load());
+  void _reload() {
+    final nextAnalytics = _service.load();
+    setState(() {
+      _future = nextAnalytics;
+    });
+  }
 
   @override
   void didUpdateWidget(covariant ProAnalyticsPage oldWidget) {

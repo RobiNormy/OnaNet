@@ -44,7 +44,10 @@ class _ProviderTeamAccountsPageState extends State<ProviderTeamAccountsPage> {
 
   void _reload() {
     if (!mounted) return;
-    setState(() => _accounts = _load());
+    final nextAccounts = _load();
+    setState(() {
+      _accounts = nextAccounts;
+    });
   }
 
   Future<void> _addAccount() async {
