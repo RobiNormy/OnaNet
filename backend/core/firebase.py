@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import anyio
 import firebase_admin
@@ -21,15 +22,19 @@ def _init_firebase_admin() -> None:
     except ValueError:
         pass
 
+    credential_path = settings.firebase_service_account_path
+    if not credential_path or not Path(credential_path).is_file():
+        log.info(
+            "Firebase service account is not configured in this runtime; "
+            "using Firebase API key token verification"
+        )
+        return
+
     try:
         try:
-            credential = credentials.Certificate(
-                settings.firebase_service_account_path
-            )
+            credential = credentials.Certificate(credential_path)
         except ValueError:
-            credential = credentials.RefreshToken(
-                settings.firebase_service_account_path
-            )
+            credential = credentials.RefreshToken(credential_path)
         options = (
             {"projectId": settings.firebase_project_id}
             if settings.firebase_project_id

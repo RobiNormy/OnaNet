@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
-    FIREBASE_SERVICE_ACCOUNT_PATH: str
+    FIREBASE_SERVICE_ACCOUNT_PATH: str | None = None
     FIREBASE_API_KEY: str
     FIREBASE_PROJECT_ID: str | None = None
 
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         return self.SUPABASE_SERVICE_ROLE_KEY
 
     @property
-    def firebase_service_account_path(self) -> str:
+    def firebase_service_account_path(self) -> str | None:
         return self.FIREBASE_SERVICE_ACCOUNT_PATH
 
     @property
