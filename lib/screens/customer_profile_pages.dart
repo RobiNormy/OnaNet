@@ -134,36 +134,12 @@ class PasswordSecurityScreen extends StatelessWidget {
   const PasswordSecurityScreen({super.key});
 
   Future<void> _changeEmail(BuildContext context) async {
-    final controller = TextEditingController(
-      text: FirebaseAuth.instance.currentUser?.email ?? '',
-    );
     final email = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Change email'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.emailAddress,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'New email address',
-            prefixIcon: Icon(Icons.email_outlined),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('Send verification'),
-          ),
-        ],
+      builder: (_) => _EmailChangeDialog(
+        currentEmail: FirebaseAuth.instance.currentUser?.email ?? '',
       ),
     );
-    controller.dispose();
     if (email == null || email.isEmpty || !context.mounted) return;
     try {
       await AuthService().requestEmailChange(email);
@@ -185,62 +161,10 @@ class PasswordSecurityScreen extends StatelessWidget {
   }
 
   Future<void> _changePassword(BuildContext context) async {
-    final current = TextEditingController();
-    final next = TextEditingController();
     final changed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        scrollable: true,
-        title: const Text('Change password'),
-        content: Column(
-          children: [
-            TextField(
-              controller: current,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Current password'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: next,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'New password',
-                helperText: 'Use at least 8 characters.',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              if (next.text.length < 8 || current.text.isEmpty) return;
-              try {
-                await AuthService().changePassword(
-                  currentPassword: current.text,
-                  newPassword: next.text,
-                );
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext, true);
-                }
-              } catch (error) {
-                if (dialogContext.mounted) {
-                  ScaffoldMessenger.of(
-                    dialogContext,
-                  ).showSnackBar(SnackBar(content: Text(error.toString())));
-                }
-              }
-            },
-            child: const Text('Update password'),
-          ),
-        ],
-      ),
+      builder: (_) => const _PasswordChangeDialog(),
     );
-    current.dispose();
-    next.dispose();
     if (changed == true && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Password updated successfully.')),
@@ -290,6 +214,155 @@ class PasswordSecurityScreen extends StatelessWidget {
           title: 'Forgot your password?',
           subtitle: 'Email me a secure password reset link',
           onTap: () => _resetPassword(context),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmailChangeDialog extends StatefulWidget {
+  const _EmailChangeDialog({required this.currentEmail});
+
+  final String currentEmail;
+
+  @override
+  State<_EmailChangeDialog> createState() => _EmailChangeDialogState();
+}
+
+class _EmailChangeDialogState extends State<_EmailChangeDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.currentEmail,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Change email'),
+      content: TextField(
+        controller: _controller,
+        keyboardType: TextInputType.emailAddress,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'New email address',
+          prefixIcon: Icon(Icons.email_outlined),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text.trim()),
+          child: const Text('Send verification'),
+        ),
+      ],
+    );
+  }
+}
+
+class _PasswordChangeDialog extends StatefulWidget {
+  const _PasswordChangeDialog();
+
+  @override
+  State<_PasswordChangeDialog> createState() => _PasswordChangeDialogState();
+}
+
+class _PasswordChangeDialogState extends State<_PasswordChangeDialog> {
+  final _current = TextEditingController();
+  final _next = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _current.dispose();
+    _next.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_saving) return;
+    if (_current.text.isEmpty || _next.text.length < 8) {
+      setState(() {
+        _error =
+            'Enter your current password and a new password of 8+ characters.';
+      });
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await AuthService().changePassword(
+        currentPassword: _current.text,
+        newPassword: _next.text,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      scrollable: true,
+      title: const Text('Change password'),
+      content: Column(
+        children: [
+          TextField(
+            controller: _current,
+            obscureText: true,
+            enabled: !_saving,
+            decoration: const InputDecoration(labelText: 'Current password'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _next,
+            obscureText: true,
+            enabled: !_saving,
+            decoration: const InputDecoration(
+              labelText: 'New password',
+              helperText: 'Use at least 8 characters.',
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _submit,
+          child: _saving
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Update password'),
         ),
       ],
     );
