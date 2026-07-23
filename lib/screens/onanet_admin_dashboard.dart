@@ -83,21 +83,24 @@ class _OnaNetAdminDashboardState extends State<OnaNetAdminDashboard> {
     if (_signingOut) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Sign out of OnaNet Admin?'),
-        content: const Text(
-          'You will need to sign in again to access platform controls.',
+      builder: (dialogContext) => Theme(
+        data: AppTheme.dark(),
+        child: AlertDialog(
+          title: const Text('Sign out of OnaNet Admin?'),
+          content: const Text(
+            'You will need to sign in again to access the OnaNet admin console.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Sign out'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Sign out'),
-          ),
-        ],
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -149,37 +152,42 @@ class _OnaNetAdminDashboardState extends State<OnaNetAdminDashboard> {
     String reason = '';
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(suspended ? 'Restore provider?' : 'Suspend provider?'),
-        content: suspended
-            ? Text(
-                '${_display(provider?['provider_name'])} will return to the public provider directory.',
-              )
-            : TextField(
-                minLines: 3,
-                maxLines: 5,
-                onChanged: (value) => reason = value.trim(),
-                decoration: const InputDecoration(
-                  labelText: 'Investigation reason',
-                  hintText: 'Record why this provider is being suspended',
+      builder: (dialogContext) => Theme(
+        data: AppTheme.dark(),
+        child: AlertDialog(
+          title: Text(suspended ? 'Restore provider?' : 'Suspend provider?'),
+          content: suspended
+              ? Text(
+                  '${_display(provider?['provider_name'])} will return to the public provider directory.',
+                )
+              : TextField(
+                  minLines: 3,
+                  maxLines: 5,
+                  onChanged: (value) => reason = value.trim(),
+                  decoration: const InputDecoration(
+                    labelText: 'Investigation reason',
+                    hintText: 'Record why this provider is being suspended',
+                  ),
                 ),
-              ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: suspended
-                ? null
-                : FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
-            onPressed: () {
-              if (!suspended && reason.isEmpty) return;
-              Navigator.pop(dialogContext, true);
-            },
-            child: Text(suspended ? 'Restore' : 'Suspend'),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: suspended
+                  ? null
+                  : FilledButton.styleFrom(
+                      backgroundColor: Colors.red.shade700,
+                    ),
+              onPressed: () {
+                if (!suspended && reason.isEmpty) return;
+                Navigator.pop(dialogContext, true);
+              },
+              child: Text(suspended ? 'Restore' : 'Suspend'),
+            ),
+          ],
+        ),
       ),
     );
     if (confirmed != true) return;
@@ -199,33 +207,39 @@ class _OnaNetAdminDashboardState extends State<OnaNetAdminDashboard> {
   @override
   Widget build(BuildContext context) {
     final desktop = MediaQuery.sizeOf(context).width >= 840;
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF5F7F8),
-      drawer: desktop
-          ? null
-          : Drawer(
-              backgroundColor: AppTheme.navy,
-              child: SafeArea(child: _SidebarBody(owner: this)),
-            ),
-      body: SafeArea(
-        child: Row(
-          children: [
-            if (desktop) SizedBox(width: 224, child: _SidebarBody(owner: this)),
-            Expanded(
-              child: Column(
-                children: [
-                  _TopBar(
-                    admin: _admin,
-                    showMenu: !desktop,
-                    onMenu: () => _scaffoldKey.currentState?.openDrawer(),
-                    onRefresh: _load,
+    return Theme(
+      data: AppTheme.dark(),
+      child: Builder(
+        builder: (darkContext) => Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: _adminBackground(darkContext),
+          drawer: desktop
+              ? null
+              : Drawer(
+                  backgroundColor: AppTheme.navy,
+                  child: SafeArea(child: _SidebarBody(owner: this)),
+                ),
+          body: SafeArea(
+            child: Row(
+              children: [
+                if (desktop)
+                  SizedBox(width: 224, child: _SidebarBody(owner: this)),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _TopBar(
+                        admin: _admin,
+                        showMenu: !desktop,
+                        onMenu: () => _scaffoldKey.currentState?.openDrawer(),
+                        onRefresh: _load,
+                      ),
+                      Expanded(child: _buildBody(desktop)),
+                    ],
                   ),
-                  Expanded(child: _buildBody(desktop)),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -295,7 +309,7 @@ class _SidebarBody extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'OnaNet',
+                  'OnaNet Admin',
                   style: GoogleFonts.plusJakartaSans(
                     color: Colors.white,
                     fontSize: 18,
@@ -350,7 +364,9 @@ class _SideNavItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Material(
-        color: selected ? Colors.white : Colors.transparent,
+        color: selected
+            ? AppTheme.amber.withValues(alpha: .18)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(9),
         child: InkWell(
           onTap: onTap,
@@ -362,7 +378,7 @@ class _SideNavItem extends StatelessWidget {
                 Icon(
                   icon,
                   size: 20,
-                  color: selected ? AppTheme.navy : const Color(0xFFB6C1CA),
+                  color: selected ? AppTheme.amber : const Color(0xFFB6C1CA),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -370,7 +386,9 @@ class _SideNavItem extends StatelessWidget {
                     label,
                     softWrap: true,
                     style: TextStyle(
-                      color: selected ? AppTheme.navy : const Color(0xFFB6C1CA),
+                      color: selected
+                          ? AppTheme.amber
+                          : const Color(0xFFB6C1CA),
                       fontSize: 13,
                       fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
                     ),
@@ -405,9 +423,9 @@ class _TopBar extends StatelessWidget {
     return Container(
       height: 72,
       padding: const EdgeInsets.symmetric(horizontal: 18),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF5F7F8),
-        border: Border(bottom: BorderSide(color: Color(0xFFE4E9EC))),
+      decoration: BoxDecoration(
+        color: _adminBackground(context),
+        border: Border(bottom: BorderSide(color: _adminBorder(context))),
       ),
       child: Row(
         children: [
@@ -415,15 +433,35 @@ class _TopBar extends StatelessWidget {
             IconButton(onPressed: onMenu, icon: const Icon(Icons.menu_rounded)),
             const SizedBox(width: 4),
           ],
-          const Expanded(
-            child: Text(
-              'Platform control',
-              softWrap: true,
-              style: TextStyle(
-                color: AppTheme.navy,
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-              ),
+          Expanded(
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: AppTheme.amber.withValues(alpha: .14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.wifi_rounded,
+                    color: AppTheme.amber,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    'OnaNet Admin',
+                    softWrap: true,
+                    style: TextStyle(
+                      color: _adminText(context),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           IconButton(
@@ -453,8 +491,8 @@ class _TopBar extends StatelessWidget {
                 Text(
                   name,
                   softWrap: true,
-                  style: const TextStyle(
-                    color: AppTheme.navy,
+                  style: TextStyle(
+                    color: _adminText(context),
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
                   ),
@@ -462,7 +500,10 @@ class _TopBar extends StatelessWidget {
                 Text(
                   email,
                   softWrap: true,
-                  style: const TextStyle(color: AppTheme.darkGray, fontSize: 9),
+                  style: TextStyle(
+                    color: _adminMutedText(context),
+                    fontSize: 9,
+                  ),
                 ),
               ],
             ),
@@ -512,7 +553,7 @@ class _AdminPage extends StatelessWidget {
         Text(
           _sectionTitle(section),
           style: GoogleFonts.plusJakartaSans(
-            color: AppTheme.navy,
+            color: _adminText(context),
             fontSize: width < 500 ? 24 : 29,
             fontWeight: FontWeight.w700,
           ),
@@ -731,10 +772,10 @@ class _DirectoryContent extends StatelessWidget {
                     prefixIcon: const Icon(Icons.search_rounded, size: 20),
                     isDense: true,
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: _adminSurface(context),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(9),
-                      borderSide: const BorderSide(color: Color(0xFFDCE3E7)),
+                      borderSide: BorderSide(color: _adminBorder(context)),
                     ),
                   ),
                 ),
@@ -818,8 +859,8 @@ class _ResponsiveAdminTable extends StatelessWidget {
               dataRowMaxHeight: 72,
               horizontalMargin: 8,
               columnSpacing: 28,
-              headingTextStyle: const TextStyle(
-                color: AppTheme.darkGray,
+              headingTextStyle: TextStyle(
+                color: _adminMutedText(context),
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),
@@ -860,12 +901,16 @@ class _DetailPanel extends StatelessWidget {
     final title = _primaryText(section, item);
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _adminSurface(context),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE1E7EA)),
+        border: Border.all(color: _adminBorder(context)),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.navy.withValues(alpha: .05),
+            color: Colors.black.withValues(
+              alpha: Theme.of(context).brightness == Brightness.dark
+                  ? .18
+                  : .05,
+            ),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -888,8 +933,8 @@ class _DetailPanel extends StatelessWidget {
                   title,
                   textAlign: TextAlign.center,
                   softWrap: true,
-                  style: const TextStyle(
-                    color: AppTheme.navy,
+                  style: TextStyle(
+                    color: _adminText(context),
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
                   ),
@@ -899,8 +944,8 @@ class _DetailPanel extends StatelessWidget {
                   _secondaryText(section, item),
                   textAlign: TextAlign.center,
                   softWrap: true,
-                  style: const TextStyle(
-                    color: AppTheme.darkGray,
+                  style: TextStyle(
+                    color: _adminMutedText(context),
                     fontSize: 11,
                   ),
                 ),
@@ -1013,9 +1058,9 @@ class _MobileDetailSheet extends StatelessWidget {
       maxChildSize: .94,
       builder: (context, controller) => Container(
         padding: const EdgeInsets.all(14),
-        decoration: const BoxDecoration(
-          color: Color(0xFFF5F7F8),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        decoration: BoxDecoration(
+          color: _adminBackground(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
         ),
         child: ListView(controller: controller, children: [child]),
       ),
@@ -1034,9 +1079,9 @@ class _Panel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFBFCFA),
+        color: _adminSurface(context),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE1E7EA)),
+        border: Border.all(color: _adminBorder(context)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1045,8 +1090,8 @@ class _Panel extends StatelessWidget {
             Text(
               title!,
               softWrap: true,
-              style: const TextStyle(
-                color: AppTheme.navy,
+              style: TextStyle(
+                color: _adminText(context),
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
               ),
@@ -1096,8 +1141,8 @@ class _Metric extends StatelessWidget {
                 children: [
                   Text(
                     value,
-                    style: const TextStyle(
-                      color: AppTheme.navy,
+                    style: TextStyle(
+                      color: _adminText(context),
                       fontSize: 21,
                       fontWeight: FontWeight.w900,
                     ),
@@ -1105,8 +1150,8 @@ class _Metric extends StatelessWidget {
                   Text(
                     label,
                     softWrap: true,
-                    style: const TextStyle(
-                      color: AppTheme.darkGray,
+                    style: TextStyle(
+                      color: _adminMutedText(context),
                       fontSize: 11,
                     ),
                   ),
@@ -1154,8 +1199,8 @@ class _CompactRow extends StatelessWidget {
                   Text(
                     title,
                     softWrap: true,
-                    style: const TextStyle(
-                      color: AppTheme.navy,
+                    style: TextStyle(
+                      color: _adminText(context),
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -1163,8 +1208,8 @@ class _CompactRow extends StatelessWidget {
                   Text(
                     subtitle,
                     softWrap: true,
-                    style: const TextStyle(
-                      color: AppTheme.darkGray,
+                    style: TextStyle(
+                      color: _adminMutedText(context),
                       fontSize: 11,
                     ),
                   ),
@@ -1251,7 +1296,7 @@ class _DetailRow extends StatelessWidget {
           width: 88,
           child: Text(
             label,
-            style: const TextStyle(color: AppTheme.darkGray, fontSize: 11),
+            style: TextStyle(color: _adminMutedText(context), fontSize: 11),
           ),
         ),
         Expanded(
@@ -1259,8 +1304,8 @@ class _DetailRow extends StatelessWidget {
             value,
             textAlign: TextAlign.right,
             softWrap: true,
-            style: const TextStyle(
-              color: AppTheme.navy,
+            style: TextStyle(
+              color: _adminText(context),
               fontSize: 11,
               fontWeight: FontWeight.w800,
             ),
@@ -1391,7 +1436,6 @@ DataCell _identityCell(String title, String subtitle, String? imageUrl) {
                 title,
                 softWrap: true,
                 style: const TextStyle(
-                  color: AppTheme.navy,
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
                 ),
@@ -1399,7 +1443,7 @@ DataCell _identityCell(String title, String subtitle, String? imageUrl) {
               Text(
                 subtitle,
                 softWrap: true,
-                style: const TextStyle(color: AppTheme.darkGray, fontSize: 9),
+                style: const TextStyle(fontSize: 9),
               ),
             ],
           ),
@@ -1561,4 +1605,34 @@ Map<String, dynamic> _map(dynamic value) =>
 List<Map<String, dynamic>> _mapList(dynamic value) {
   if (value is! List) return const [];
   return value.whereType<Map>().map(Map<String, dynamic>.from).toList();
+}
+
+Color _adminBackground(BuildContext context) {
+  return Theme.of(context).brightness == Brightness.dark
+      ? AppTheme.navy
+      : AppTheme.offWhite;
+}
+
+Color _adminSurface(BuildContext context) {
+  return Theme.of(context).brightness == Brightness.dark
+      ? AppTheme.navyMid
+      : AppTheme.white;
+}
+
+Color _adminBorder(BuildContext context) {
+  return Theme.of(context).brightness == Brightness.dark
+      ? AppTheme.navyLight
+      : AppTheme.lightGray;
+}
+
+Color _adminText(BuildContext context) {
+  return Theme.of(context).brightness == Brightness.dark
+      ? AppTheme.offWhite
+      : AppTheme.navy;
+}
+
+Color _adminMutedText(BuildContext context) {
+  return Theme.of(context).brightness == Brightness.dark
+      ? AppTheme.gray
+      : AppTheme.darkGray;
 }
