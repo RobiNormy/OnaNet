@@ -555,7 +555,10 @@ class _DemandMapCard extends StatefulWidget {
 }
 
 class _DemandMapCardState extends State<_DemandMapCard> {
+  final ScrollController _areaListController = ScrollController();
   Map<String, dynamic>? selected;
+  bool _showAreaList = false;
+  String _areaQuery = '';
 
   List<String> _providerNames(Map<String, dynamic> zone) =>
       (zone['provider_names'] as List? ?? const [])
@@ -568,6 +571,12 @@ class _DemandMapCardState extends State<_DemandMapCard> {
     'red' => Colors.red,
     _ => Colors.amber,
   };
+
+  @override
+  void dispose() {
+    _areaListController.dispose();
+    super.dispose();
+  }
 
   void _openFullMap(
     BuildContext context,
@@ -597,7 +606,41 @@ class _DemandMapCardState extends State<_DemandMapCard> {
       title: 'Demand by Top Locations',
       child: Column(
         children: [
-          if (center == null)
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: AppTheme.amber.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _DemandViewButton(
+                    label: 'Map',
+                    icon: Icons.map_outlined,
+                    selected: !_showAreaList,
+                    onTap: () => setState(() {
+                      _showAreaList = false;
+                    }),
+                  ),
+                ),
+                Expanded(
+                  child: _DemandViewButton(
+                    label: 'List',
+                    icon: Icons.format_list_bulleted_rounded,
+                    selected: _showAreaList,
+                    onTap: () => setState(() {
+                      _showAreaList = true;
+                    }),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_showAreaList)
+            _buildAreaList(context, valid)
+          else if (center == null)
             const SizedBox(
               height: 180,
               child: Center(
@@ -686,20 +729,22 @@ class _DemandMapCardState extends State<_DemandMapCard> {
                 ],
               ),
             ),
-          const SizedBox(height: 12),
-          const Wrap(
-            spacing: 14,
-            runSpacing: 8,
-            children: [
-              _DemandLegend(color: Colors.green, label: 'You serve here'),
-              _DemandLegend(
-                color: Colors.amber,
-                label: 'You serve here, no leads yet',
-              ),
-              _DemandLegend(color: Colors.red, label: 'You are not listed'),
-            ],
-          ),
-          if (selected != null)
+          if (!_showAreaList) ...[
+            const SizedBox(height: 12),
+            const Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: [
+                _DemandLegend(color: Colors.green, label: 'You serve here'),
+                _DemandLegend(
+                  color: Colors.amber,
+                  label: 'You serve here, no leads yet',
+                ),
+                _DemandLegend(color: Colors.red, label: 'You are not listed'),
+              ],
+            ),
+          ],
+          if (!_showAreaList && selected != null)
             Container(
               width: double.infinity,
               margin: const EdgeInsets.only(top: 14),
@@ -740,45 +785,155 @@ class _DemandMapCardState extends State<_DemandMapCard> {
                 ],
               ),
             ),
-          const SizedBox(height: 18),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'OnaNet providers by area',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-            ),
-          ),
-          const SizedBox(height: 6),
-          if (valid.isEmpty)
-            const _Empty(message: 'No provider coverage areas recorded yet.')
-          else
-            ...valid.map((zone) {
-              final names = _providerNames(zone);
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                onTap: () => setState(() => selected = zone),
-                leading: Icon(Icons.location_on, color: _zoneColor(zone)),
-                title: Text(
-                  zone['area_name']?.toString() ?? 'Coverage area',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                subtitle: Text(
-                  names.isEmpty
-                      ? 'No OnaNet provider listed'
-                      : names.join(', '),
-                ),
-                trailing: Icon(
-                  zone['is_listed'] == true
-                      ? Icons.check_circle
-                      : Icons.add_location_alt_outlined,
-                  color: _zoneColor(zone),
-                ),
-              );
-            }),
         ],
       ),
     );
   }
+
+  Widget _buildAreaList(
+    BuildContext context,
+    List<Map<String, dynamic>> valid,
+  ) {
+    if (valid.isEmpty) {
+      return const SizedBox(
+        height: 180,
+        child: Center(
+          child: _Empty(message: 'No provider coverage areas recorded yet.'),
+        ),
+      );
+    }
+    final query = _areaQuery.trim().toLowerCase();
+    final results = valid.where((zone) {
+      if (query.isEmpty) return true;
+      final area = zone['area_name']?.toString().toLowerCase() ?? '';
+      final providers = _providerNames(zone).join(' ').toLowerCase();
+      return area.contains(query) || providers.contains(query);
+    }).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          onChanged: (value) => setState(() {
+            _areaQuery = value;
+          }),
+          decoration: InputDecoration(
+            hintText: 'Search an area or provider',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixText: '${results.length} areas',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 420,
+          child: results.isEmpty
+              ? const Center(
+                  child: _Empty(message: 'No matching area or provider.'),
+                )
+              : Scrollbar(
+                  controller: _areaListController,
+                  thumbVisibility: results.length > 6,
+                  child: ListView.separated(
+                    controller: _areaListController,
+                    primary: false,
+                    itemCount: results.length,
+                    separatorBuilder: (_, _) => Divider(
+                      height: 1,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurfaceVariant.withValues(alpha: .14),
+                    ),
+                    itemBuilder: (context, index) {
+                      final zone = results[index];
+                      final names = _providerNames(zone);
+                      return ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 4,
+                        ),
+                        onTap: () =>
+                            _openFullMap(context, valid, initialZone: zone),
+                        leading: Icon(
+                          Icons.location_on,
+                          color: _zoneColor(zone),
+                        ),
+                        title: Text(
+                          zone['area_name']?.toString() ?? 'Coverage area',
+                          softWrap: true,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Text(
+                          names.isEmpty
+                              ? 'No OnaNet provider listed'
+                              : names.join(', '),
+                          softWrap: true,
+                        ),
+                        trailing: Icon(
+                          zone['is_listed'] == true
+                              ? Icons.check_circle
+                              : Icons.add_location_alt_outlined,
+                          color: _zoneColor(zone),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DemandViewButton extends StatelessWidget {
+  const _DemandViewButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: selected
+        ? Theme.of(context).colorScheme.surface
+        : Colors.transparent,
+    borderRadius: BorderRadius.circular(9),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(9),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: selected
+                  ? AppTheme.amber
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _DemandMapScreen extends StatefulWidget {
