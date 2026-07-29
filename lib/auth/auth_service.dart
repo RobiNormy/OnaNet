@@ -150,6 +150,35 @@ class AuthService {
     }
   }
 
+  Future<void> adminAction(
+    String path, {
+    required String action,
+    String? reason,
+    String? value,
+  }) async {
+    try {
+      await _dio.post<dynamic>(
+        _url('/admin$path'),
+        data: {'action': action, 'reason': reason, 'value': value},
+        options: await _authorizedOptions(),
+      );
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
+  Future<void> updateAdminPackage(String id, bool available) async {
+    try {
+      await _dio.patch<dynamic>(
+        _url('/admin/packages/$id'),
+        data: {'action': 'availability', 'value': available.toString()},
+        options: await _authorizedOptions(),
+      );
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
   Future<Map<String, dynamic>> updateMyAccount({
     required String firstName,
     required String lastName,

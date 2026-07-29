@@ -18,8 +18,65 @@ class DocumentDecision(BaseModel):
 
 
 class ProviderModeration(BaseModel):
-    status: Literal["approved", "suspended"]
+    status: Literal["approved", "suspended", "banned"]
     reason: str | None = Field(default=None, max_length=1000)
+
+
+class AdminAction(BaseModel):
+    action: str = Field(min_length=2, max_length=40)
+    reason: str | None = Field(default=None, max_length=1000)
+    value: str | None = Field(default=None, max_length=100)
+
+
+async def ensure_admin_schema() -> None:
+    """Small additive schema used by the control panel.
+
+    Keeping moderation state separate avoids changing the public account model
+    and gives us a useful audit trail.
+    """
+    async with get_db_connection() as db:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_user_moderation (
+                user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                status text NOT NULL DEFAULT 'active',
+                reason text,
+                updated_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS admin_reports (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                report_type text NOT NULL,
+                reporter_name text NOT NULL,
+                reported_provider_id uuid REFERENCES providers(id) ON DELETE SET NULL,
+                reported_name text NOT NULL,
+                details text,
+                status text NOT NULL DEFAULT 'open',
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS admin_invoices (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                invoice_number text UNIQUE NOT NULL,
+                provider_id uuid NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+                plan text NOT NULL,
+                amount numeric(12,2) NOT NULL DEFAULT 0,
+                period text,
+                due_date date,
+                status text NOT NULL DEFAULT 'pending',
+                created_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS admin_notifications (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                provider_id uuid REFERENCES providers(id) ON DELETE CASCADE,
+                user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+                title text NOT NULL,
+                message text NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now()
+            );
+            ALTER TABLE provider_packages
+                ADD COLUMN IF NOT EXISTS is_available boolean NOT NULL DEFAULT true;
+            """
+        )
 
 
 def _iso(value: Any) -> str | None:
@@ -59,9 +116,13 @@ async def admin_snapshot(
                 u.profile_image_url, u.auth_provider, u.role,
                 u.is_phone_verified, u.is_profile_complete, u.created_at,
                 p.id AS provider_id, p.provider_name, p.status AS provider_status,
-                p.subscription_tier, p.is_verified
+                p.subscription_tier, p.is_verified,
+                coalesce(m.status, 'active') AS status,
+                (SELECT count(*)::int FROM installation_requests ir
+                 WHERE ir.user_id = u.id) AS ticket_count
             FROM users u
             LEFT JOIN providers p ON p.user_id = u.id
+            LEFT JOIN admin_user_moderation m ON m.user_id = u.id
             ORDER BY u.created_at DESC
             """
         )
@@ -70,7 +131,8 @@ async def admin_snapshot(
             SELECT
                 p.id, p.provider_name, p.business_name, p.provider_type,
                 p.primary_city, p.logo_url, p.status, p.is_verified,
-                p.subscription_tier, p.created_at, u.email,
+                p.subscription_tier, p.subscription_expires_at,
+                p.created_at, u.email,
                 concat_ws(
                     ' ',
                     nullif(trim(u.first_name), ''),
@@ -101,6 +163,34 @@ async def admin_snapshot(
             ORDER BY
                 CASE d.status WHEN 'pending' THEN 0 ELSE 1 END,
                 d.created_at DESC
+            """
+        )
+        packages = await db.fetch(
+            """
+            SELECT pp.*, p.provider_name, p.provider_type
+            FROM provider_packages pp JOIN providers p ON p.id=pp.provider_id
+            ORDER BY pp.created_at DESC
+            """
+        )
+        coverage = await db.fetch(
+            """
+            SELECT ca.*, p.provider_name, p.provider_type
+            FROM provider_coverage_areas ca JOIN providers p ON p.id=ca.provider_id
+            ORDER BY p.provider_name, ca.area_name
+            """
+        )
+        reports = await db.fetch(
+            """
+            SELECT r.*, p.provider_name
+            FROM admin_reports r LEFT JOIN providers p ON p.id=r.reported_provider_id
+            ORDER BY r.created_at DESC
+            """
+        )
+        invoices = await db.fetch(
+            """
+            SELECT i.*, p.provider_name
+            FROM admin_invoices i JOIN providers p ON p.id=i.provider_id
+            ORDER BY i.created_at DESC
             """
         )
 
@@ -143,7 +233,23 @@ async def admin_snapshot(
             }
             for row in documents
         ],
+        "packages": [_json_row(row) for row in packages],
+        "coverage_zones": [_json_row(row) for row in coverage],
+        "reports": [_json_row(row) for row in reports],
+        "invoices": [_json_row(row) for row in invoices],
     }
+
+
+def _json_row(row: Any) -> dict[str, Any]:
+    result = dict(row)
+    for key, value in list(result.items()):
+        if hasattr(value, "isoformat"):
+            result[key] = value.isoformat()
+        elif key == "id" or key.endswith("_id"):
+            result[key] = str(value) if value is not None else None
+        elif value.__class__.__name__ == "Decimal":
+            result[key] = float(value)
+    return result
 
 
 @router.patch("/documents/{document_id}")
@@ -230,3 +336,163 @@ async def moderate_provider(
         "status": row["status"],
         "reason": body.reason,
     }
+
+
+@router.post("/providers/{provider_id}/verification")
+async def verify_provider(
+    provider_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    await _require_admin(authorization)
+    approved = body.action == "approve"
+    async with get_db_connection() as db:
+        async with db.transaction():
+            exists = await db.fetchval("SELECT EXISTS(SELECT 1 FROM providers WHERE id=$1)", provider_id)
+            if not exists:
+                raise HTTPException(status_code=404, detail="Provider not found.")
+            await db.execute(
+                "UPDATE provider_documents SET status=$2 WHERE provider_id=$1",
+                provider_id, "approved" if approved else "rejected",
+            )
+            await db.execute(
+                "UPDATE providers SET is_verified=$2, updated_at=now() WHERE id=$1",
+                provider_id, approved,
+            )
+            await db.execute(
+                """INSERT INTO admin_notifications(provider_id,title,message)
+                   VALUES($1,$2,$3)""",
+                provider_id,
+                "Verification approved" if approved else "Verification needs attention",
+                "Your provider account is now verified." if approved
+                else f"Your verification was rejected: {body.reason or 'Documents did not meet requirements.'}",
+            )
+    return {"ok": True}
+
+
+@router.patch("/packages/{package_id}")
+async def update_package(
+    package_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    await _require_admin(authorization)
+    if body.action != "availability" or body.value not in {"true", "false"}:
+        raise HTTPException(status_code=400, detail="Invalid package action.")
+    async with get_db_connection() as db:
+        row = await db.fetchrow(
+            "UPDATE provider_packages SET is_available=$2 WHERE id=$1 RETURNING id,is_available",
+            package_id, body.value == "true",
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Package not found.")
+    return _json_row(row)
+
+
+@router.post("/users/{user_id}/moderation")
+async def moderate_user(
+    user_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    await _require_admin(authorization)
+    if body.action not in {"ban", "unban"}:
+        raise HTTPException(status_code=400, detail="Invalid user action.")
+    state = "banned" if body.action == "ban" else "active"
+    async with get_db_connection() as db:
+        exists = await db.fetchval("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)", user_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="User not found.")
+        await db.execute(
+            """INSERT INTO admin_user_moderation(user_id,status,reason)
+               VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE
+               SET status=excluded.status,reason=excluded.reason,updated_at=now()""",
+            user_id, state, body.reason,
+        )
+    return {"id": str(user_id), "status": state}
+
+
+@router.post("/reports/{report_id}/action")
+async def act_on_report(
+    report_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    await _require_admin(authorization)
+    allowed = {"warn", "suspend", "ban", "dismiss", "investigate"}
+    if body.action not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid report action.")
+    async with get_db_connection() as db:
+        async with db.transaction():
+            report = await db.fetchrow(
+                "SELECT reported_provider_id FROM admin_reports WHERE id=$1", report_id
+            )
+            if report is None:
+                raise HTTPException(status_code=404, detail="Report not found.")
+            final_status = "resolved" if body.action in {"dismiss", "ban"} else "investigating"
+            await db.execute(
+                "UPDATE admin_reports SET status=$2,updated_at=now() WHERE id=$1",
+                report_id, final_status,
+            )
+            provider_id = report["reported_provider_id"]
+            if provider_id and body.action in {"suspend", "ban"}:
+                await db.execute(
+                    "UPDATE providers SET status=$2,updated_at=now() WHERE id=$1",
+                    provider_id, "suspended" if body.action == "suspend" else "banned",
+                )
+            if provider_id and body.action == "warn":
+                await db.execute(
+                    """INSERT INTO admin_notifications(provider_id,title,message)
+                       VALUES($1,'Account warning',$2)""",
+                    provider_id, body.reason or "A report about your account requires attention.",
+                )
+    return {"id": str(report_id), "status": final_status}
+
+
+@router.post("/subscriptions/{provider_id}/action")
+async def change_subscription(
+    provider_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    await _require_admin(authorization)
+    tier = body.value if body.action in {"upgrade", "downgrade"} else "free"
+    if tier not in {"free", "growth", "pro"}:
+        raise HTTPException(status_code=400, detail="Invalid plan.")
+    async with get_db_connection() as db:
+        row = await db.fetchrow(
+            """UPDATE providers SET subscription_tier=$2,
+               subscription_expires_at=CASE WHEN $2='free' THEN NULL
+               ELSE now()+interval '30 days' END,updated_at=now()
+               WHERE id=$1 RETURNING id,subscription_tier""",
+            provider_id, tier,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    return _json_row(row)
+
+
+@router.post("/invoices/{invoice_id}/action")
+async def act_on_invoice(
+    invoice_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    await _require_admin(authorization)
+    if body.action not in {"paid", "remind"}:
+        raise HTTPException(status_code=400, detail="Invalid invoice action.")
+    async with get_db_connection() as db:
+        invoice = await db.fetchrow(
+            "SELECT provider_id,invoice_number FROM admin_invoices WHERE id=$1", invoice_id
+        )
+        if invoice is None:
+            raise HTTPException(status_code=404, detail="Invoice not found.")
+        if body.action == "paid":
+            await db.execute("UPDATE admin_invoices SET status='paid' WHERE id=$1", invoice_id)
+        else:
+            await db.execute(
+                """INSERT INTO admin_notifications(provider_id,title,message)
+                   VALUES($1,'Invoice reminder',$2)""",
+                invoice["provider_id"], f"Invoice {invoice['invoice_number']} is awaiting payment.",
+            )
+    return {"ok": True}

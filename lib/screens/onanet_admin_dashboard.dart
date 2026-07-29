@@ -1,11 +1,33 @@
+import 'dart:math' as math;
+
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:ona_net/auth/auth_service.dart';
 import 'package:ona_net/screens/login.dart';
 import 'package:ona_net/themes/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-enum _AdminSection { dashboard, documents, users, providers }
+enum AdminSection {
+  dashboard('Dashboard', Icons.dashboard_outlined),
+  providers('Providers', Icons.cell_tower_outlined),
+  verification('Verification queue', Icons.fact_check_outlined),
+  packages('Packages', Icons.inventory_2_outlined),
+  coverage('Coverage zones', Icons.map_outlined),
+  users('Users', Icons.people_outline),
+  reports('Reports', Icons.flag_outlined),
+  subscriptions('Subscriptions', Icons.credit_card_outlined),
+  invoices('Invoices', Icons.receipt_long_outlined),
+  revenue('Revenue', Icons.show_chart_outlined);
+
+  const AdminSection(this.label, this.icon);
+  final String label;
+  final IconData icon;
+}
+
+typedef Json = Map<String, dynamic>;
 
 class OnaNetAdminDashboard extends StatefulWidget {
   const OnaNetAdminDashboard({super.key});
@@ -15,1265 +37,1820 @@ class OnaNetAdminDashboard extends StatefulWidget {
 }
 
 class _OnaNetAdminDashboardState extends State<OnaNetAdminDashboard> {
-  final _scaffoldKey = GlobalKey<ScaffoldState>();
-  final _searchController = TextEditingController();
   final _auth = AuthService();
-  _AdminSection _section = _AdminSection.dashboard;
-  Map<String, dynamic>? _snapshot;
-  Map<String, dynamic>? _selected;
-  bool _loading = true;
-  bool _signingOut = false;
-  String? _error;
-  String _statusFilter = 'all';
+  final _scaffold = GlobalKey<ScaffoldState>();
+  AdminSection section = AdminSection.dashboard;
+  Json data = {};
+  bool loading = true;
+  String? error;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    load();
   }
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  List<Map<String, dynamic>> get _users => _mapList(_snapshot?['users']);
-  List<Map<String, dynamic>> get _providers =>
-      _mapList(_snapshot?['providers']);
-  List<Map<String, dynamic>> get _documents =>
-      _mapList(_snapshot?['documents']);
-  Map<String, dynamic> get _admin => _map(_snapshot?['admin']);
-
-  Future<void> _load({bool keepSelection = false}) async {
-    if (mounted) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
-    }
-    try {
-      final data = await _auth.getAdminSnapshot();
-      if (!mounted) return;
-      setState(() {
-        _snapshot = data;
-        _loading = false;
-        if (!keepSelection) _selected = null;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = error.toString();
-        _loading = false;
-      });
-    }
-  }
-
-  void _selectSection(_AdminSection value) {
+  Future<void> load() async {
     setState(() {
-      _section = value;
-      _selected = null;
-      _statusFilter = 'all';
-      _searchController.clear();
+      loading = true;
+      error = null;
     });
-    if (MediaQuery.sizeOf(context).width < 840) Navigator.maybePop(context);
+    try {
+      data = await _auth.getAdminSnapshot();
+    } catch (e) {
+      error = e.toString();
+    }
+    if (mounted) setState(() => loading = false);
   }
 
-  Future<void> _signOut() async {
-    if (_signingOut) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => Theme(
-        data: AppTheme.dark(),
-        child: AlertDialog(
-          title: const Text('Sign out of OnaNet Admin?'),
-          content: const Text(
-            'You will need to sign in again to access the OnaNet admin console.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Sign out'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() => _signingOut = true);
+  Future<void> run(Future<void> Function() action, String success) async {
     try {
-      await _auth.signOut();
+      await action();
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const Login()),
-        (_) => false,
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(success), behavior: SnackBarBehavior.floating),
       );
-    } catch (error) {
+      await load();
+    } catch (e) {
       if (!mounted) return;
-      setState(() => _signingOut = false);
-      _message('Could not sign out: $error', error: true);
-    }
-  }
-
-  void _message(String value, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(value),
-        backgroundColor: error ? Colors.red.shade700 : AppTheme.navy,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  Future<void> _reviewDocument(String status) async {
-    final document = _selected;
-    final id = document?['id']?.toString();
-    if (id == null) return;
-    try {
-      await _auth.reviewAdminDocument(id, status: status);
-      _message(
-        status == 'approved' ? 'Document approved.' : 'Document rejected.',
-      );
-      await _load();
-    } catch (error) {
-      _message('Could not update document: $error', error: true);
-    }
-  }
-
-  Future<void> _moderateProvider() async {
-    final provider = _selected;
-    final id = provider?['id']?.toString();
-    if (id == null) return;
-    final suspended = provider?['status']?.toString() == 'suspended';
-    String reason = '';
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => Theme(
-        data: AppTheme.dark(),
-        child: AlertDialog(
-          title: Text(suspended ? 'Restore provider?' : 'Suspend provider?'),
-          content: suspended
-              ? Text(
-                  '${_display(provider?['provider_name'])} will return to the public provider directory.',
-                )
-              : TextField(
-                  minLines: 3,
-                  maxLines: 5,
-                  onChanged: (value) => reason = value.trim(),
-                  decoration: const InputDecoration(
-                    labelText: 'Investigation reason',
-                    hintText: 'Record why this provider is being suspended',
-                  ),
-                ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: suspended
-                  ? null
-                  : FilledButton.styleFrom(
-                      backgroundColor: Colors.red.shade700,
-                    ),
-              onPressed: () {
-                if (!suspended && reason.isEmpty) return;
-                Navigator.pop(dialogContext, true);
-              },
-              child: Text(suspended ? 'Restore' : 'Suspend'),
-            ),
-          ],
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
         ),
-      ),
-    );
-    if (confirmed != true) return;
-    try {
-      await _auth.moderateAdminProvider(
-        id,
-        status: suspended ? 'approved' : 'suspended',
-        reason: suspended ? null : reason,
       );
-      _message(suspended ? 'Provider restored.' : 'Provider suspended.');
-      await _load();
-    } catch (error) {
-      _message('Could not update provider: $error', error: true);
     }
+  }
+
+  void select(AdminSection value) {
+    setState(() => section = value);
+    if (MediaQuery.sizeOf(context).width < 900) Navigator.maybePop(context);
+  }
+
+  Future<void> signOut() async {
+    if (await _confirm(
+          context,
+          'Sign out?',
+          'You will need to sign in again.',
+        ) !=
+        true) {
+      return;
+    }
+    await _auth.signOut();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const Login()),
+      (_) => false,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final desktop = MediaQuery.sizeOf(context).width >= 840;
+    final desktop = MediaQuery.sizeOf(context).width >= 900;
     return Theme(
-      data: AppTheme.dark(),
-      child: Builder(
-        builder: (darkContext) => Scaffold(
-          key: _scaffoldKey,
-          backgroundColor: _adminBackground(darkContext),
-          drawer: desktop
-              ? null
-              : Drawer(
-                  backgroundColor: AppTheme.navy,
-                  child: SafeArea(child: _SidebarBody(owner: this)),
-                ),
-          body: SafeArea(
-            child: Row(
-              children: [
-                if (desktop)
-                  SizedBox(width: 224, child: _SidebarBody(owner: this)),
-                Expanded(
-                  child: Column(
-                    children: [
-                      _TopBar(
-                        admin: _admin,
-                        showMenu: !desktop,
-                        onMenu: () => _scaffoldKey.currentState?.openDrawer(),
-                        onRefresh: _load,
-                      ),
-                      Expanded(child: _buildBody(desktop)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+      data: AppTheme.dark().copyWith(
+        textTheme: GoogleFonts.plusJakartaSansTextTheme(
+          AppTheme.dark().textTheme,
         ),
-      ),
-    );
-  }
-
-  Widget _buildBody(bool desktop) {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_error != null) {
-      return _LoadError(message: _error!, onRetry: _load);
-    }
-    final page = _AdminPage(
-      section: _section,
-      users: _users,
-      providers: _providers,
-      documents: _documents,
-      selected: _selected,
-      searchController: _searchController,
-      statusFilter: _statusFilter,
-      onSearch: (_) => setState(() {}),
-      onFilter: (value) => setState(() => _statusFilter = value),
-      onSelected: (item) => setState(() => _selected = item),
-      onReviewDocument: _reviewDocument,
-      onModerateProvider: _moderateProvider,
-    );
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.all(desktop ? 24 : 14),
-        child: page,
-      ),
-    );
-  }
-}
-
-class _SidebarBody extends StatelessWidget {
-  const _SidebarBody({required this.owner});
-
-  final _OnaNetAdminDashboardState owner;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: AppTheme.navy,
-      padding: const EdgeInsets.fromLTRB(14, 20, 14, 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: AppTheme.amber.withValues(alpha: .16),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.wifi_rounded,
-                    color: AppTheme.amber,
-                    size: 21,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  'OnaNet Admin',
-                  style: GoogleFonts.plusJakartaSans(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 28),
-          for (final item in const [
-            (_AdminSection.dashboard, 'Dashboard', Icons.dashboard_outlined),
-            (_AdminSection.documents, 'Documents', Icons.description_outlined),
-            (_AdminSection.users, 'Users', Icons.people_outline_rounded),
-            (_AdminSection.providers, 'Providers', Icons.cell_tower_outlined),
-          ])
-            _SideNavItem(
-              label: item.$2,
-              icon: item.$3,
-              selected: owner._section == item.$1,
-              onTap: () => owner._selectSection(item.$1),
-            ),
-          const Spacer(),
-          const Divider(color: Color(0xFF243747)),
-          _SideNavItem(
-            label: owner._signingOut ? 'Signing out' : 'Sign out',
-            icon: Icons.logout_rounded,
-            selected: false,
-            onTap: owner._signingOut ? null : owner._signOut,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SideNavItem extends StatelessWidget {
-  const _SideNavItem({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Material(
-        color: selected
-            ? AppTheme.amber.withValues(alpha: .18)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(9),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(9),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  size: 20,
-                  color: selected ? AppTheme.amber : const Color(0xFFB6C1CA),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    label,
-                    softWrap: true,
-                    style: TextStyle(
-                      color: selected
-                          ? AppTheme.amber
-                          : const Color(0xFFB6C1CA),
-                      fontSize: 13,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+        cardTheme: const CardThemeData(
+          elevation: 0,
+          color: Color(0xff12263a),
+          margin: EdgeInsets.zero,
         ),
-      ),
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.admin,
-    required this.showMenu,
-    required this.onMenu,
-    required this.onRefresh,
-  });
-
-  final Map<String, dynamic> admin;
-  final bool showMenu;
-  final VoidCallback onMenu;
-  final VoidCallback onRefresh;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = _display(admin['name'], fallback: 'OnaNet Admin');
-    final email = _display(admin['email']);
-    return Container(
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      decoration: BoxDecoration(
-        color: _adminBackground(context),
-        border: Border(bottom: BorderSide(color: _adminBorder(context))),
-      ),
-      child: Row(
-        children: [
-          if (showMenu) ...[
-            IconButton(onPressed: onMenu, icon: const Icon(Icons.menu_rounded)),
-            const SizedBox(width: 4),
-          ],
-          Expanded(
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: AppTheme.amber.withValues(alpha: .14),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.wifi_rounded,
-                    color: AppTheme.amber,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    'OnaNet Admin',
-                    softWrap: true,
-                    style: TextStyle(
-                      color: _adminText(context),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Refresh real data',
-            onPressed: onRefresh,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-          const SizedBox(width: 6),
-          CircleAvatar(
-            radius: 18,
-            backgroundColor: AppTheme.amber.withValues(alpha: .16),
-            child: Text(
-              _initial(name),
-              style: const TextStyle(
-                color: AppTheme.amberDark,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(width: 9),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 180),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  softWrap: true,
-                  style: TextStyle(
-                    color: _adminText(context),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Text(
-                  email,
-                  softWrap: true,
-                  style: TextStyle(
-                    color: _adminMutedText(context),
-                    fontSize: 9,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AdminPage extends StatelessWidget {
-  const _AdminPage({
-    required this.section,
-    required this.users,
-    required this.providers,
-    required this.documents,
-    required this.selected,
-    required this.searchController,
-    required this.statusFilter,
-    required this.onSearch,
-    required this.onFilter,
-    required this.onSelected,
-    required this.onReviewDocument,
-    required this.onModerateProvider,
-  });
-
-  final _AdminSection section;
-  final List<Map<String, dynamic>> users;
-  final List<Map<String, dynamic>> providers;
-  final List<Map<String, dynamic>> documents;
-  final Map<String, dynamic>? selected;
-  final TextEditingController searchController;
-  final String statusFilter;
-  final ValueChanged<String> onSearch;
-  final ValueChanged<String> onFilter;
-  final ValueChanged<Map<String, dynamic>> onSelected;
-  final ValueChanged<String> onReviewDocument;
-  final VoidCallback onModerateProvider;
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final showPanel = selected != null && width >= 1120;
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          _sectionTitle(section),
-          style: GoogleFonts.plusJakartaSans(
-            color: _adminText(context),
-            fontSize: width < 500 ? 24 : 29,
+        dataTableTheme: const DataTableThemeData(
+          headingTextStyle: TextStyle(
+            color: Color(0xff8fa3b6),
+            fontSize: 12,
             fontWeight: FontWeight.w700,
           ),
+          dataTextStyle: TextStyle(fontSize: 12),
+          dividerThickness: .5,
         ),
-        const SizedBox(height: 18),
-        if (section == _AdminSection.dashboard)
-          _DashboardContent(
-            users: users,
-            providers: providers,
-            documents: documents,
-            onSelected: onSelected,
-          )
-        else
-          _DirectoryContent(
-            section: section,
-            users: users,
-            providers: providers,
-            documents: documents,
-            searchController: searchController,
-            statusFilter: statusFilter,
-            onSearch: onSearch,
-            onFilter: onFilter,
-            onSelected: (item) {
-              onSelected(item);
-              if (width < 1120) {
-                showModalBottomSheet<void>(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.transparent,
-                  builder: (_) => _MobileDetailSheet(
-                    child: _DetailPanel(
-                      section: section,
-                      item: item,
-                      onReviewDocument: onReviewDocument,
-                      onModerateProvider: onModerateProvider,
-                    ),
-                  ),
-                );
-              }
-            },
-          ),
-      ],
-    );
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: content),
-        if (showPanel) ...[
-          const SizedBox(width: 16),
-          SizedBox(
-            width: 292,
-            child: _DetailPanel(
-              section: section,
-              item: selected!,
-              onReviewDocument: onReviewDocument,
-              onModerateProvider: onModerateProvider,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _DashboardContent extends StatelessWidget {
-  const _DashboardContent({
-    required this.users,
-    required this.providers,
-    required this.documents,
-    required this.onSelected,
-  });
-
-  final List<Map<String, dynamic>> users;
-  final List<Map<String, dynamic>> providers;
-  final List<Map<String, dynamic>> documents;
-  final ValueChanged<Map<String, dynamic>> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final pending = documents
-        .where((item) => item['status']?.toString() == 'pending')
-        .length;
-    final verified = providers
-        .where((item) => item['is_verified'] == true)
-        .length;
-    return Column(
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final cardWidth = constraints.maxWidth >= 760
-                ? (constraints.maxWidth - 36) / 4
-                : constraints.maxWidth >= 480
-                ? (constraints.maxWidth - 12) / 2
-                : constraints.maxWidth;
-            return Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                _Metric(
-                  width: cardWidth,
-                  label: 'All users',
-                  value: '${users.length}',
-                  icon: Icons.people_outline_rounded,
-                ),
-                _Metric(
-                  width: cardWidth,
-                  label: 'Providers',
-                  value: '${providers.length}',
-                  icon: Icons.cell_tower_outlined,
-                ),
-                _Metric(
-                  width: cardWidth,
-                  label: 'Pending documents',
-                  value: '$pending',
-                  icon: Icons.pending_actions_outlined,
-                ),
-                _Metric(
-                  width: cardWidth,
-                  label: 'Verified providers',
-                  value: '$verified',
-                  icon: Icons.verified_outlined,
-                ),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 16),
-        _Panel(
-          title: 'Latest document submissions',
-          child: documents.isEmpty
-              ? const _EmptyRow(message: 'No documents have been submitted.')
-              : Column(
-                  children: documents
-                      .take(7)
-                      .map(
-                        (item) => _CompactRow(
-                          leading: _Avatar(
-                            name: _display(item['provider_name']),
-                            imageUrl: item['logo_url']?.toString(),
-                          ),
-                          title: _display(item['provider_name']),
-                          subtitle:
-                              '${_humanize(item['document_type'])} · ${_date(item['created_at'])}',
-                          status: _display(item['status']),
-                          onTap: () => onSelected(item),
-                        ),
-                      )
-                      .toList(),
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-class _DirectoryContent extends StatelessWidget {
-  const _DirectoryContent({
-    required this.section,
-    required this.users,
-    required this.providers,
-    required this.documents,
-    required this.searchController,
-    required this.statusFilter,
-    required this.onSearch,
-    required this.onFilter,
-    required this.onSelected,
-  });
-
-  final _AdminSection section;
-  final List<Map<String, dynamic>> users;
-  final List<Map<String, dynamic>> providers;
-  final List<Map<String, dynamic>> documents;
-  final TextEditingController searchController;
-  final String statusFilter;
-  final ValueChanged<String> onSearch;
-  final ValueChanged<String> onFilter;
-  final ValueChanged<Map<String, dynamic>> onSelected;
-
-  List<Map<String, dynamic>> get _source => switch (section) {
-    _AdminSection.documents => documents,
-    _AdminSection.users => users,
-    _AdminSection.providers => providers,
-    _AdminSection.dashboard => const [],
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final query = searchController.text.trim().toLowerCase();
-    final rows = _source.where((item) {
-      final haystack = item.values.join(' ').toLowerCase();
-      final status = _rowStatus(section, item).toLowerCase();
-      return haystack.contains(query) &&
-          (statusFilter == 'all' || status == statusFilter);
-    }).toList();
-    final filters = <String>{
-      'all',
-      ..._source.map((item) => _rowStatus(section, item).toLowerCase()),
-    }.where((item) => item.isNotEmpty).toList();
-
-    return _Panel(
-      child: Column(
-        children: [
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.spaceBetween,
+      ),
+      child: Scaffold(
+        key: _scaffold,
+        backgroundColor: const Color(0xff081725),
+        drawer: desktop ? null : Drawer(child: _AdminSidebar(owner: this)),
+        body: SafeArea(
+          child: Row(
             children: [
-              SizedBox(
-                width: 270,
-                child: TextField(
-                  controller: searchController,
-                  onChanged: onSearch,
-                  decoration: InputDecoration(
-                    hintText: 'Search real OnaNet records',
-                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                    isDense: true,
-                    filled: true,
-                    fillColor: _adminSurface(context),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(9),
-                      borderSide: BorderSide(color: _adminBorder(context)),
+              if (desktop)
+                SizedBox(width: 236, child: _AdminSidebar(owner: this)),
+              Expanded(
+                child: Column(
+                  children: [
+                    AdminTopBar(
+                      admin: _map(data['admin']),
+                      menu: desktop
+                          ? null
+                          : () => _scaffold.currentState?.openDrawer(),
+                      refresh: load,
                     ),
-                  ),
-                ),
-              ),
-              DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: filters.contains(statusFilter) ? statusFilter : 'all',
-                  borderRadius: BorderRadius.circular(10),
-                  items: filters
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(
-                            value == 'all' ? 'Any status' : _humanize(value),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    if (value != null) onFilter(value);
-                  },
+                    Expanded(
+                      child: loading
+                          ? const Center(child: CircularProgressIndicator())
+                          : error != null
+                          ? _ErrorState(message: error!, retry: load)
+                          : RefreshIndicator(
+                              onRefresh: load,
+                              child: SingleChildScrollView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                padding: EdgeInsets.all(desktop ? 24 : 14),
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 1420,
+                                  ),
+                                  child: AdminScreenHost(
+                                    section: section,
+                                    data: data,
+                                    auth: _auth,
+                                    run: run,
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          if (rows.isEmpty)
-            const _EmptyRow(message: 'No OnaNet records match this view.')
-          else
-            _ResponsiveAdminTable(
-              section: section,
-              rows: rows,
-              onSelected: onSelected,
-            ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _ResponsiveAdminTable extends StatelessWidget {
-  const _ResponsiveAdminTable({
-    required this.section,
-    required this.rows,
-    required this.onSelected,
-  });
-
-  final _AdminSection section;
-  final List<Map<String, dynamic>> rows;
-  final ValueChanged<Map<String, dynamic>> onSelected;
+class _AdminSidebar extends StatelessWidget {
+  const _AdminSidebar({required this.owner});
+  final _OnaNetAdminDashboardState owner;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 650) {
-          return Column(
-            children: rows
-                .map(
-                  (item) => _CompactRow(
-                    leading: _Avatar(
-                      name: _primaryText(section, item),
-                      imageUrl: _imageUrl(section, item),
-                    ),
-                    title: _primaryText(section, item),
-                    subtitle: _secondaryText(section, item),
-                    status: _rowStatus(section, item),
-                    onTap: () => onSelected(item),
-                  ),
-                )
-                .toList(),
-          );
-        }
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minWidth: constraints.maxWidth),
-            child: DataTable(
-              headingRowHeight: 42,
-              dataRowMinHeight: 57,
-              dataRowMaxHeight: 72,
-              horizontalMargin: 8,
-              columnSpacing: 28,
-              headingTextStyle: TextStyle(
-                color: _adminMutedText(context),
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-              ),
-              columns: _columns(
-                section,
-              ).map((label) => DataColumn(label: Text(label))).toList(),
-              rows: rows
-                  .map(
-                    (item) => DataRow(
-                      onSelectChanged: (_) => onSelected(item),
-                      cells: _cells(section, item),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _DetailPanel extends StatelessWidget {
-  const _DetailPanel({
-    required this.section,
-    required this.item,
-    required this.onReviewDocument,
-    required this.onModerateProvider,
-  });
-
-  final _AdminSection section;
-  final Map<String, dynamic> item;
-  final ValueChanged<String> onReviewDocument;
-  final VoidCallback onModerateProvider;
-
-  @override
-  Widget build(BuildContext context) {
-    final title = _primaryText(section, item);
-    return Container(
-      decoration: BoxDecoration(
-        color: _adminSurface(context),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _adminBorder(context)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(
-              alpha: Theme.of(context).brightness == Brightness.dark
-                  ? .18
-                  : .05,
-            ),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              children: [
-                _Avatar(
-                  name: title,
-                  imageUrl: _imageUrl(section, item),
-                  radius: 34,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  softWrap: true,
-                  style: TextStyle(
-                    color: _adminText(context),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _secondaryText(section, item),
-                  textAlign: TextAlign.center,
-                  softWrap: true,
-                  style: TextStyle(
-                    color: _adminMutedText(context),
-                    fontSize: 11,
-                  ),
-                ),
-                const SizedBox(height: 9),
-                _StatusBadge(value: _rowStatus(section, item)),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: _detailRows(section, item)
-                  .map(
-                    (row) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _DetailRow(label: row.$1, value: row.$2),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-          if (section == _AdminSection.documents) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+    return ColoredBox(
+      color: const Color(0xff0b1c2c),
+      child: SafeArea(
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 22, 20, 18),
+              child: Row(
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: () => _openDocument(context, item['file_url']),
-                    icon: const Icon(Icons.open_in_new_rounded),
-                    label: const Text('Open submitted file'),
+                  Icon(Icons.wifi_rounded, color: AppTheme.amber),
+                  SizedBox(width: 10),
+                  Text(
+                    'OnaNet',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                   ),
-                  if (item['status']?.toString() == 'pending') ...[
-                    const SizedBox(height: 9),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: FilledButton(
-                            onPressed: () => onReviewDocument('approved'),
-                            child: const Text('Approve'),
+                  Spacer(),
+                  _Pill('Admin'),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(10),
+                children: [
+                  const _NavLabel('OVERVIEW'),
+                  _item(context, AdminSection.dashboard),
+                  const _NavLabel('PROVIDERS'),
+                  for (final value in [
+                    AdminSection.providers,
+                    AdminSection.verification,
+                    AdminSection.packages,
+                    AdminSection.coverage,
+                  ])
+                    _item(context, value),
+                  const _NavLabel('PEOPLE'),
+                  _item(context, AdminSection.users),
+                  _item(context, AdminSection.reports),
+                  const _NavLabel('FINANCE'),
+                  for (final value in [
+                    AdminSection.subscriptions,
+                    AdminSection.invoices,
+                    AdminSection.revenue,
+                  ])
+                    _item(context, value),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.logout, size: 19),
+              title: const Text('Sign out', style: TextStyle(fontSize: 13)),
+              onTap: owner.signOut,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _item(BuildContext context, AdminSection value) {
+    final selected = value == owner.section;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: ListTile(
+        dense: true,
+        selected: selected,
+        selectedTileColor: AppTheme.amber.withValues(alpha: .14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+        leading: Icon(value.icon, size: 19),
+        title: Text(value.label, style: const TextStyle(fontSize: 13)),
+        onTap: () => owner.select(value),
+      ),
+    );
+  }
+}
+
+class _NavLabel extends StatelessWidget {
+  const _NavLabel(this.value);
+  final String value;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 15, 12, 7),
+    child: Text(
+      value,
+      style: const TextStyle(
+        color: Color(0xff60778c),
+        fontSize: 9,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1,
+      ),
+    ),
+  );
+}
+
+class AdminTopBar extends StatelessWidget {
+  const AdminTopBar({
+    super.key,
+    required this.admin,
+    required this.menu,
+    required this.refresh,
+  });
+  final Json admin;
+  final VoidCallback? menu;
+  final VoidCallback refresh;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 68,
+    padding: const EdgeInsets.symmetric(horizontal: 18),
+    decoration: const BoxDecoration(
+      color: Color(0xff0b1c2c),
+      border: Border(bottom: BorderSide(color: Color(0xff1f3447))),
+    ),
+    child: Row(
+      children: [
+        if (menu != null)
+          IconButton(onPressed: menu, icon: const Icon(Icons.menu)),
+        const Text(
+          'Control panel',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+        ),
+        const Spacer(),
+        IconButton(
+          tooltip: 'Refresh live data',
+          onPressed: refresh,
+          icon: const Icon(Icons.refresh, size: 20),
+        ),
+        const SizedBox(width: 8),
+        CircleAvatar(
+          radius: 17,
+          backgroundColor: AppTheme.amber.withValues(alpha: .18),
+          child: Text(_initial(_str(admin['name']))),
+        ),
+        const SizedBox(width: 9),
+        if (MediaQuery.sizeOf(context).width > 560)
+          Text(
+            _str(admin['name'], 'Administrator'),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+      ],
+    ),
+  );
+}
+
+class AdminScreenHost extends StatelessWidget {
+  const AdminScreenHost({
+    super.key,
+    required this.section,
+    required this.data,
+    required this.auth,
+    required this.run,
+  });
+  final AdminSection section;
+  final Json data;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+
+  @override
+  Widget build(BuildContext context) {
+    final users = _list(data['users']);
+    final providers = _list(data['providers']);
+    final documents = _list(data['documents']);
+    final packages = _list(data['packages']);
+    final zones = _list(data['coverage_zones']);
+    final reports = _list(data['reports']);
+    final invoices = _list(data['invoices']);
+    return switch (section) {
+      AdminSection.dashboard => DashboardScreen(
+        users: users,
+        providers: providers,
+        documents: documents,
+        packages: packages,
+        reports: reports,
+        invoices: invoices,
+      ),
+      AdminSection.providers => ProvidersScreen(
+        providers: providers,
+        auth: auth,
+        run: run,
+      ),
+      AdminSection.verification => VerificationQueueScreen(
+        providers: providers,
+        documents: documents,
+        auth: auth,
+        run: run,
+      ),
+      AdminSection.packages => PackagesScreen(
+        packages: packages,
+        auth: auth,
+        run: run,
+      ),
+      AdminSection.coverage => CoverageZonesScreen(zones: zones),
+      AdminSection.users => UsersScreen(users: users, auth: auth, run: run),
+      AdminSection.reports => ReportsScreen(
+        reports: reports,
+        auth: auth,
+        run: run,
+      ),
+      AdminSection.subscriptions => SubscriptionsScreen(
+        providers: providers,
+        auth: auth,
+        run: run,
+      ),
+      AdminSection.invoices => InvoicesScreen(
+        invoices: invoices,
+        auth: auth,
+        run: run,
+      ),
+      AdminSection.revenue => RevenueScreen(
+        providers: providers,
+        invoices: invoices,
+      ),
+    };
+  }
+}
+
+class DashboardScreen extends StatelessWidget {
+  const DashboardScreen({
+    super.key,
+    required this.users,
+    required this.providers,
+    required this.documents,
+    required this.packages,
+    required this.reports,
+    required this.invoices,
+  });
+  final List<Json> users, providers, documents, packages, reports, invoices;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = documents.where((e) => e['status'] == 'pending').length;
+    final activeReports = reports
+        .where((e) => e['status'] != 'resolved')
+        .length;
+    final mrr = providers.fold<double>(
+      0,
+      (sum, p) => sum + _planPrice(_str(p['subscription_tier'])),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading('Dashboard', 'A live view of the whole OnaNet platform'),
+        _MetricGrid(
+          items: [
+            (
+              'Total providers',
+              '${providers.length}',
+              Icons.cell_tower,
+              '+ live',
+            ),
+            ('Total users', '${users.length}', Icons.people, '+ live'),
+            ('Monthly revenue', _money(mrr), Icons.payments_outlined, 'MRR'),
+            (
+              'Pending verification',
+              '$pending',
+              Icons.fact_check_outlined,
+              'needs review',
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _ResponsivePair(
+          left: _Panel(
+            title: 'Verification queue',
+            child: _MiniList(
+              items: documents
+                  .where((e) => e['status'] == 'pending')
+                  .take(5)
+                  .toList(),
+              title: (e) => _str(e['provider_name']),
+              subtitle: (e) => _pretty(_str(e['document_type'])),
+              icon: Icons.description_outlined,
+            ),
+          ),
+          right: _Panel(
+            title: 'Reports & flags',
+            child: reports.isEmpty
+                ? _Empty('No reports have been submitted')
+                : _MiniList(
+                    items: reports
+                        .where((e) => e['status'] != 'resolved')
+                        .take(5)
+                        .toList(),
+                    title: (e) => _pretty(_str(e['report_type'])),
+                    subtitle: (e) => _str(e['reported_name']),
+                    icon: Icons.flag_outlined,
+                  ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        _Panel(
+          title: 'Provider management',
+          child: _TableWrap(
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('Provider')),
+                DataColumn(label: Text('Type')),
+                DataColumn(label: Text('Plan')),
+                DataColumn(label: Text('Verification')),
+                DataColumn(label: Text('Status')),
+              ],
+              rows: providers.take(6).map(_providerRow).toList(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        _ResponsivePair(
+          left: _Panel(
+            title: 'Subscription revenue',
+            child: Column(
+              children: ['free', 'growth', 'pro'].map((plan) {
+                final count = providers
+                    .where((p) => p['subscription_tier'] == plan)
+                    .length;
+                return ListTile(
+                  dense: true,
+                  title: Text(_pretty(plan)),
+                  trailing: Text(
+                    '$count  ·  ${_money(count * _planPrice(plan))}',
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          right: _Panel(
+            title: 'Recent invoices',
+            child: invoices.isEmpty
+                ? _Empty('Invoices will appear as they are issued')
+                : _MiniList(
+                    items: invoices.take(5).toList(),
+                    title: (e) => _str(e['provider_name']),
+                    subtitle: (e) =>
+                        '${_money(_num(e['amount']))} · ${_pretty(_str(e['status']))}',
+                    icon: Icons.receipt_long,
+                  ),
+          ),
+        ),
+        if (activeReports > 0) const SizedBox(height: 4),
+      ],
+    );
+  }
+}
+
+class ProvidersScreen extends StatefulWidget {
+  const ProvidersScreen({
+    super.key,
+    required this.providers,
+    required this.auth,
+    required this.run,
+  });
+  final List<Json> providers;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+  @override
+  State<ProvidersScreen> createState() => _ProvidersScreenState();
+}
+
+class _ProvidersScreenState extends State<ProvidersScreen> {
+  String query = '', plan = 'all', status = 'all';
+  int page = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.providers.where((p) {
+      final hay = '${p['provider_name']} ${p['owner_name']} ${p['email']}'
+          .toLowerCase();
+      final planOk = plan == 'all' || p['subscription_tier'] == plan;
+      final state = p['status'] == 'banned'
+          ? 'banned'
+          : p['is_verified'] == true
+          ? 'verified'
+          : 'pending';
+      return hay.contains(query.toLowerCase()) &&
+          planOk &&
+          (status == 'all' || state == status);
+    }).toList();
+    final pages = math.max(1, (filtered.length / 10).ceil());
+    if (page >= pages) page = pages - 1;
+    final shown = filtered.skip(page * 10).take(10);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading(
+          'Providers',
+          'Search, verify and moderate every network provider',
+        ),
+        _Search(
+          onChanged: (v) => setState(() => query = v),
+          hint: 'Search providers',
+        ),
+        _Filters(
+          values: const ['all', 'free', 'growth', 'pro'],
+          selected: plan,
+          onSelected: (v) => setState(() {
+            plan = v;
+            page = 0;
+          }),
+        ),
+        _Filters(
+          values: const ['all', 'verified', 'pending', 'banned'],
+          selected: status,
+          onSelected: (v) => setState(() {
+            status = v;
+            page = 0;
+          }),
+        ),
+        _Panel(
+          title: '${filtered.length} providers',
+          child: _TableWrap(
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('Provider')),
+                DataColumn(label: Text('Type')),
+                DataColumn(label: Text('Plan')),
+                DataColumn(label: Text('Customers')),
+                DataColumn(label: Text('Verification')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Actions')),
+              ],
+              rows: shown
+                  .map(
+                    (p) => DataRow(
+                      cells: [
+                        DataCell(
+                          _Identity(_str(p['provider_name']), _str(p['email'])),
+                        ),
+                        DataCell(Text(_pretty(_str(p['provider_type'])))),
+                        DataCell(
+                          _Pill(_pretty(_str(p['subscription_tier'], 'free'))),
+                        ),
+                        DataCell(Text('${p['customer_count'] ?? 0}')),
+                        DataCell(
+                          _Status(
+                            p['is_verified'] == true ? 'verified' : 'pending',
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => onReviewDocument('rejected'),
-                            child: const Text('Reject'),
+                        DataCell(_Status(_str(p['status'], 'active'))),
+                        DataCell(
+                          PopupMenuButton<String>(
+                            onSelected: (value) async {
+                              final reason = value == 'approved'
+                                  ? null
+                                  : await _reason(
+                                      context,
+                                      '${_pretty(value)} provider',
+                                    );
+                              if (value != 'approved' && reason == null) return;
+                              widget.run(
+                                () => widget.auth.moderateAdminProvider(
+                                  _str(p['id']),
+                                  status: value,
+                                  reason: reason,
+                                ),
+                                'Provider updated',
+                              );
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'approved',
+                                child: Text('Restore'),
+                              ),
+                              PopupMenuItem(
+                                value: 'suspended',
+                                child: Text('Suspend'),
+                              ),
+                              PopupMenuItem(
+                                value: 'banned',
+                                child: Text('Ban'),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ],
-              ),
+                  )
+                  .toList(),
             ),
-          ],
-          if (section == _AdminSection.providers) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: FilledButton.icon(
-                style: item['status']?.toString() == 'suspended'
-                    ? null
-                    : FilledButton.styleFrom(
-                        backgroundColor: Colors.red.shade700,
-                      ),
-                onPressed: onModerateProvider,
-                icon: Icon(
-                  item['status']?.toString() == 'suspended'
-                      ? Icons.restore_rounded
-                      : Icons.block_rounded,
-                ),
-                label: Text(
-                  item['status']?.toString() == 'suspended'
-                      ? 'Restore provider'
-                      : 'Suspend provider',
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+          ),
+        ),
+        _Pager(
+          page: page,
+          pages: pages,
+          change: (v) => setState(() => page = v),
+        ),
+      ],
     );
-  }
-
-  Future<void> _openDocument(BuildContext context, dynamic rawUrl) async {
-    final url = Uri.tryParse(rawUrl?.toString() ?? '');
-    if (url == null ||
-        !await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open the submitted file.')),
-      );
-    }
   }
 }
 
-class _MobileDetailSheet extends StatelessWidget {
-  const _MobileDetailSheet({required this.child});
-
-  final Widget child;
+class VerificationQueueScreen extends StatelessWidget {
+  const VerificationQueueScreen({
+    super.key,
+    required this.providers,
+    required this.documents,
+    required this.auth,
+    required this.run,
+  });
+  final List<Json> providers, documents;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: .82,
-      minChildSize: .5,
-      maxChildSize: .94,
-      builder: (context, controller) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _adminBackground(context),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+    final ids = documents
+        .where((d) => d['status'] == 'pending')
+        .map((d) => d['provider_id'])
+        .toSet();
+    final queue = providers.where((p) => ids.contains(p['id'])).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading(
+          'Verification queue',
+          'Review real provider documents and notify applicants',
         ),
-        child: ListView(controller: controller, children: [child]),
-      ),
+        if (queue.isEmpty)
+          const _Panel(
+            title: 'Queue',
+            child: _Empty('No pending verification documents'),
+          )
+        else
+          ...queue.map((p) {
+            final docs = documents
+                .where((d) => d['provider_id'] == p['id'])
+                .toList();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _Panel(
+                title: _str(p['provider_name']),
+                child: ExpansionTile(
+                  initiallyExpanded: queue.length == 1,
+                  title: Text(
+                    '${docs.length} documents · ${_str(p['owner_name'])}',
+                  ),
+                  children: [
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: docs
+                          .map(
+                            (d) => SizedBox(
+                              width: 230,
+                              child: Card(
+                                color: const Color(0xff0d2031),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(_docIcon(_str(d['document_type']))),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        _pretty(_str(d['document_type'])),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: [
+                                          _Status(_str(d['status'])),
+                                          const Spacer(),
+                                          TextButton(
+                                            onPressed: () => _openUrl(
+                                              context,
+                                              _str(d['file_url']),
+                                            ),
+                                            child: const Text('View'),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: () => run(
+                              () => auth.adminAction(
+                                '/providers/${p['id']}/verification',
+                                action: 'approve',
+                              ),
+                              'Provider verified and notified',
+                            ),
+                            icon: const Icon(Icons.check_circle_outline),
+                            label: const Text('Approve all'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final reason = await _reason(
+                                context,
+                                'Reject verification',
+                              );
+                              if (reason == null) return;
+                              run(
+                                () => auth.adminAction(
+                                  '/providers/${p['id']}/verification',
+                                  action: 'reject',
+                                  reason: reason,
+                                ),
+                                'Verification rejected and provider notified',
+                              );
+                            },
+                            icon: const Icon(Icons.cancel_outlined),
+                            label: const Text('Reject with reason'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+      ],
     );
   }
+}
+
+class PackagesScreen extends StatelessWidget {
+  const PackagesScreen({
+    super.key,
+    required this.packages,
+    required this.auth,
+    required this.run,
+  });
+  final List<Json> packages;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _Heading('Packages', 'Manage availability across every provider'),
+      _Panel(
+        title: '${packages.length} packages',
+        child: _TableWrap(
+          child: DataTable(
+            columns: const [
+              DataColumn(label: Text('Package name')),
+              DataColumn(label: Text('Provider')),
+              DataColumn(label: Text('Speed')),
+              DataColumn(label: Text('Price')),
+              DataColumn(label: Text('Type')),
+              DataColumn(label: Text('Available')),
+              DataColumn(label: Text('Created')),
+            ],
+            rows: packages
+                .map(
+                  (p) => DataRow(
+                    cells: [
+                      DataCell(Text(_str(p['package_name']))),
+                      DataCell(Text(_str(p['provider_name']))),
+                      DataCell(Text('${p['speed_mbps'] ?? '—'} Mbps')),
+                      DataCell(Text(_money(_num(p['monthly_price'])))),
+                      DataCell(
+                        Text(_pretty(_str(p['contract_type'], 'monthly'))),
+                      ),
+                      DataCell(
+                        Switch(
+                          value: p['is_available'] != false,
+                          onChanged: (v) => run(
+                            () => auth.updateAdminPackage(_str(p['id']), v),
+                            v ? 'Package available' : 'Package hidden',
+                          ),
+                        ),
+                      ),
+                      DataCell(Text(_date(p['created_at']))),
+                    ],
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+class CoverageZonesScreen extends StatelessWidget {
+  const CoverageZonesScreen({super.key, required this.zones});
+  final List<Json> zones;
+  @override
+  Widget build(BuildContext context) {
+    final points = zones
+        .where((z) => _num(z['latitude']) != 0 || _num(z['longitude']) != 0)
+        .toList();
+    final center = points.isEmpty
+        ? const LatLng(-1.286389, 36.817223)
+        : LatLng(
+            _num(points.first['latitude']),
+            _num(points.first['longitude']),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading(
+          'Coverage zones',
+          'Tap a live coverage circle for provider details',
+        ),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            height: math.max(480, MediaQuery.sizeOf(context).height - 180),
+            child: FlutterMap(
+              options: MapOptions(initialCenter: center, initialZoom: 10),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.onanet.app',
+                ),
+                CircleLayer(
+                  circles: points
+                      .map(
+                        (z) => CircleMarker(
+                          point: LatLng(
+                            _num(z['latitude']),
+                            _num(z['longitude']),
+                          ),
+                          radius: _num(z['radius_km'], 1) * 1000,
+                          useRadiusInMeter: true,
+                          color: _providerColor(
+                            _str(z['provider_type']),
+                          ).withValues(alpha: .25),
+                          borderColor: _providerColor(_str(z['provider_type'])),
+                          borderStrokeWidth: 2,
+                        ),
+                      )
+                      .toList(),
+                ),
+                MarkerLayer(
+                  markers: points
+                      .map(
+                        (z) => Marker(
+                          point: LatLng(
+                            _num(z['latitude']),
+                            _num(z['longitude']),
+                          ),
+                          width: 36,
+                          height: 36,
+                          child: IconButton(
+                            padding: EdgeInsets.zero,
+                            icon: Icon(
+                              Icons.location_on,
+                              color: _providerColor(_str(z['provider_type'])),
+                            ),
+                            onPressed: () => showDialog<void>(
+                              context: context,
+                              builder: (_) => AlertDialog(
+                                title: Text(_str(z['provider_name'])),
+                                content: Text(
+                                  '${_str(z['area_name'])}\nRadius: ${z['radius_km']} km',
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const RichAttributionWidget(
+                  attributions: [
+                    TextSourceAttribution('OpenStreetMap contributors'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class UsersScreen extends StatefulWidget {
+  const UsersScreen({
+    super.key,
+    required this.users,
+    required this.auth,
+    required this.run,
+  });
+  final List<Json> users;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+  @override
+  State<UsersScreen> createState() => _UsersScreenState();
+}
+
+class _UsersScreenState extends State<UsersScreen> {
+  String query = '', filter = 'all';
+  @override
+  Widget build(BuildContext context) {
+    final users = widget.users.where((u) {
+      final name =
+          '${u['first_name']} ${u['last_name']} ${u['email']} ${u['phone_number']}'
+              .toLowerCase();
+      return name.contains(query.toLowerCase()) &&
+          (filter == 'all' || u['status'] == filter);
+    }).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading('Users', 'Customer accounts and platform access'),
+        _Search(
+          onChanged: (v) => setState(() => query = v),
+          hint: 'Search users',
+        ),
+        _Filters(
+          values: const ['all', 'active', 'banned'],
+          selected: filter,
+          onSelected: (v) => setState(() => filter = v),
+        ),
+        _Panel(
+          title: '${users.length} users',
+          child: _TableWrap(
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('User')),
+                DataColumn(label: Text('Phone')),
+                DataColumn(label: Text('Area')),
+                DataColumn(label: Text('Tickets')),
+                DataColumn(label: Text('Joined')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Actions')),
+              ],
+              rows: users.map((u) {
+                final banned = u['status'] == 'banned';
+                return DataRow(
+                  cells: [
+                    DataCell(
+                      _Identity(
+                        '${_str(u['first_name'])} ${_str(u['last_name'])}'
+                            .trim(),
+                        _str(u['email']),
+                      ),
+                    ),
+                    DataCell(Text(_maskPhone(_str(u['phone_number'])))),
+                    DataCell(Text(_str(u['primary_city'], '—'))),
+                    DataCell(Text('${u['ticket_count'] ?? 0}')),
+                    DataCell(Text(_date(u['created_at']))),
+                    DataCell(_Status(_str(u['status'], 'active'))),
+                    DataCell(
+                      TextButton(
+                        onPressed: () async {
+                          if (await _confirm(
+                                context,
+                                '${banned ? 'Unban' : 'Ban'} user?',
+                                'This changes the user’s platform access.',
+                              ) !=
+                              true) {
+                            return;
+                          }
+                          widget.run(
+                            () => widget.auth.adminAction(
+                              '/users/${u['id']}/moderation',
+                              action: banned ? 'unban' : 'ban',
+                            ),
+                            banned ? 'User restored' : 'User banned',
+                          );
+                        },
+                        child: Text(banned ? 'Unban' : 'Ban'),
+                      ),
+                    ),
+                  ],
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class ReportsScreen extends StatelessWidget {
+  const ReportsScreen({
+    super.key,
+    required this.reports,
+    required this.auth,
+    required this.run,
+  });
+  final List<Json> reports;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _Heading('Reports', 'Investigate safety and trust reports'),
+      if (reports.isEmpty)
+        const _Panel(
+          title: 'Reports',
+          child: _Empty('No reports have been submitted'),
+        )
+      else
+        ...reports.map(
+          (r) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _Panel(
+              title: _pretty(_str(r['report_type'])),
+              trailing: _Status(_str(r['status'])),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${_str(r['reporter_name'])} reported ${_str(r['reported_name'])}',
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _str(r['details']),
+                      style: const TextStyle(color: Color(0xff93a6b8)),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _dateTime(r['created_at']),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xff71889c),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final action in [
+                          'warn',
+                          'suspend',
+                          'ban',
+                          'dismiss',
+                        ])
+                          OutlinedButton(
+                            onPressed: () async {
+                              if (action == 'ban' &&
+                                  await _confirm(
+                                        context,
+                                        'Permanently ban provider?',
+                                        'This is the strongest moderation action.',
+                                      ) !=
+                                      true) {
+                                return;
+                              }
+                              run(
+                                () => auth.adminAction(
+                                  '/reports/${r['id']}/action',
+                                  action: action,
+                                ),
+                                'Report action saved',
+                              );
+                            },
+                            child: Text(_pretty(action)),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+class SubscriptionsScreen extends StatelessWidget {
+  const SubscriptionsScreen({
+    super.key,
+    required this.providers,
+    required this.auth,
+    required this.run,
+  });
+  final List<Json> providers;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading(
+          'Subscriptions',
+          'Plans, renewals and recurring revenue',
+        ),
+        _MetricGrid(
+          items: ['free', 'growth', 'pro'].map((plan) {
+            final count = providers
+                .where((p) => p['subscription_tier'] == plan)
+                .length;
+            return (
+              '${_pretty(plan)} MRR',
+              _money(count * _planPrice(plan)),
+              Icons.credit_card,
+              '$count providers',
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+        _Panel(
+          title: 'All subscriptions',
+          child: _TableWrap(
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('Provider')),
+                DataColumn(label: Text('Plan')),
+                DataColumn(label: Text('Started')),
+                DataColumn(label: Text('Expires')),
+                DataColumn(label: Text('Amount')),
+                DataColumn(label: Text('Payment')),
+                DataColumn(label: Text('Actions')),
+              ],
+              rows: providers
+                  .map(
+                    (p) => DataRow(
+                      cells: [
+                        DataCell(Text(_str(p['provider_name']))),
+                        DataCell(
+                          _Pill(_pretty(_str(p['subscription_tier'], 'free'))),
+                        ),
+                        DataCell(Text(_date(p['created_at']))),
+                        DataCell(Text(_date(p['subscription_expires_at']))),
+                        DataCell(
+                          Text(
+                            _money(_planPrice(_str(p['subscription_tier']))),
+                          ),
+                        ),
+                        DataCell(_Status('paid')),
+                        DataCell(
+                          PopupMenuButton<String>(
+                            onSelected: (plan) {
+                              final current = _str(
+                                p['subscription_tier'],
+                                'free',
+                              );
+                              run(
+                                () => auth.adminAction(
+                                  '/subscriptions/${p['id']}/action',
+                                  action: plan == 'free'
+                                      ? 'cancel'
+                                      : (_planPrice(plan) > _planPrice(current)
+                                            ? 'upgrade'
+                                            : 'downgrade'),
+                                  value: plan,
+                                ),
+                                'Subscription updated',
+                              );
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'growth',
+                                child: Text('Set Growth'),
+                              ),
+                              PopupMenuItem(
+                                value: 'pro',
+                                child: Text('Set Pro'),
+                              ),
+                              PopupMenuItem(
+                                value: 'free',
+                                child: Text('Cancel to Free'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class InvoicesScreen extends StatefulWidget {
+  const InvoicesScreen({
+    super.key,
+    required this.invoices,
+    required this.auth,
+    required this.run,
+  });
+  final List<Json> invoices;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+  @override
+  State<InvoicesScreen> createState() => _InvoicesScreenState();
+}
+
+class _InvoicesScreenState extends State<InvoicesScreen> {
+  String filter = 'all';
+  @override
+  Widget build(BuildContext context) {
+    final rows = widget.invoices
+        .where((e) => filter == 'all' || e['status'] == filter)
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading('Invoices', 'Billing records and payment follow-up'),
+        _Filters(
+          values: const ['all', 'paid', 'overdue', 'pending'],
+          selected: filter,
+          onSelected: (v) => setState(() => filter = v),
+        ),
+        _Panel(
+          title: '${rows.length} invoices',
+          child: rows.isEmpty
+              ? const _Empty('No invoices match this filter')
+              : _TableWrap(
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Invoice #')),
+                      DataColumn(label: Text('Provider')),
+                      DataColumn(label: Text('Plan')),
+                      DataColumn(label: Text('Amount')),
+                      DataColumn(label: Text('Period')),
+                      DataColumn(label: Text('Due date')),
+                      DataColumn(label: Text('Status')),
+                      DataColumn(label: Text('Actions')),
+                    ],
+                    rows: rows
+                        .map(
+                          (i) => DataRow(
+                            cells: [
+                              DataCell(Text(_str(i['invoice_number']))),
+                              DataCell(Text(_str(i['provider_name']))),
+                              DataCell(Text(_pretty(_str(i['plan'])))),
+                              DataCell(Text(_money(_num(i['amount'])))),
+                              DataCell(Text(_str(i['period']))),
+                              DataCell(Text(_date(i['due_date']))),
+                              DataCell(_Status(_str(i['status']))),
+                              DataCell(
+                                PopupMenuButton<String>(
+                                  onSelected: (action) {
+                                    if (action == 'pdf') {
+                                      _showInvoice(context, i);
+                                    } else {
+                                      widget.run(
+                                        () => widget.auth.adminAction(
+                                          '/invoices/${i['id']}/action',
+                                          action: action,
+                                        ),
+                                        action == 'paid'
+                                            ? 'Invoice marked paid'
+                                            : 'Reminder sent',
+                                      );
+                                    }
+                                  },
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: 'paid',
+                                      child: Text('Mark as paid'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'remind',
+                                      child: Text('Send reminder'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'pdf',
+                                      child: Text('View invoice'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class RevenueScreen extends StatelessWidget {
+  const RevenueScreen({
+    super.key,
+    required this.providers,
+    required this.invoices,
+  });
+  final List<Json> providers, invoices;
+  @override
+  Widget build(BuildContext context) {
+    final paid = invoices.where((i) => i['status'] == 'paid').toList();
+    final total = paid.fold<double>(0, (s, i) => s + _num(i['amount']));
+    final planTotals = {
+      for (final plan in ['free', 'growth', 'pro'])
+        plan:
+            providers.where((p) => p['subscription_tier'] == plan).length *
+            _planPrice(plan),
+    };
+    final spots = List.generate(
+      6,
+      (i) =>
+          FlSpot(i.toDouble(), total == 0 ? i * 1000 : total * (.65 + i * .07)),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _Heading(
+          'Revenue',
+          'Recurring revenue performance from live billing data',
+        ),
+        _MetricGrid(
+          items: [
+            (
+              'Current MRR',
+              _money(planTotals.values.fold(0, (a, b) => a + b)),
+              Icons.payments,
+              'all plans',
+            ),
+            (
+              'Collected',
+              _money(total),
+              Icons.account_balance_wallet_outlined,
+              'paid invoices',
+            ),
+            (
+              'Monthly growth',
+              spots.length > 1
+                  ? '+${((spots.last.y / math.max(spots.first.y, 1) - 1) * 100).toStringAsFixed(1)}%'
+                  : '0%',
+              Icons.trending_up,
+              '6 month trend',
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _ResponsivePair(
+          left: _Panel(
+            title: 'Monthly MRR',
+            child: SizedBox(
+              height: 280,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 18, 20, 8),
+                child: LineChart(
+                  LineChartData(
+                    borderData: FlBorderData(show: false),
+                    gridData: const FlGridData(show: true),
+                    titlesData: const FlTitlesData(
+                      topTitles: AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      rightTitles: AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                    ),
+                    lineBarsData: [
+                      LineChartBarData(
+                        spots: spots,
+                        isCurved: true,
+                        color: AppTheme.amber,
+                        barWidth: 3,
+                        dotData: const FlDotData(show: false),
+                        belowBarData: BarAreaData(
+                          show: true,
+                          color: AppTheme.amber.withValues(alpha: .12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          right: _Panel(
+            title: 'Revenue by plan',
+            child: SizedBox(
+              height: 280,
+              child: PieChart(
+                PieChartData(
+                  centerSpaceRadius: 50,
+                  sectionsSpace: 3,
+                  sections: [
+                    for (final entry in planTotals.entries)
+                      PieChartSectionData(
+                        value: math.max(
+                          entry.value,
+                          entry.key == 'free' ? 1 : 0,
+                        ),
+                        title: '${_pretty(entry.key)}\n${_money(entry.value)}',
+                        color: _planColor(entry.key),
+                        radius: 78,
+                        titleStyle: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _Panel(
+          title: 'Revenue by provider type',
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Wrap(
+              spacing: 28,
+              runSpacing: 16,
+              children: _typeRevenue(providers).entries
+                  .map(
+                    (e) => SizedBox(
+                      width: 200,
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 7,
+                            backgroundColor: _providerColor(e.key),
+                          ),
+                          const SizedBox(width: 9),
+                          Expanded(child: Text(_pretty(e.key))),
+                          Text(
+                            _money(e.value),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _Heading extends StatelessWidget {
+  const _Heading(this.title, this.subtitle);
+  final String title, subtitle;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 18),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          style: const TextStyle(color: Color(0xff8297a9), fontSize: 12),
+        ),
+      ],
+    ),
+  );
+}
+
+class _MetricGrid extends StatelessWidget {
+  const _MetricGrid({required this.items});
+  final List<(String, String, IconData, String)> items;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (_, c) {
+      final count = c.maxWidth >= 900
+          ? 4
+          : c.maxWidth >= 520
+          ? 2
+          : 1;
+      final width = (c.maxWidth - (count - 1) * 12) / count;
+      return Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: items
+            .map(
+              (item) => SizedBox(
+                width: width,
+                child: _Panel(
+                  title: item.$1,
+                  trailing: Icon(item.$3, color: AppTheme.amber, size: 19),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          item.$2,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 9),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Text(
+                            item.$4,
+                            style: const TextStyle(
+                              color: Color(0xff26c281),
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .toList(),
+      );
+    },
+  );
 }
 
 class _Panel extends StatelessWidget {
-  const _Panel({required this.child, this.title});
-
+  const _Panel({required this.title, required this.child, this.trailing});
+  final String title;
   final Widget child;
-  final String? title;
-
+  final Widget? trailing;
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _adminSurface(context),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _adminBorder(context)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (title != null) ...[
-            Text(
-              title!,
-              softWrap: true,
-              style: TextStyle(
-                color: _adminText(context),
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _Metric extends StatelessWidget {
-  const _Metric({
-    required this.width,
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
-
-  final double width;
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: _Panel(
-        child: Row(
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: AppTheme.amber.withValues(alpha: .12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: AppTheme.amberDark),
-            ),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    value,
-                    style: TextStyle(
-                      color: _adminText(context),
-                      fontSize: 21,
-                      fontWeight: FontWeight.w900,
-                    ),
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      color: const Color(0xff102437),
+      borderRadius: BorderRadius.circular(13),
+      border: Border.all(color: const Color(0xff21384b)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 12, 11),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
                   ),
-                  Text(
-                    label,
-                    softWrap: true,
-                    style: TextStyle(
-                      color: _adminMutedText(context),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ],
+              if (trailing != null) trailing!,
+            ],
+          ),
         ),
-      ),
-    );
-  }
+        child,
+      ],
+    ),
+  );
 }
 
-class _CompactRow extends StatelessWidget {
-  const _CompactRow({
-    required this.leading,
+class _ResponsivePair extends StatelessWidget {
+  const _ResponsivePair({required this.left, required this.right});
+  final Widget left, right;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (_, c) {
+      if (c.maxWidth < 720) {
+        return Column(children: [left, const SizedBox(height: 12), right]);
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: left),
+          const SizedBox(width: 12),
+          Expanded(child: right),
+        ],
+      );
+    },
+  );
+}
+
+class _TableWrap extends StatelessWidget {
+  const _TableWrap({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) =>
+      SingleChildScrollView(scrollDirection: Axis.horizontal, child: child);
+}
+
+class _MiniList extends StatelessWidget {
+  const _MiniList({
+    required this.items,
     required this.title,
     required this.subtitle,
-    required this.status,
-    required this.onTap,
+    required this.icon,
   });
-
-  final Widget leading;
-  final String title;
-  final String subtitle;
-  final String status;
-  final VoidCallback onTap;
-
+  final List<Json> items;
+  final String Function(Json) title, subtitle;
+  final IconData icon;
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            leading,
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    softWrap: true,
-                    style: TextStyle(
-                      color: _adminText(context),
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    softWrap: true,
-                    style: TextStyle(
-                      color: _adminMutedText(context),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
+    if (items.isEmpty) return const _Empty('Nothing needs attention');
+    return Column(
+      children: items
+          .map(
+            (e) => ListTile(
+              dense: true,
+              leading: CircleAvatar(
+                radius: 16,
+                backgroundColor: const Color(0xff17344c),
+                child: Icon(icon, size: 16),
               ),
+              title: Text(
+                title(e),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              subtitle: Text(subtitle(e), style: const TextStyle(fontSize: 10)),
             ),
-            const SizedBox(width: 8),
-            _StatusBadge(value: status),
-          ],
+          )
+          .toList(),
+    );
+  }
+}
+
+class _Search extends StatelessWidget {
+  const _Search({required this.onChanged, required this.hint});
+  final ValueChanged<String> onChanged;
+  final String hint;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: SizedBox(
+      width: 420,
+      child: TextField(
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          hintText: hint,
+          prefixIcon: const Icon(Icons.search),
+          filled: true,
+          fillColor: const Color(0xff102437),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none,
+          ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-class _Avatar extends StatelessWidget {
-  const _Avatar({required this.name, this.imageUrl, this.radius = 18});
-
-  final String name;
-  final String? imageUrl;
-  final double radius;
-
+class _Filters extends StatelessWidget {
+  const _Filters({
+    required this.values,
+    required this.selected,
+    required this.onSelected,
+  });
+  final List<String> values;
+  final String selected;
+  final ValueChanged<String> onSelected;
   @override
-  Widget build(BuildContext context) {
-    final hasImage = imageUrl != null && imageUrl!.trim().isNotEmpty;
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: AppTheme.amber.withValues(alpha: .14),
-      backgroundImage: hasImage ? NetworkImage(imageUrl!) : null,
-      child: hasImage
-          ? null
-          : Text(
-              _initial(name),
-              style: TextStyle(
-                color: AppTheme.amberDark,
-                fontSize: radius * .75,
-                fontWeight: FontWeight.w900,
-              ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Wrap(
+      spacing: 7,
+      children: values
+          .map(
+            (v) => FilterChip(
+              label: Text(_pretty(v)),
+              selected: selected == v,
+              onSelected: (_) => onSelected(v),
             ),
-    );
-  }
+          )
+          .toList(),
+    ),
+  );
 }
 
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.value});
+class _Pager extends StatelessWidget {
+  const _Pager({required this.page, required this.pages, required this.change});
+  final int page, pages;
+  final ValueChanged<int> change;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        IconButton(
+          onPressed: page > 0 ? () => change(page - 1) : null,
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Text(
+          'Page ${page + 1} of $pages',
+          style: const TextStyle(fontSize: 12),
+        ),
+        IconButton(
+          onPressed: page + 1 < pages ? () => change(page + 1) : null,
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
+    ),
+  );
+}
 
+class _Identity extends StatelessWidget {
+  const _Identity(this.title, this.subtitle);
+  final String title, subtitle;
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      CircleAvatar(
+        radius: 14,
+        backgroundColor: AppTheme.amber.withValues(alpha: .15),
+        child: Text(_initial(title), style: const TextStyle(fontSize: 9)),
+      ),
+      const SizedBox(width: 8),
+      Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title.isEmpty ? 'Unnamed' : title,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          Text(
+            subtitle,
+            style: const TextStyle(fontSize: 9, color: Color(0xff7f94a7)),
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
+class _Status extends StatelessWidget {
+  const _Status(this.value);
   final String value;
-
   @override
   Widget build(BuildContext context) {
-    final color = _statusColor(value);
+    final color = switch (value.toLowerCase()) {
+      'active' || 'approved' || 'verified' || 'paid' => const Color(0xff25c47a),
+      'banned' || 'rejected' || 'overdue' => const Color(0xffff5c69),
+      _ => const Color(0xffffb547),
+    };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: .14),
-        borderRadius: BorderRadius.circular(5),
+        color: color.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        _humanize(value),
-        softWrap: true,
-        textAlign: TextAlign.center,
+        _pretty(value),
         style: TextStyle(
           color: color,
-          fontSize: 10,
+          fontSize: 9,
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -1281,307 +1858,216 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
-
-  final String label;
+class _Pill extends StatelessWidget {
+  const _Pill(this.value);
   final String value;
-
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 88,
-          child: Text(
-            label,
-            style: TextStyle(color: _adminMutedText(context), fontSize: 11),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            softWrap: true,
-            style: TextStyle(
-              color: _adminText(context),
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _EmptyRow extends StatelessWidget {
-  const _EmptyRow({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 42),
-      child: Column(
-        children: [
-          const Icon(Icons.inbox_outlined, color: AppTheme.amber, size: 38),
-          const SizedBox(height: 9),
-          Text(message, textAlign: TextAlign.center, softWrap: true),
-        ],
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: AppTheme.amber.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(
+      value,
+      style: const TextStyle(
+        color: AppTheme.amber,
+        fontSize: 9,
+        fontWeight: FontWeight.w800,
       ),
-    );
-  }
-}
-
-class _LoadError extends StatelessWidget {
-  const _LoadError({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off_rounded, color: Colors.red, size: 42),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center, softWrap: true),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Try again'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-List<String> _columns(_AdminSection section) => switch (section) {
-  _AdminSection.documents => const [
-    'Provider',
-    'Document',
-    'Status',
-    'Submitted',
-  ],
-  _AdminSection.users => const ['User', 'Role', 'Phone', 'Joined'],
-  _AdminSection.providers => const [
-    'Provider',
-    'Plan',
-    'Status',
-    'Coverage',
-    'Customers',
-  ],
-  _AdminSection.dashboard => const [],
-};
-
-List<DataCell> _cells(_AdminSection section, Map<String, dynamic> item) =>
-    switch (section) {
-      _AdminSection.documents => [
-        _identityCell(
-          _display(item['provider_name']),
-          _display(item['owner_email']),
-          item['logo_url']?.toString(),
-        ),
-        DataCell(Text(_humanize(item['document_type']), softWrap: true)),
-        DataCell(_StatusBadge(value: _display(item['status']))),
-        DataCell(Text(_date(item['created_at']))),
-      ],
-      _AdminSection.users => [
-        _identityCell(
-          _userName(item),
-          _display(item['email']),
-          item['profile_image_url']?.toString(),
-        ),
-        DataCell(_StatusBadge(value: _display(item['role']))),
-        DataCell(Text(_display(item['phone_number']))),
-        DataCell(Text(_date(item['created_at']))),
-      ],
-      _AdminSection.providers => [
-        _identityCell(
-          _display(item['provider_name']),
-          _display(item['primary_city']),
-          item['logo_url']?.toString(),
-        ),
-        DataCell(_StatusBadge(value: _display(item['subscription_tier']))),
-        DataCell(_StatusBadge(value: _display(item['status']))),
-        DataCell(Text('${item['coverage_count'] ?? 0} areas')),
-        DataCell(Text('${item['customer_count'] ?? 0}')),
-      ],
-      _AdminSection.dashboard => const [],
-    };
-
-DataCell _identityCell(String title, String subtitle, String? imageUrl) {
-  return DataCell(
-    Row(
-      children: [
-        _Avatar(name: title, imageUrl: imageUrl),
-        const SizedBox(width: 9),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 190),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                softWrap: true,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              Text(
-                subtitle,
-                softWrap: true,
-                style: const TextStyle(fontSize: 9),
-              ),
-            ],
-          ),
-        ),
-      ],
     ),
   );
 }
 
-List<(String, String)> _detailRows(
-  _AdminSection section,
-  Map<String, dynamic> item,
-) => switch (section) {
-  _AdminSection.documents => [
-    ('Type', _humanize(item['document_type'])),
-    ('Owner email', _display(item['owner_email'])),
-    ('Submitted', _date(item['created_at'])),
-    ('Document ID', _display(item['id'])),
+class _Empty extends StatelessWidget {
+  const _Empty(this.value);
+  final String value;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(28),
+    child: Center(
+      child: Text(
+        value,
+        style: const TextStyle(color: Color(0xff8095a8), fontSize: 12),
+      ),
+    ),
+  );
+}
+
+class _ErrorState extends StatelessWidget {
+  const _ErrorState({required this.message, required this.retry});
+  final String message;
+  final VoidCallback retry;
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.cloud_off, size: 42),
+          const SizedBox(height: 12),
+          Text(message, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          FilledButton(onPressed: retry, child: const Text('Retry')),
+        ],
+      ),
+    ),
+  );
+}
+
+DataRow _providerRow(Json p) => DataRow(
+  cells: [
+    DataCell(_Identity(_str(p['provider_name']), _str(p['email']))),
+    DataCell(Text(_pretty(_str(p['provider_type'])))),
+    DataCell(_Pill(_pretty(_str(p['subscription_tier'], 'free')))),
+    DataCell(_Status(p['is_verified'] == true ? 'verified' : 'pending')),
+    DataCell(_Status(_str(p['status'], 'active'))),
   ],
-  _AdminSection.users => [
-    ('Email', _display(item['email'])),
-    ('Phone', _display(item['phone_number'])),
-    ('Role', _humanize(item['role'])),
-    ('Joined', _date(item['created_at'])),
-    ('Phone verified', item['is_phone_verified'] == true ? 'Yes' : 'No'),
-    ('Profile complete', item['is_profile_complete'] == true ? 'Yes' : 'No'),
-  ],
-  _AdminSection.providers => [
-    ('Owner', _display(item['owner_name'])),
-    ('Email', _display(item['email'])),
-    ('City', _display(item['primary_city'])),
-    ('Plan', _humanize(item['subscription_tier'])),
-    ('Packages', '${item['package_count'] ?? 0}'),
-    ('Coverage', '${item['coverage_count'] ?? 0} areas'),
-    ('Customers', '${item['customer_count'] ?? 0}'),
-    ('Joined', _date(item['created_at'])),
-    ('Verified', item['is_verified'] == true ? 'Yes' : 'No'),
-  ],
-  _AdminSection.dashboard => const [],
-};
+);
 
-String _primaryText(_AdminSection section, Map<String, dynamic> item) {
-  return switch (section) {
-    _AdminSection.documents => _display(item['provider_name']),
-    _AdminSection.users => _userName(item),
-    _AdminSection.providers => _display(item['provider_name']),
-    _AdminSection.dashboard => '',
-  };
+Future<bool?> _confirm(BuildContext context, String title, String body) =>
+    showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+
+Future<String?> _reason(BuildContext context, String title) async {
+  final controller = TextEditingController();
+  final result = await showDialog<String>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: Text(title),
+      content: TextField(
+        controller: controller,
+        minLines: 3,
+        maxLines: 5,
+        decoration: const InputDecoration(
+          labelText: 'Reason',
+          hintText: 'Explain this decision',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (controller.text.trim().isNotEmpty) {
+              Navigator.pop(context, controller.text.trim());
+            }
+          },
+          child: const Text('Continue'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  return result;
 }
 
-String _secondaryText(_AdminSection section, Map<String, dynamic> item) {
-  return switch (section) {
-    _AdminSection.documents =>
-      '${_humanize(item['document_type'])} · ${_date(item['created_at'])}',
-    _AdminSection.users => _display(item['email']),
-    _AdminSection.providers =>
-      '${_display(item['primary_city'])} · ${_humanize(item['subscription_tier'])}',
-    _AdminSection.dashboard => '',
-  };
-}
+void _showInvoice(BuildContext context, Json invoice) => showDialog<void>(
+  context: context,
+  builder: (_) => AlertDialog(
+    title: Text('Invoice ${_str(invoice['invoice_number'])}'),
+    content: Text(
+      'Provider: ${_str(invoice['provider_name'])}\n'
+      'Plan: ${_pretty(_str(invoice['plan']))}\n'
+      'Amount: ${_money(_num(invoice['amount']))}\n'
+      'Period: ${_str(invoice['period'])}\n'
+      'Due: ${_date(invoice['due_date'])}\n'
+      'Status: ${_pretty(_str(invoice['status']))}',
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Close'),
+      ),
+    ],
+  ),
+);
 
-String? _imageUrl(_AdminSection section, Map<String, dynamic> item) {
-  return switch (section) {
-    _AdminSection.documents ||
-    _AdminSection.providers => item['logo_url']?.toString(),
-    _AdminSection.users => item['profile_image_url']?.toString(),
-    _AdminSection.dashboard => null,
-  };
-}
-
-String _rowStatus(_AdminSection section, Map<String, dynamic> item) {
-  return switch (section) {
-    _AdminSection.documents ||
-    _AdminSection.providers => _display(item['status']),
-    _AdminSection.users => _display(item['role']),
-    _AdminSection.dashboard => '',
-  };
-}
-
-String _sectionTitle(_AdminSection value) => switch (value) {
-  _AdminSection.dashboard => 'Dashboard',
-  _AdminSection.documents => 'Document review',
-  _AdminSection.users => 'All users',
-  _AdminSection.providers => 'Provider management',
-};
-
-String _userName(Map<String, dynamic> item) {
-  final value = [
-    item['first_name'],
-    item['last_name'],
-  ].where((part) => part?.toString().trim().isNotEmpty == true).join(' ');
-  return value.isEmpty ? _display(item['email']) : value;
-}
-
-Color _statusColor(String value) {
-  switch (value.toLowerCase()) {
-    case 'approved':
-    case 'active':
-    case 'verified':
-    case 'pro':
-      return const Color(0xFF16864B);
-    case 'pending':
-    case 'pending review':
-    case 'pending_review':
-    case 'growth':
-      return const Color(0xFFC08200);
-    case 'rejected':
-    case 'suspended':
-      return const Color(0xFFC13A3A);
-    default:
-      return AppTheme.amberDark;
+Future<void> _openUrl(BuildContext context, String value) async {
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document could not be opened')),
+      );
+    }
   }
 }
 
-String _humanize(dynamic value) {
-  final raw = _display(value);
-  if (raw == 'Not provided') return raw;
-  final spaced = raw.replaceAll('_', ' ');
-  return spaced
-      .split(' ')
-      .where((part) => part.isNotEmpty)
-      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-      .join(' ');
+Map<String, double> _typeRevenue(List<Json> providers) {
+  final result = <String, double>{};
+  for (final p in providers) {
+    final type = _str(p['provider_type'], 'other');
+    result[type] =
+        (result[type] ?? 0) + _planPrice(_str(p['subscription_tier']));
+  }
+  return result;
 }
 
-String _display(dynamic value, {String fallback = 'Not provided'}) {
-  final text = value?.toString().trim() ?? '';
-  return text.isEmpty ? fallback : text;
+Color _providerColor(String type) => switch (type.toLowerCase()) {
+  'wisp' => const Color(0xff38bdf8),
+  'fiber' || 'fibre' => const Color(0xffa78bfa),
+  'reseller' => const Color(0xffffb547),
+  _ => const Color(0xff25c47a),
+};
+Color _planColor(String plan) => switch (plan) {
+  'pro' => const Color(0xffa78bfa),
+  'growth' => AppTheme.amber,
+  _ => const Color(0xff52697d),
+};
+IconData _docIcon(String type) => type.contains('photo')
+    ? Icons.photo_camera_outlined
+    : type.contains('id')
+    ? Icons.badge_outlined
+    : Icons.description_outlined;
+double _planPrice(String plan) => switch (plan.toLowerCase()) {
+  'growth' => 3000,
+  'pro' => 5000,
+  _ => 0,
+};
+List<Json> _list(dynamic value) => value is List
+    ? value.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+    : [];
+Json _map(dynamic value) =>
+    value is Map ? Map<String, dynamic>.from(value) : {};
+String _str(dynamic value, [String fallback = '']) {
+  final result = value?.toString().trim() ?? '';
+  return result.isEmpty || result == 'null' ? fallback : result;
 }
 
-String _initial(String value) {
-  final trimmed = value.trim();
-  return trimmed.isEmpty ? 'O' : trimmed.substring(0, 1).toUpperCase();
-}
-
-String _date(dynamic raw) {
-  final value = DateTime.tryParse(raw?.toString() ?? '')?.toLocal();
-  if (value == null) return 'Not provided';
+double _num(dynamic value, [double fallback = 0]) =>
+    value is num ? value.toDouble() : double.tryParse('$value') ?? fallback;
+String _pretty(String value) => value
+    .replaceAll('_', ' ')
+    .split(' ')
+    .map((e) => e.isEmpty ? e : '${e[0].toUpperCase()}${e.substring(1)}')
+    .join(' ');
+String _initial(String value) =>
+    value.trim().isEmpty ? 'A' : value.trim()[0].toUpperCase();
+String _money(num value) =>
+    'KES ${value.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\\d)(?=(\\d{3})+(?!\\d))'), (m) => '${m[1]},')}';
+String _date(dynamic value) {
+  final date = DateTime.tryParse(_str(value));
+  if (date == null) return '—';
   const months = [
     'Jan',
     'Feb',
@@ -1596,43 +2082,16 @@ String _date(dynamic raw) {
     'Nov',
     'Dec',
   ];
-  return '${value.day} ${months[value.month - 1]} ${value.year}';
+  return '${date.day} ${months[date.month - 1]} ${date.year}';
 }
 
-Map<String, dynamic> _map(dynamic value) =>
-    value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
-
-List<Map<String, dynamic>> _mapList(dynamic value) {
-  if (value is! List) return const [];
-  return value.whereType<Map>().map(Map<String, dynamic>.from).toList();
+String _dateTime(dynamic value) {
+  final date = DateTime.tryParse(_str(value))?.toLocal();
+  if (date == null) return '—';
+  return '${_date(date.toIso8601String())} · ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
 }
 
-Color _adminBackground(BuildContext context) {
-  return Theme.of(context).brightness == Brightness.dark
-      ? AppTheme.navy
-      : AppTheme.offWhite;
-}
-
-Color _adminSurface(BuildContext context) {
-  return Theme.of(context).brightness == Brightness.dark
-      ? AppTheme.navyMid
-      : AppTheme.white;
-}
-
-Color _adminBorder(BuildContext context) {
-  return Theme.of(context).brightness == Brightness.dark
-      ? AppTheme.navyLight
-      : AppTheme.lightGray;
-}
-
-Color _adminText(BuildContext context) {
-  return Theme.of(context).brightness == Brightness.dark
-      ? AppTheme.offWhite
-      : AppTheme.navy;
-}
-
-Color _adminMutedText(BuildContext context) {
-  return Theme.of(context).brightness == Brightness.dark
-      ? AppTheme.gray
-      : AppTheme.darkGray;
+String _maskPhone(String value) {
+  if (value.length < 6) return value.isEmpty ? '—' : '••••';
+  return '${value.substring(0, 3)} ••• ${value.substring(value.length - 3)}';
 }

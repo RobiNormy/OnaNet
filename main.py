@@ -18,7 +18,7 @@ from backend.api.provider_staff import (
     ensure_provider_staff_schema,
     router as provider_staff_router,
 )
-from backend.api.admin import router as admin_router
+from backend.api.admin import ensure_admin_schema, router as admin_router
 from backend.services.provider_access import provider_staff_access_middleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI):
     await ensure_reviews_schema()
     await ensure_pro_analytics_schema()
     await ensure_provider_staff_schema()
+    await ensure_admin_schema()
     await ensure_performance_indexes()
     yield
     await close_db_pool()
