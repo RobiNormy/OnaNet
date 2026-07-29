@@ -679,7 +679,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   }
 }
 
-class VerificationQueueScreen extends StatelessWidget {
+class VerificationQueueScreen extends StatefulWidget {
   const VerificationQueueScreen({
     super.key,
     required this.providers,
@@ -692,131 +692,588 @@ class VerificationQueueScreen extends StatelessWidget {
   final void Function(Future<void> Function(), String) run;
 
   @override
+  State<VerificationQueueScreen> createState() =>
+      _VerificationQueueScreenState();
+}
+
+class _VerificationQueueScreenState extends State<VerificationQueueScreen> {
+  String query = '';
+
+  @override
   Widget build(BuildContext context) {
-    final ids = documents
+    final ids = widget.documents
         .where((d) => d['status'] == 'pending')
         .map((d) => d['provider_id'])
         .toSet();
-    final queue = providers.where((p) => ids.contains(p['id'])).toList();
+    final queue = widget.providers.where((p) {
+      if (!ids.contains(p['id'])) return false;
+      final value =
+          '${p['provider_name']} ${p['business_name']} ${p['owner_name']} ${p['email']}'
+              .toLowerCase();
+      return value.contains(query.toLowerCase());
+    }).toList();
+    final pendingDocuments = widget.documents
+        .where((d) => d['status'] == 'pending')
+        .length;
+    final reviewedToday = widget.documents.where((d) {
+      if (d['status'] == 'pending') return false;
+      final date = DateTime.tryParse(_str(d['created_at']))?.toLocal();
+      final now = DateTime.now();
+      return date != null &&
+          date.year == now.year &&
+          date.month == now.month &&
+          date.day == now.day;
+    }).length;
+    final completeApplications = queue.where((provider) {
+      final providerDocs = widget.documents.where(
+        (d) => d['provider_id'] == provider['id'],
+      );
+      return providerDocs.map((d) => d['document_type']).toSet().length >= 4;
+    }).length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const _Heading(
           'Verification queue',
-          'Review real provider documents and notify applicants',
+          'Review provider identity and business documents securely',
+        ),
+        _MetricGrid(
+          items: [
+            (
+              'Awaiting review',
+              '${ids.length}',
+              Icons.hourglass_top_rounded,
+              'providers',
+            ),
+            (
+              'Pending documents',
+              '$pendingDocuments',
+              Icons.description_outlined,
+              'files',
+            ),
+            (
+              'Complete files',
+              '$completeApplications',
+              Icons.task_alt_rounded,
+              'ready to decide',
+            ),
+            (
+              'Reviewed today',
+              '$reviewedToday',
+              Icons.fact_check_outlined,
+              'documents',
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Row(
+          children: [
+            Expanded(
+              child: _Search(
+                onChanged: (value) => setState(() => query = value),
+                hint: 'Search provider, owner or email',
+              ),
+            ),
+            if (MediaQuery.sizeOf(context).width > 680) ...[
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _Pill('${queue.length} in queue'),
+              ),
+            ],
+          ],
         ),
         if (queue.isEmpty)
-          const _Panel(
-            title: 'Queue',
-            child: _Empty('No pending verification documents'),
+          _Panel(
+            title: query.isEmpty ? 'Queue cleared' : 'No matching applications',
+            child: _Empty(
+              query.isEmpty
+                  ? 'There are no provider applications awaiting review'
+                  : 'Try a different provider name, owner or email',
+            ),
           )
         else
-          ...queue.map((p) {
-            final docs = documents
-                .where((d) => d['provider_id'] == p['id'])
-                .toList();
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _Panel(
-                title: _str(p['provider_name']),
-                child: ExpansionTile(
-                  initiallyExpanded: queue.length == 1,
-                  title: Text(
-                    '${docs.length} documents · ${_str(p['owner_name'])}',
-                  ),
-                  children: [
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: docs
-                          .map(
-                            (d) => SizedBox(
-                              width: 230,
-                              child: Card(
-                                color: const Color(0xff0d2031),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Icon(_docIcon(_str(d['document_type']))),
-                                      const SizedBox(height: 10),
-                                      Text(
-                                        _pretty(_str(d['document_type'])),
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Row(
-                                        children: [
-                                          _Status(_str(d['status'])),
-                                          const Spacer(),
-                                          TextButton(
-                                            onPressed: () => _openUrl(
-                                              context,
-                                              _str(d['file_url']),
-                                            ),
-                                            child: const Text('View'),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
-                      child: Wrap(
-                        spacing: 10,
-                        runSpacing: 8,
-                        children: [
-                          FilledButton.icon(
-                            onPressed: () => run(
-                              () => auth.adminAction(
-                                '/providers/${p['id']}/verification',
-                                action: 'approve',
-                              ),
-                              'Provider verified and notified',
-                            ),
-                            icon: const Icon(Icons.check_circle_outline),
-                            label: const Text('Approve all'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: () async {
-                              final reason = await _reason(
-                                context,
-                                'Reject verification',
-                              );
-                              if (reason == null) return;
-                              run(
-                                () => auth.adminAction(
-                                  '/providers/${p['id']}/verification',
-                                  action: 'reject',
-                                  reason: reason,
-                                ),
-                                'Verification rejected and provider notified',
-                              );
-                            },
-                            icon: const Icon(Icons.cancel_outlined),
-                            label: const Text('Reject with reason'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
+          ...queue.indexed.map(
+            (entry) => _VerificationProviderCard(
+              provider: entry.$2,
+              documents: widget.documents
+                  .where((d) => d['provider_id'] == entry.$2['id'])
+                  .toList(),
+              initiallyExpanded: entry.$1 == 0,
+              auth: widget.auth,
+              run: widget.run,
+            ),
+          ),
       ],
     );
   }
+}
+
+class _VerificationProviderCard extends StatelessWidget {
+  const _VerificationProviderCard({
+    required this.provider,
+    required this.documents,
+    required this.initiallyExpanded,
+    required this.auth,
+    required this.run,
+  });
+
+  final Json provider;
+  final List<Json> documents;
+  final bool initiallyExpanded;
+  final AuthService auth;
+  final void Function(Future<void> Function(), String) run;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = documents.where((d) => d['status'] == 'pending').length;
+    final approved = documents.where((d) => d['status'] == 'approved').length;
+    final progress = documents.isEmpty ? 0.0 : approved / documents.length;
+    final submitted = documents
+        .map((d) => DateTime.tryParse(_str(d['created_at'])))
+        .whereType<DateTime>()
+        .fold<DateTime?>(
+          null,
+          (oldest, date) =>
+              oldest == null || date.isBefore(oldest) ? date : oldest,
+        );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xff102437),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xff294359)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x28000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+          childrenPadding: EdgeInsets.zero,
+          leading: Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppTheme.amber.withValues(alpha: .13),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _initial(_str(provider['provider_name'])),
+              style: const TextStyle(
+                color: AppTheme.amber,
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          title: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  _str(provider['provider_name'], 'Unnamed provider'),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 9),
+              _Status('pending'),
+            ],
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 5),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              children: [
+                _ReviewMeta(
+                  Icons.person_outline,
+                  _str(provider['owner_name'], 'Owner not provided'),
+                ),
+                _ReviewMeta(
+                  Icons.location_on_outlined,
+                  _str(provider['primary_city'], 'Location not provided'),
+                ),
+                _ReviewMeta(
+                  Icons.schedule_outlined,
+                  submitted == null
+                      ? 'Submission date unavailable'
+                      : 'Submitted ${_date(submitted.toIso8601String())}',
+                ),
+              ],
+            ),
+          ),
+          trailing: SizedBox(
+            width: 92,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '$pending pending',
+                  style: const TextStyle(
+                    color: Color(0xffffb547),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    minHeight: 4,
+                    value: progress,
+                    backgroundColor: const Color(0xff294257),
+                    color: const Color(0xff25c47a),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          children: [
+            const Divider(height: 1, color: Color(0xff294359)),
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 28,
+                    runSpacing: 14,
+                    children: [
+                      _VerificationStat(
+                        label: 'Provider type',
+                        value: _pretty(
+                          _str(provider['provider_type'], 'Not specified'),
+                        ),
+                      ),
+                      _VerificationStat(
+                        label: 'Business name',
+                        value: _str(
+                          provider['business_name'],
+                          _str(provider['provider_name']),
+                        ),
+                      ),
+                      _VerificationStat(
+                        label: 'Contact email',
+                        value: _str(provider['email'], 'Not provided'),
+                      ),
+                      _VerificationStat(
+                        label: 'Document set',
+                        value: '${documents.length} files · $approved approved',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                  Row(
+                    children: [
+                      const Text(
+                        'Submitted documents',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        'Private · secure links expire after 15 min',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: .46),
+                          fontSize: 9,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 980
+                          ? 4
+                          : constraints.maxWidth >= 620
+                          ? 3
+                          : constraints.maxWidth >= 400
+                          ? 2
+                          : 1;
+                      final width =
+                          (constraints.maxWidth - (columns - 1) * 10) / columns;
+                      return Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: documents
+                            .map(
+                              (document) => SizedBox(
+                                width: width,
+                                child: _VerificationDocumentCard(
+                                  document: document,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(18, 13, 18, 14),
+              decoration: const BoxDecoration(
+                color: Color(0xff0d2031),
+                borderRadius: BorderRadius.vertical(
+                  bottom: Radius.circular(14),
+                ),
+                border: Border(top: BorderSide(color: Color(0xff294359))),
+              ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final rejectButton = OutlinedButton.icon(
+                    onPressed: () async {
+                      final reason = await _reason(
+                        context,
+                        'Reject ${_str(provider['provider_name'])}',
+                      );
+                      if (reason == null) return;
+                      run(
+                        () => auth.adminAction(
+                          '/providers/${provider['id']}/verification',
+                          action: 'reject',
+                          reason: reason,
+                        ),
+                        'Verification rejected and provider notified',
+                      );
+                    },
+                    icon: const Icon(Icons.close_rounded, size: 17),
+                    label: const Text('Reject'),
+                  );
+                  final approveButton = FilledButton.icon(
+                    onPressed: () async {
+                      final confirmed = await _confirm(
+                        context,
+                        'Approve ${_str(provider['provider_name'])}?',
+                        'All submitted documents will be approved and the provider will receive the Verified badge.',
+                      );
+                      if (confirmed != true) return;
+                      run(
+                        () => auth.adminAction(
+                          '/providers/${provider['id']}/verification',
+                          action: 'approve',
+                        ),
+                        'Provider verified and notified',
+                      );
+                    },
+                    icon: const Icon(Icons.verified_outlined, size: 17),
+                    label: const Text('Approve provider'),
+                  );
+                  const note = Row(
+                    children: [
+                      Icon(
+                        Icons.admin_panel_settings_outlined,
+                        size: 17,
+                        color: Color(0xff7f96a9),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Your decision updates every document and notifies the provider.',
+                          style: TextStyle(
+                            color: Color(0xff7f96a9),
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                  if (constraints.maxWidth < 700) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        note,
+                        const SizedBox(height: 12),
+                        Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: 9,
+                          runSpacing: 8,
+                          children: [rejectButton, approveButton],
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      const Expanded(child: note),
+                      rejectButton,
+                      const SizedBox(width: 9),
+                      approveButton,
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VerificationDocumentCard extends StatelessWidget {
+  const _VerificationDocumentCard({required this.document});
+  final Json document;
+
+  @override
+  Widget build(BuildContext context) {
+    final type = _str(document['document_type']);
+    final fileUrl = _str(document['file_url']);
+    return Material(
+      color: const Color(0xff0d2031),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: fileUrl.isEmpty ? null : () => _openUrl(context, fileUrl),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xff263e52)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: AppTheme.amber.withValues(alpha: .1),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(
+                      _docIcon(type),
+                      size: 18,
+                      color: AppTheme.amber,
+                    ),
+                  ),
+                  const Spacer(),
+                  _Status(_str(document['status'], 'pending')),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _pretty(type),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                _date(document['created_at']),
+                style: const TextStyle(color: Color(0xff71889c), fontSize: 9),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Icon(
+                    fileUrl.isEmpty
+                        ? Icons.link_off_rounded
+                        : Icons.visibility_outlined,
+                    size: 15,
+                    color: fileUrl.isEmpty
+                        ? const Color(0xffff5c69)
+                        : AppTheme.amber,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    fileUrl.isEmpty ? 'File unavailable' : 'Open document',
+                    style: TextStyle(
+                      color: fileUrl.isEmpty
+                          ? const Color(0xffff5c69)
+                          : AppTheme.amber,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (fileUrl.isNotEmpty)
+                    const Icon(
+                      Icons.open_in_new_rounded,
+                      size: 13,
+                      color: Color(0xff71889c),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VerificationStat extends StatelessWidget {
+  const _VerificationStat({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 190,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+            color: Color(0xff60798e),
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+            letterSpacing: .7,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ReviewMeta extends StatelessWidget {
+  const _ReviewMeta(this.icon, this.value);
+  final IconData icon;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 13, color: const Color(0xff71889c)),
+      const SizedBox(width: 4),
+      Text(
+        value,
+        style: const TextStyle(color: Color(0xff8ba0b2), fontSize: 9),
+      ),
+    ],
+  );
 }
 
 class PackagesScreen extends StatelessWidget {
