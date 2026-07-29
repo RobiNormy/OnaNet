@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
+from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
+from supabase import create_client
 
 from backend.api.auth import _get_current_firebase_user
+from backend.core.config import settings
 from backend.db.session import get_db_connection
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+DOCUMENT_BUCKET = "provider-documents"
+DOCUMENT_URL_MARKER = f"/storage/v1/object/public/{DOCUMENT_BUCKET}/"
+supabase = create_client(
+    settings.SUPABASE_URL,
+    settings.SUPABASE_SERVICE_ROLE_KEY,
+)
 
 
 class DocumentDecision(BaseModel):
@@ -81,6 +91,28 @@ async def ensure_admin_schema() -> None:
 
 def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _signed_document_url(file_url: str) -> str:
+    """Turn a legacy public-style URL into a short-lived private document URL."""
+    parsed = urlparse(file_url)
+    marker_index = parsed.path.find(DOCUMENT_URL_MARKER)
+    if marker_index < 0:
+        return file_url
+
+    storage_path = unquote(
+        parsed.path[marker_index + len(DOCUMENT_URL_MARKER) :]
+    )
+    result = supabase.storage.from_(DOCUMENT_BUCKET).create_signed_url(
+        storage_path,
+        15 * 60,
+    )
+    signed_url = result.get("signedURL") or result.get("signedUrl")
+    if not signed_url:
+        raise RuntimeError("Supabase did not return a signed document URL.")
+    if signed_url.startswith("http"):
+        return signed_url
+    return f"{settings.SUPABASE_URL.rstrip('/')}{signed_url}"
 
 
 async def _require_admin(authorization: str | None) -> dict[str, Any]:
@@ -194,6 +226,13 @@ async def admin_snapshot(
             """
         )
 
+    signed_document_urls = await asyncio.gather(
+        *[
+            asyncio.to_thread(_signed_document_url, row["file_url"])
+            for row in documents
+        ]
+    )
+
     return {
         "admin": {
             "id": str(admin["id"]),
@@ -230,8 +269,13 @@ async def admin_snapshot(
                 "id": str(row["id"]),
                 "provider_id": str(row["provider_id"]),
                 "created_at": _iso(row["created_at"]),
+                "file_url": signed_url,
             }
-            for row in documents
+            for row, signed_url in zip(
+                documents,
+                signed_document_urls,
+                strict=True,
+            )
         ],
         "packages": [_json_row(row) for row in packages],
         "coverage_zones": [_json_row(row) for row in coverage],
