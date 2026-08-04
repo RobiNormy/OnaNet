@@ -654,7 +654,7 @@ class HelpCenterScreen extends StatelessWidget {
   Future<void> _emailSupport(BuildContext context) async {
     final uri = Uri(
       scheme: 'mailto',
-      path: 'onanetsupport@gmail.com',
+      path: 'support@mail.onanet.app',
       queryParameters: {'subject': 'OnaNet support request'},
     );
     if (!await launchUrl(uri) && context.mounted) {
@@ -691,7 +691,7 @@ class HelpCenterScreen extends StatelessWidget {
         _ActionCard(
           icon: Icons.support_agent_rounded,
           title: 'Email OnaNet support',
-          subtitle: 'onanetsupport@gmail.com',
+          subtitle: 'support@mail.onanet.app',
           onTap: () => _emailSupport(context),
         ),
       ],

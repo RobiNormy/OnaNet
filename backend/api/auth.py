@@ -1,7 +1,7 @@
 import anyio
 import functools
 import logging
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from firebase_admin import auth
 from backend.db.session import get_db_connection
@@ -9,6 +9,7 @@ from backend.core.firebase import create_firebase_user_rest,verify_firebase_toke
 from backend.core.security import create_access_token
 from backend.schemas.user import AuthResponse
 from backend.services.provider_access import current_staff_actor
+from backend.services.email_notifications import send_welcome_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ async def update_my_account(
 
 
 @router.post('/signup', response_model=AuthResponse)
-async def sign_up(body: SignUpRequest):
+async def sign_up(body: SignUpRequest, background_tasks: BackgroundTasks):
     email = body.email.strip().lower()
     display_name_parts = [
         part.strip() for part in [body.first_name, body.last_name] if part and part.strip()
@@ -191,6 +192,7 @@ async def sign_up(body: SignUpRequest):
     access_token = create_access_token(
         data={'sub': str(user_row['id']), 'role': user_row['role']}
     )
+    background_tasks.add_task(send_welcome_email, email, user_row['first_name'])
 
     return AuthResponse(
         access_token=access_token,

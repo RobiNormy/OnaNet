@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 
 const String onaNetProductionApiUrl =
-    'https://onanet-production.up.railway.app';
+    'https://api.onanet.app';
 
 const String onaNetApiBaseUrl = String.fromEnvironment(
   'ONA_NET_API_BASE_URL',

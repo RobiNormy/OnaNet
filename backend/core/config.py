@@ -24,7 +24,15 @@ class Settings(BaseSettings):
     OTP_TTL_SECONDS: int = Field(300, env="OTP_TTL_sECONDS")
     OTP_MAX_ATTEMPTS: int = Field(5, env="OTP_MAX_aTTEMPTS")
     OTP_RATE_LIMIT_PER_HOUR: int = 3
-    
+
+
+    RESEND_API_KEY: str | None = None
+    RESEND_FROM_EMAIL: str = "OnaNet <hello@mail.onanet.app>"
+    RESEND_SECURITY_FROM_EMAIL: str = (
+        "OnaNet Security <no-reply@mail.onanet.app>"
+    )
+    RESEND_SUPPORT_FROM_EMAIL: str = "OnaNet Support <support@mail.onanet.app>"
+    RESEND_REPLY_TO: str | None = "support@mail.onanet.app"
 
     @property
     def database_url(self) -> str:

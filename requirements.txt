@@ -9,3 +9,4 @@ uvicorn
 jose
 supabase
 python-multipart
+resend==2.35.0
