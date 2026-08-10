@@ -1452,6 +1452,69 @@ class UsersScreen extends StatefulWidget {
 
 class _UsersScreenState extends State<UsersScreen> {
   String query = '', filter = 'all';
+  final Set<String> _selectedUserIds = {};
+
+  List<Json> get _selectedUsers => widget.users
+      .where((user) => _selectedUserIds.contains(_str(user['id'])))
+      .toList();
+
+  Future<void> _bulkModerate(bool ban) async {
+    final selected = _selectedUsers;
+    if (selected.isEmpty) return;
+    if (await _confirm(
+          context,
+          '${ban ? 'Ban' : 'Unban'} ${selected.length} accounts?',
+          'This changes platform access for every selected account.',
+        ) !=
+        true) {
+      return;
+    }
+    widget.run(
+      () async {
+        for (final user in selected) {
+          await widget.auth.adminAction(
+            '/users/${user['id']}/moderation',
+            action: ban ? 'ban' : 'unban',
+          );
+        }
+        if (mounted) setState(_selectedUserIds.clear);
+      },
+      ban
+          ? '${selected.length} accounts banned'
+          : '${selected.length} accounts restored',
+    );
+  }
+
+  Future<void> _bulkDelete() async {
+    final selected = _selectedUsers
+        .where((user) => _str(user['role'], 'user') != 'admin')
+        .toList();
+    if (selected.isEmpty) return;
+    final reason = await _reason(
+      context,
+      'Why delete ${selected.length} selected accounts?',
+    );
+    if (reason == null || !mounted) return;
+    if (await _confirm(
+          context,
+          'Permanently delete ${selected.length} accounts?',
+          'All selected accounts and their OnaNet data will be deleted. This cannot be undone.\n\nReason: $reason',
+        ) !=
+        true) {
+      return;
+    }
+    widget.run(() async {
+      for (final user in selected) {
+        await widget.auth.adminAction(
+          '/users/${user['id']}/delete',
+          action: 'delete',
+          reason: reason,
+        );
+      }
+      if (mounted) setState(_selectedUserIds.clear);
+    }, '${selected.length} accounts deleted successfully');
+  }
+
   @override
   Widget build(BuildContext context) {
     final users = widget.users.where((u) {
@@ -1474,10 +1537,73 @@ class _UsersScreenState extends State<UsersScreen> {
           selected: filter,
           onSelected: (v) => setState(() => filter = v),
         ),
+        if (_selectedUserIds.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.amber.withValues(alpha: 0.12),
+              border: Border.all(color: AppTheme.amber.withValues(alpha: 0.35)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${_selectedUserIds.length} account${_selectedUserIds.length == 1 ? '' : 's'} selected',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => setState(_selectedUserIds.clear),
+                  child: const Text('Clear'),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Bulk actions',
+                  onSelected: (action) {
+                    if (action == 'ban') _bulkModerate(true);
+                    if (action == 'unban') _bulkModerate(false);
+                    if (action == 'delete') _bulkDelete();
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'ban', child: Text('Ban selected')),
+                    PopupMenuItem(
+                      value: 'unban',
+                      child: Text('Unban selected'),
+                    ),
+                    PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text(
+                        'Delete selected',
+                        style: TextStyle(color: Colors.redAccent),
+                      ),
+                    ),
+                  ],
+                  child: const Chip(
+                    avatar: Icon(Icons.more_horiz_rounded, size: 18),
+                    label: Text('Bulk actions'),
+                  ),
+                ),
+              ],
+            ),
+          ),
         _Panel(
           title: '${users.length} users',
           child: _TableWrap(
             child: DataTable(
+              onSelectAll: (selected) {
+                setState(() {
+                  final selectableIds = users
+                      .where((user) => _str(user['role'], 'user') != 'admin')
+                      .map((user) => _str(user['id']));
+                  if (selected == true) {
+                    _selectedUserIds.addAll(selectableIds);
+                  } else {
+                    _selectedUserIds.removeAll(selectableIds);
+                  }
+                });
+              },
               columns: const [
                 DataColumn(label: Text('User')),
                 DataColumn(label: Text('Phone')),
@@ -1490,7 +1616,19 @@ class _UsersScreenState extends State<UsersScreen> {
               ],
               rows: users.map((u) {
                 final banned = u['status'] == 'banned';
+                final userId = _str(u['id']);
+                final isAdmin = _str(u['role'], 'user') == 'admin';
                 return DataRow(
+                  selected: _selectedUserIds.contains(userId),
+                  onSelectChanged: isAdmin
+                      ? null
+                      : (selected) => setState(() {
+                          if (selected == true) {
+                            _selectedUserIds.add(userId);
+                          } else {
+                            _selectedUserIds.remove(userId);
+                          }
+                        }),
                   cells: [
                     DataCell(
                       _Identity(
