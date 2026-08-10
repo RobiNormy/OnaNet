@@ -68,8 +68,8 @@ class Location {
       if (permission == LocationPermission.deniedForever) return null;
 
       final LocationSettings locationSettings = LocationSettings(
-        accuracy: LocationAccuracy.medium,
-        distanceFilter: 100,
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 20,
       );
       final position = await Geolocator.getCurrentPosition(
         locationSettings: locationSettings,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 import httpx
@@ -141,14 +142,133 @@ class GeoapifyService:
                 "lat": str(latitude),
                 "lon": str(longitude),
                 "format": "geojson",
-                "limit": "1",
+                "limit": "20",
             },
         )
-        for feature in payload.get("features", []):
-            location = self._location_from_feature(feature, prefer_area=True)
-            if location is not None:
-                return location
-        return None
+        result = self._reverse_location_from_features(payload.get("features", []))
+        if result is None:
+            return None
+        return GeoapifyLocation(
+            title=result.title,
+            subtitle=result.subtitle,
+            latitude=latitude,
+            longitude=longitude,
+            landmark=result.landmark,
+        )
+
+    @classmethod
+    def _reverse_location_from_features(
+        cls,
+        features: Any,
+    ) -> GeoapifyLocation | None:
+        if not isinstance(features, list):
+            return None
+
+        candidates: list[tuple[dict[str, Any], GeoapifyLocation, float]] = []
+        for feature in features:
+            location = cls._location_from_feature(feature)
+            properties = feature.get("properties") if isinstance(feature, dict) else None
+            if location is None or not isinstance(properties, dict):
+                continue
+            distance_value = properties.get("distance")
+            distance = (
+                float(distance_value)
+                if isinstance(distance_value, (int, float))
+                else float("inf")
+            )
+            candidates.append((properties, location, distance))
+        if not candidates:
+            return None
+
+        anchor_areas = [
+            (area, distance, properties)
+            for properties, _, distance in candidates
+            if distance <= 750
+            for area in [cls._area_from_anchor_name(properties.get("name"))]
+            if area is not None
+        ]
+        anchor_areas.sort(key=lambda item: item[1])
+
+        closest_properties, closest_location, _ = min(
+            candidates, key=lambda item: item[2]
+        )
+        area = (
+            anchor_areas[0][0]
+            if anchor_areas
+            else cls._first_text(
+                closest_properties, "suburb", "district", "city", "county", "state"
+            )
+        )
+        if area is None:
+            area = closest_location.title
+        area_properties = anchor_areas[0][2] if anchor_areas else closest_properties
+        area_parts: list[str] = []
+        for value in (
+            area,
+            cls._first_text(area_properties, "district"),
+            cls._first_text(area_properties, "city"),
+            "Kenya",
+        ):
+            if value and value.casefold() not in {
+                part.casefold() for part in area_parts
+            }:
+                area_parts.append(value)
+
+        landmark_candidates = [
+            (cls._landmark_priority(properties), distance, location.title)
+            for properties, location, distance in candidates
+            if distance <= 1000
+            and isinstance(properties.get("name"), str)
+            and properties.get("name", "").strip()
+            and properties.get("result_type") == "amenity"
+        ]
+        landmark_candidates.sort(key=lambda item: (item[0], item[1]))
+        landmark = landmark_candidates[0][2] if landmark_candidates else None
+
+        return GeoapifyLocation(
+            title=area,
+            subtitle=", ".join(area_parts),
+            latitude=closest_location.latitude,
+            longitude=closest_location.longitude,
+            landmark=landmark if landmark and landmark.casefold() != area.casefold() else None,
+        )
+
+    @staticmethod
+    def _area_from_anchor_name(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        match = re.match(
+            r"^(.+?)\s+(?:(?:matatu|bus)\s+)?(?:stage|stop|market|centre|center)$",
+            value.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        area = match.group(1).strip()
+        return area if len(area) >= 3 else None
+
+    @staticmethod
+    def _landmark_priority(properties: dict[str, Any]) -> int:
+        name = str(properties.get("name") or "").casefold()
+        prominent_terms = (
+            "stage",
+            "bus stop",
+            "market",
+            "school",
+            "hospital",
+            "clinic",
+            "church",
+            "mosque",
+            "temple",
+            "mall",
+            "centre",
+            "center",
+            "stadium",
+            "university",
+            "college",
+            "police",
+        )
+        return 0 if any(term in name for term in prominent_terms) else 1
 
     async def _get(self, url: str, params: dict[str, str]) -> dict[str, Any]:
         params["apiKey"] = self._require_api_key()

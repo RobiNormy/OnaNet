@@ -76,6 +76,41 @@ class GeoapifyServiceTests(unittest.TestCase):
         self.assertEqual(location.title, "Tassia")
         self.assertEqual(location.landmark, "Moto Moto Chicken & Chips")
 
+    def test_reverse_prefers_nearby_stage_over_restaurants(self) -> None:
+        def feature(
+            name: str,
+            suburb: str,
+            distance: float,
+            latitude: float,
+        ) -> dict[str, object]:
+            return {
+                "properties": {
+                    "name": name,
+                    "suburb": suburb,
+                    "city": "Nairobi",
+                    "formatted": f"{name}, Nairobi, Kenya",
+                    "lat": latitude,
+                    "lon": 36.8922,
+                    "distance": distance,
+                    "result_type": "amenity",
+                }
+            }
+
+        location = GeoapifyService._reverse_location_from_features(
+            [
+                feature("Valentine Cake House", "Pipeline", 15.2, -1.3109),
+                feature("Tassia Matatu Stage", "Tassia", 105.0, -1.3110),
+                feature(
+                    "Moto Moto Chicken & Chips", "Pipeline", 174.5, -1.3111
+                ),
+            ]
+        )
+
+        self.assertIsNotNone(location)
+        assert location is not None
+        self.assertEqual(location.title, "Tassia")
+        self.assertEqual(location.landmark, "Tassia Matatu Stage")
+
 
 if __name__ == "__main__":
     unittest.main()
