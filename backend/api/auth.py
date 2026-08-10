@@ -1,15 +1,11 @@
-import anyio
-import functools
 import logging
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, EmailStr, Field
-from firebase_admin import auth
 from backend.db.session import get_db_connection
 from backend.core.firebase import create_firebase_user_rest,verify_firebase_token
 from backend.core.security import create_access_token
 from backend.schemas.user import AuthResponse
 from backend.services.provider_access import current_staff_actor
-from backend.services.email_notifications import send_welcome_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = logging.getLogger(__name__)
@@ -40,6 +36,7 @@ def _user_response(row: dict) -> dict:
         "profile_image_url": row["profile_image_url"],
         "auth_provider": row["auth_provider"],
         "role": row["role"],
+        "is_email_verified": row["is_email_verified"],
         "is_phone_verified": row["is_phone_verified"],
         "is_profile_complete": row["is_profile_complete"],
         "created_at": row["created_at"],
@@ -139,7 +136,7 @@ async def update_my_account(
 
 
 @router.post('/signup', response_model=AuthResponse)
-async def sign_up(body: SignUpRequest, background_tasks: BackgroundTasks):
+async def sign_up(body: SignUpRequest):
     email = body.email.strip().lower()
     display_name_parts = [
         part.strip() for part in [body.first_name, body.last_name] if part and part.strip()
@@ -174,12 +171,13 @@ async def sign_up(body: SignUpRequest, background_tasks: BackgroundTasks):
                     """
                     INSERT INTO users (
                         firebase_uid, email, first_name, last_name,
-                        auth_provider, role, is_profile_complete, is_phone_verified
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                        auth_provider, role, is_profile_complete, is_phone_verified,
+                        is_email_verified
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                     RETURNING *
                     """,
                     firebase_uid, email, body.first_name, body.last_name,
-                    'email', 'user', False, False,
+                    'email', 'user', False, False, False,
                 )
                 log.info(f"User inserted into Supabase with ID: {user_row['id']}")
             except Exception as exc:
@@ -192,8 +190,6 @@ async def sign_up(body: SignUpRequest, background_tasks: BackgroundTasks):
     access_token = create_access_token(
         data={'sub': str(user_row['id']), 'role': user_row['role']}
     )
-    background_tasks.add_task(send_welcome_email, email, user_row['first_name'])
-
     return AuthResponse(
         access_token=access_token,
         user={
@@ -206,6 +202,7 @@ async def sign_up(body: SignUpRequest, background_tasks: BackgroundTasks):
             'profile_image_url': user_row['profile_image_url'],
             'auth_provider': user_row['auth_provider'],
             'role': user_row['role'],
+            'is_email_verified': user_row['is_email_verified'],
             'is_phone_verified': user_row['is_phone_verified'],
             'is_profile_complete': user_row['is_profile_complete'],
         },
@@ -257,8 +254,9 @@ async def firebase_auth(body: FirebaseTokenRequest):
                     auth_provider,
                     role,
                     is_profile_complete,
-                    is_phone_verified
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                    is_phone_verified,
+                    is_email_verified
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 RETURNING *
                 """,
                 firebase_uid,
@@ -268,6 +266,7 @@ async def firebase_auth(body: FirebaseTokenRequest):
                 photo,
                 provider,
                 'user',
+                False,
                 False,
                 False,
             )
@@ -309,6 +308,7 @@ async def firebase_auth(body: FirebaseTokenRequest):
             'profile_image_url': user_row['profile_image_url'],
             'auth_provider': user_row['auth_provider'],
             'role': user_row['role'],
+            'is_email_verified': user_row['is_email_verified'],
             'is_phone_verified': user_row['is_phone_verified'],
             'is_profile_complete': user_row['is_profile_complete'],
         },

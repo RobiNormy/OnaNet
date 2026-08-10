@@ -22,6 +22,7 @@ class User(Base):
     profile_image_url = Column(String, nullable=True)
     auth_provider = Column(String,default="email")
     role = Column(String, default="user", nullable=False)
+    is_email_verified = Column(Boolean,default=False)
     is_phone_verified = Column(Boolean,default=False)
     is_profile_complete = Column(Boolean,default=False)
     created_at = Column(

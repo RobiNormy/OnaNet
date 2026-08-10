@@ -6,11 +6,7 @@ from pydantic import BaseModel, Field
 
 from backend.api.auth import _get_current_firebase_user
 from backend.db.session import get_db_connection
-from backend.services.subscription_services import (
-    Tier,
-    get_provider_subscription_status,
-    set_provider_tier,
-)
+from backend.services.subscription_services import Tier, get_provider_subscription_status
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
@@ -62,24 +58,10 @@ async def upgrade_subscription(
     body: SubscriptionUpgradeRequest,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    if body.tier == Tier.FREE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Use a paid tier when upgrading a subscription",
-        )
-
-    firebase_user = await _get_current_firebase_user(authorization)
-    provider_id = await _resolve_provider_id(firebase_user["uid"])
-
-    await set_provider_tier(
-        provider_id=provider_id,
-        tier=body.tier.value,
-        duration_days=body.duration_days,
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Direct subscription activation is disabled. "
+            "Initialize a verified payment at /api/payments/initialize."
+        ),
     )
-    status_data = await get_provider_subscription_status(provider_id)
-
-    return {
-        "message": "Subscription upgraded successfully",
-        "provider_id": str(provider_id),
-        **status_data,
-    }

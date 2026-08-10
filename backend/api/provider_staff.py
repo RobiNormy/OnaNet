@@ -4,7 +4,7 @@ import json
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
 from backend.api.auth import _get_current_firebase_user
@@ -18,6 +18,7 @@ from backend.services.provider_access import (
     default_permissions,
 )
 from backend.services.subscription_services import get_provider_tier
+from backend.services.email_notifications import send_staff_account_email
 
 
 router = APIRouter(prefix="/provider-staff", tags=["provider-staff"])
@@ -208,6 +209,7 @@ async def list_provider_staff(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_provider_staff(
     body: StaffCreate,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     firebase_user = await _get_current_firebase_user(authorization)
@@ -331,6 +333,13 @@ async def create_provider_staff(
                 json.dumps(permissions),
                 provider["owner_id"],
             )
+    background_tasks.add_task(
+        send_staff_account_email,
+        email,
+        body.display_name.strip(),
+        str(provider["provider_name"]),
+        str(row["role"]),
+    )
     return {
         "id": str(row["id"]),
         "email": email,

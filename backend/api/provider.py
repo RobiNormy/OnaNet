@@ -3,7 +3,7 @@ from uuid import UUID
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile, status
 from supabase import create_client
 
 from backend.api.auth import _get_current_firebase_user
@@ -53,6 +53,7 @@ from backend.services.subscription_services import(
     get_provider_tier,
     within_count_limits,
 )
+from backend.services.email_notifications import send_provider_review_email
 router = APIRouter(prefix="/providers", tags=["providers"])
 
 SUPABASE_BUCKET = "provider-documents"
@@ -1047,6 +1048,7 @@ async def create_provider_package(
 )
 async def complete_provider_registration(
     provider_id: UUID,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     firebase_user = await _get_current_firebase_user(authorization)
@@ -1054,7 +1056,7 @@ async def complete_provider_registration(
     async with get_db_connection() as db:
         provider = await db.fetchrow(
             """
-            SELECT providers.id
+            SELECT providers.id, providers.provider_name, users.email
             FROM providers
             JOIN users ON users.id = providers.user_id
             WHERE providers.id = $1
@@ -1113,6 +1115,12 @@ async def complete_provider_registration(
             provider_id,
         )
 
+    background_tasks.add_task(
+        send_provider_review_email,
+        str(provider["email"]),
+        str(provider["provider_name"]),
+        provider_id,
+    )
     return serialize_provider(row)
 
 

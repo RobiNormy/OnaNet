@@ -32,6 +32,10 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+node_modules/
+npm-debug.log*
+/android/build/
+/android/.gradle/
 
 # Symbolication related
 app.*.symbols
@@ -51,6 +55,8 @@ env/
 
 # Environment Variables & Credentials
 .env
+.env.*
+!.env.example
 *.json
 
 # Python Cache & Compiled Files
@@ -62,4 +68,3 @@ __pycache__/
 # Operating System Files
 .DS_Store
 Thumbs.db
-

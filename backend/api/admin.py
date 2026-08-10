@@ -5,13 +5,14 @@ from typing import Any, Literal
 from urllib.parse import unquote, urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from supabase import create_client
 
 from backend.api.auth import _get_current_firebase_user
 from backend.core.config import settings
 from backend.db.session import get_db_connection
+from backend.services.email_notifications import send_provider_status_email
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -359,6 +360,7 @@ async def review_document(
 async def moderate_provider(
     provider_id: UUID,
     body: ProviderModeration,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     await _require_admin(authorization)
@@ -375,6 +377,12 @@ async def moderate_provider(
         )
     if row is None:
         raise HTTPException(status_code=404, detail="Provider not found.")
+    background_tasks.add_task(
+        send_provider_status_email,
+        provider_id,
+        str(row["status"]),
+        body.reason,
+    )
     return {
         "id": str(row["id"]),
         "status": row["status"],
@@ -386,6 +394,7 @@ async def moderate_provider(
 async def verify_provider(
     provider_id: UUID,
     body: AdminAction,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     await _require_admin(authorization)
@@ -411,6 +420,12 @@ async def verify_provider(
                 "Your provider account is now verified." if approved
                 else f"Your verification was rejected: {body.reason or 'Documents did not meet requirements.'}",
             )
+    background_tasks.add_task(
+        send_provider_status_email,
+        provider_id,
+        "verified" if approved else "verification rejected",
+        body.reason,
+    )
     return {"ok": True}
 
 

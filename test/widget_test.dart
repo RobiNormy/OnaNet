@@ -7,7 +7,7 @@
 
 import 'package:flutter/material.dart';
 
-import 'package:ona_net/screens/home.dart';
+import 'package:ona_net/features/customer/presentation/home_screen.dart';
 
 void main() {
   runApp(OnaNet());

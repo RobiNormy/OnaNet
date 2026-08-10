@@ -8,6 +8,8 @@ from backend.api.subscription import router as subscription_router
 from backend.db.session import init_db_pool, close_db_pool
 from backend.db.performance import ensure_performance_indexes
 from backend.api.phone_verification import router as phone_router
+from backend.api.email_verification import router as email_verification_router
+from backend.services.email_otp_service import ensure_email_otp_schema
 from backend.api.installation_requests import (
     ensure_installation_requests_schema,
     router as installation_requests_router,
@@ -19,6 +21,7 @@ from backend.api.provider_staff import (
     router as provider_staff_router,
 )
 from backend.api.admin import ensure_admin_schema, router as admin_router
+from backend.api.payments import ensure_payments_schema, router as payments_router
 from backend.services.provider_access import provider_staff_access_middleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,7 +31,9 @@ async def lifespan(app: FastAPI):
     await ensure_pro_analytics_schema()
     await ensure_provider_staff_schema()
     await ensure_admin_schema()
+    await ensure_payments_schema()
     await ensure_performance_indexes()
+    await ensure_email_otp_schema()
     yield
     await close_db_pool()
 
@@ -57,12 +62,14 @@ app.middleware("http")(provider_staff_access_middleware)
 app.include_router(auth_router)
 app.include_router(provider_router)
 app.include_router(phone_router)
+app.include_router(email_verification_router)
 app.include_router(installation_requests_router)
 app.include_router(reviews_router)
 app.include_router(subscription_router)
 app.include_router(pro_analytics_router)
 app.include_router(provider_staff_router)
 app.include_router(admin_router)
+app.include_router(payments_router)
 @app.get("/")
 async def root():
     return {

@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     OTP_MAX_ATTEMPTS: int = Field(5, env="OTP_MAX_aTTEMPTS")
     OTP_RATE_LIMIT_PER_HOUR: int = 3
 
+    PAYSTACK_SECRET_KEY: str | None = None
+    PAYSTACK_PUBLIC_KEY: str | None = None
+    PAYSTACK_CALLBACK_URL: str | None = None
+    PAYSTACK_GROWTH_PLAN_CODE: str | None = None
+    PAYSTACK_PRO_PLAN_CODE: str | None = None
+    PAYSTACK_GROWTH_KEY: str | None = None
+    PAYSTACK_PRO_KEY: str | None = None
+    PAYSTACK_GROWTH_AMOUNT_KES: int = 3000
+    PAYSTACK_PRO_AMOUNT_KES: int = 5000
 
     RESEND_API_KEY: str | None = None
     RESEND_FROM_EMAIL: str = "OnaNet <hello@mail.onanet.app>"

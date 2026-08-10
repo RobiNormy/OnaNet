@@ -12,6 +12,7 @@ class UserOut(BaseModel):
     profile_image_url:Optional[str]=None
     auth_provider:str
     role: str
+    is_email_verified:bool
     is_phone_verified:bool
     is_profile_complete:bool
 

@@ -20,6 +20,26 @@ async def _deliver(**message: object) -> None:
         logger.exception("Transactional email could not be delivered")
 
 
+async def send_email_verification_otp(
+    *, email: str, otp: str, expires_in_minutes: int
+) -> None:
+    await email_service.send(
+        to=email,
+        subject="Your OnaNet verification code",
+        html=(
+            "<h1>Verify your email</h1>"
+            "<p>Enter this code in OnaNet to finish creating your account:</p>"
+            f"<p style=\"font-size:32px;font-weight:700;letter-spacing:6px;\">{escape(otp)}</p>"
+            f"<p>This code expires in {expires_in_minutes} minutes. Do not share it with anyone.</p>"
+        ),
+        text=(
+            f"Your OnaNet verification code is {otp}.\n\n"
+            f"It expires in {expires_in_minutes} minutes. Do not share it with anyone."
+        ),
+        tags={"category": "email_verification"},
+    )
+
+
 async def send_welcome_email(email: str, first_name: str | None) -> None:
     name = (first_name or "there").strip() or "there"
     safe_name = escape(name)
@@ -261,3 +281,23 @@ async def send_installation_status_email(request_id: UUID, status: str) -> None:
         idempotency_key=f"installation-{status}-{request_id}",
     )
 
+
+async def send_payment_confirmation_email(payment: dict[str, object]) -> None:
+    email = str(payment.get("customer_email") or "").strip()
+    if not email:
+        return
+    tier = str(payment.get("tier") or "").title()
+    reference = str(payment.get("reference") or "")
+    amount = payment.get("amount")
+    currency = str(payment.get("currency") or "")
+    await _deliver(
+        to=email,
+        subject=f"Your OnaNet {tier} plan is active",
+        html=(
+            f"<h1>{escape(tier)} plan activated</h1><p>Payment of "
+            f"<strong>{escape(currency)} {escape(str(amount))}</strong> was confirmed.</p>"
+        ),
+        text=f"Your OnaNet {tier} plan is active. Payment: {currency} {amount}.",
+        tags={"category": "payment_confirmation"},
+        idempotency_key=f"payment-{reference}",
+    )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import Any
-from fastapi import APIRouter,Depends,Header,HTTPException,status
+from fastapi import APIRouter,BackgroundTasks,Depends,Header,HTTPException,status
 from uuid import UUID
 from pydantic import BaseModel,Field
 from backend.api.auth import _get_current_firebase_user
@@ -22,6 +22,10 @@ from backend.services.installation_service import (
     WrongProvider,
     InvalidStatusTransition,
     get_installation_request_service,
+)
+from backend.services.email_notifications import (
+    send_installation_created_emails,
+    send_installation_status_email,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +81,7 @@ async def _resolve_user_id(firebase_uid: str)-> str:
 @router.post("",response_model=InstallationRequestOut,status_code=status.HTTP_201_CREATED)
 async def create_installation_request(
     body: InstallationRequestCreate,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service),
 )-> Any:
@@ -129,6 +134,7 @@ async def create_installation_request(
 
         ) from exc
     
+    background_tasks.add_task(send_installation_created_emails, result.id)
     return _result_to_response(result)
 
 @router.get("/me",response_model=list[InstallationRequestOut])
@@ -266,6 +272,7 @@ async def get_provider_inboc_item(
 @router.post("/{request_id}/accept", response_model=InstallationRequestOut)
 async def accept_request(
     request_id: UUID,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service)
 )-> Any:
@@ -287,6 +294,7 @@ async def accept_request(
     except InstallationRequestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail=str(exc)) from exc
     
+    background_tasks.add_task(send_installation_status_email, result.id, "accepted")
     return _result_to_response(result)
 
 class DeclineBody(BaseModel):
@@ -295,6 +303,7 @@ class DeclineBody(BaseModel):
 @router.post("/{request_id}/decline",response_model=InstallationRequestOut)
 async def decline_request(
     request_id: UUID,
+    background_tasks: BackgroundTasks,
     body: DeclineBody | None = None,
     authorization: str | None =Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service),
@@ -318,6 +327,7 @@ async def decline_request(
     except InstallationRequestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail=str(exc)) from exc
 
+    background_tasks.add_task(send_installation_status_email, result.id, "declined")
     return _result_to_response(result)
 
 @router.post("/{request_id}/complete", response_model=InstallationRequestOut)
@@ -325,6 +335,7 @@ async def decline_request(
 async def complete_request(
 
     request_id: UUID,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service),
 
@@ -348,4 +359,5 @@ async def complete_request(
     except InstallationRequestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    background_tasks.add_task(send_installation_status_email, result.id, "complete")
     return _result_to_response(result)
