@@ -6,10 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/features/auth/data/auth_service.dart';
 import 'package:ona_net/features/auth/presentation/email_verification_screen.dart';
+import 'package:ona_net/features/onboarding/data/onboarding_store.dart';
+import 'package:ona_net/features/onboarding/presentation/onboarding_screen.dart';
 import 'package:ona_net/features/provider_dashboard/presentation/provider_dashboard_screen.dart';
 import 'package:ona_net/core/navigation/screen_ids.dart';
 import 'package:ona_net/features/customer/presentation/profile_screen.dart';
 import 'package:ona_net/features/admin/presentation/admin_dashboard_screen.dart';
+import 'package:ona_net/features/admin/presentation/admin_login_screen.dart';
 import 'package:ona_net/features/customer/presentation/provider_detail_screen.dart';
 import 'package:ona_net/features/customer/presentation/saved_screen.dart';
 import 'package:ona_net/features/customer/presentation/search_screen.dart';
@@ -35,8 +38,36 @@ class OnaNet extends StatelessWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeProvider.themeMode,
-      home: const AuthenticatedLanding(),
+      home: const FirstInstallGate(),
       routes: {'/customer': (_) => const MainWrapper()},
+    );
+  }
+}
+
+class FirstInstallGate extends StatefulWidget {
+  const FirstInstallGate({super.key});
+
+  @override
+  State<FirstInstallGate> createState() => _FirstInstallGateState();
+}
+
+class _FirstInstallGateState extends State<FirstInstallGate> {
+  late final Future<bool> _completed = OnboardingStore.isCompleted();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _completed,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return snapshot.data == true
+            ? const AuthenticatedLanding()
+            : const OnboardingScreen();
+      },
     );
   }
 }
@@ -732,80 +763,121 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   }
 }
 
-class HomeHeader extends StatelessWidget {
+class HomeHeader extends StatefulWidget {
   final String? area;
   const HomeHeader({super.key, required this.area});
 
   @override
+  State<HomeHeader> createState() => _HomeHeaderState();
+}
+
+class _HomeHeaderState extends State<HomeHeader> {
+  static const _requiredTaps = 7;
+  static const _tapWindow = Duration(seconds: 4);
+  static const _armedWindow = Duration(seconds: 5);
+
+  int _tapCount = 0;
+  DateTime? _firstTapAt;
+  DateTime? _armedUntil;
+
+  void _recordTap() {
+    final now = DateTime.now();
+    if (_firstTapAt == null || now.difference(_firstTapAt!) > _tapWindow) {
+      _firstTapAt = now;
+      _tapCount = 0;
+    }
+    _tapCount += 1;
+    if (_tapCount >= _requiredTaps) {
+      _armedUntil = now.add(_armedWindow);
+      _tapCount = 0;
+      _firstTapAt = null;
+    }
+  }
+
+  void _openAdminIfArmed() {
+    final armedUntil = _armedUntil;
+    _armedUntil = null;
+    if (armedUntil == null || DateTime.now().isAfter(armedUntil)) return;
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const AdminLoginScreen()));
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Stack(
-                  alignment: Alignment.topCenter,
-                  clipBehavior: Clip.none,
-                  children: [
-                    RichText(
-                      text: TextSpan(
-                        text: "O",
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 24,
-                          color: isDark ? AppTheme.offWhite : AppTheme.navy,
-                          letterSpacing: -.5,
-                          fontWeight: FontWeight.bold,
-                          height: 1,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: -35,
-                      bottom: -1,
-                      child: Icon(
-                        Icons.wifi_rounded,
-                        color: AppTheme.amber,
-                        size: 30,
-                      ),
-                    ),
-                  ],
-                ),
-                RichText(
-                  text: TextSpan(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _recordTap,
+      onLongPress: _openAdminIfArmed,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Stack(
+                    alignment: Alignment.topCenter,
+                    clipBehavior: Clip.none,
                     children: [
-                      TextSpan(
-                        text: "na",
-                        style: GoogleFonts.urbanist(
-                          fontSize: 24,
-                          color: isDark ? AppTheme.offWhite : AppTheme.navy,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: -.5,
-                          height: 1,
+                      RichText(
+                        text: TextSpan(
+                          text: "O",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 24,
+                            color: isDark ? AppTheme.offWhite : AppTheme.navy,
+                            letterSpacing: -.5,
+                            fontWeight: FontWeight.bold,
+                            height: 1,
+                          ),
                         ),
                       ),
-                      TextSpan(
-                        text: "Net",
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
+                      Positioned(
+                        top: -35,
+                        bottom: -1,
+                        child: Icon(
+                          Icons.wifi_rounded,
                           color: AppTheme.amber,
-                          letterSpacing: -.5,
-                          height: 1,
+                          size: 30,
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ],
+                  RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: "na",
+                          style: GoogleFonts.urbanist(
+                            fontSize: 24,
+                            color: isDark ? AppTheme.offWhite : AppTheme.navy,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: -.5,
+                            height: 1,
+                          ),
+                        ),
+                        TextSpan(
+                          text: "Net",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.amber,
+                            letterSpacing: -.5,
+                            height: 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

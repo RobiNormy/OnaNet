@@ -56,3 +56,7 @@ flutter:
   assets:
     - lib/images/whatsapp.webp
     - lib/images/noback.png
+    - lib/images/onboarding-screen-01.png
+    - lib/images/onboarding-screen-02.png
+    - lib/images/onboarding-screen-03.png
+    - lib/images/onboarding-screen-04.png

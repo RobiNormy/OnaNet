@@ -159,6 +159,21 @@ async def sign_up(body: SignUpRequest):
         raise HTTPException(status_code=500, detail=error_msg)
 
     async with get_db_connection() as connection:
+        deleted = await connection.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM admin_deleted_users
+                WHERE firebase_uid=$1 OR lower(email)=lower($2)
+            )
+            """,
+            firebase_uid,
+            email,
+        )
+        if deleted:
+            raise HTTPException(
+                status_code=403,
+                detail="This OnaNet account has been deleted.",
+            )
         user_row = await connection.fetchrow(
             "SELECT * FROM users WHERE firebase_uid = $1 OR email = $2",
             firebase_uid,
@@ -238,6 +253,21 @@ async def firebase_auth(body: FirebaseTokenRequest):
     last_name = name_parts[1] if len(name_parts) > 1 else None
 
     async with get_db_connection() as connection:
+        deleted = await connection.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM admin_deleted_users
+                WHERE firebase_uid=$1 OR lower(email)=lower($2)
+            )
+            """,
+            firebase_uid,
+            email,
+        )
+        if deleted:
+            raise HTTPException(
+                status_code=403,
+                detail="This OnaNet account has been deleted.",
+            )
         user_row = await connection.fetchrow(
             "SELECT * FROM users WHERE firebase_uid = $1",
             firebase_uid,

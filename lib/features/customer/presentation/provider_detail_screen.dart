@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:ona_net/features/provider_registration/data/package_service.dart';
 import 'package:ona_net/features/installations/presentation/installation_request_screen.dart';
 import 'package:ona_net/features/auth/presentation/login_screen.dart';
+import 'package:ona_net/features/auth/presentation/sign_up_screen.dart';
 import 'package:ona_net/features/customer/data/saved_providers_store.dart';
 import 'package:ona_net/features/provider_dashboard/data/pro_analytics_service.dart';
 import 'package:ona_net/features/customer/data/provider_share_link.dart';
@@ -1427,29 +1428,41 @@ class _PackageBottomBar extends StatelessWidget {
               icon: Icons.handyman_rounded,
               onTap: () async {
                 if (FirebaseAuth.instance.currentUser == null) {
-                  final signIn = await showDialog<bool>(
+                  final authAction = await showDialog<String>(
                     context: context,
                     builder: (dialogContext) => AlertDialog(
                       title: const Text('Account required'),
                       content: const Text(
-                        'Sign in or create an account before requesting an installation.',
+                        'Create an account or sign in before requesting an installation. It keeps your request secure and lets you track its progress.',
                       ),
                       actions: [
                         TextButton(
-                          onPressed: () => Navigator.pop(dialogContext, false),
+                          onPressed: () => Navigator.pop(dialogContext),
                           child: const Text('Cancel'),
                         ),
+                        TextButton(
+                          onPressed: () =>
+                              Navigator.pop(dialogContext, 'sign_up'),
+                          child: const Text('Create account'),
+                        ),
                         FilledButton(
-                          onPressed: () => Navigator.pop(dialogContext, true),
+                          onPressed: () =>
+                              Navigator.pop(dialogContext, 'sign_in'),
                           child: const Text('Sign in'),
                         ),
                       ],
                     ),
                   );
-                  if (signIn == true && context.mounted) {
+                  if (!context.mounted) return;
+                  if (authAction == 'sign_in') {
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => const Login()),
+                    );
+                  } else if (authAction == 'sign_up') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SignUp()),
                     );
                   }
                   return;

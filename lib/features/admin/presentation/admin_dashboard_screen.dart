@@ -69,7 +69,11 @@ class _OnaNetAdminDashboardState extends State<OnaNetAdminDashboard> {
       await action();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(success), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(success),
+          backgroundColor: AppTheme.green,
+          behavior: SnackBarBehavior.floating,
+        ),
       );
       await load();
     } catch (e) {
@@ -1481,6 +1485,7 @@ class _UsersScreenState extends State<UsersScreen> {
                 DataColumn(label: Text('Tickets')),
                 DataColumn(label: Text('Joined')),
                 DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Role')),
                 DataColumn(label: Text('Actions')),
               ],
               rows: users.map((u) {
@@ -1500,25 +1505,115 @@ class _UsersScreenState extends State<UsersScreen> {
                     DataCell(Text(_date(u['created_at']))),
                     DataCell(_Status(_str(u['status'], 'active'))),
                     DataCell(
-                      TextButton(
-                        onPressed: () async {
-                          if (await _confirm(
-                                context,
-                                '${banned ? 'Unban' : 'Ban'} user?',
-                                'This changes the user’s platform access.',
-                              ) !=
-                              true) {
+                      _Status(
+                        _str(u['role'], 'user') == 'admin' ? 'admin' : 'user',
+                      ),
+                    ),
+                    DataCell(
+                      PopupMenuButton<String>(
+                        tooltip: 'User actions',
+                        icon: const Icon(Icons.more_horiz_rounded),
+                        onSelected: (action) async {
+                          if (action == 'promote') {
+                            if (await _confirm(
+                                  context,
+                                  'Promote to administrator?',
+                                  '${_str(u['email'])} will receive full access to users, providers, reports, billing and platform controls. Only continue if you trust this person.',
+                                ) !=
+                                true) {
+                              return;
+                            }
+                            widget.run(
+                              () => widget.auth.adminAction(
+                                '/users/${u['id']}/role',
+                                action: 'promote_admin',
+                              ),
+                              '${_str(u['email'])} promoted to admin',
+                            );
                             return;
                           }
-                          widget.run(
-                            () => widget.auth.adminAction(
-                              '/users/${u['id']}/moderation',
-                              action: banned ? 'unban' : 'ban',
-                            ),
-                            banned ? 'User restored' : 'User banned',
-                          );
+                          if (action == 'moderate') {
+                            if (await _confirm(
+                                  context,
+                                  '${banned ? 'Unban' : 'Ban'} user?',
+                                  'This changes the user’s platform access.',
+                                ) !=
+                                true) {
+                              return;
+                            }
+                            widget.run(
+                              () => widget.auth.adminAction(
+                                '/users/${u['id']}/moderation',
+                                action: banned ? 'unban' : 'ban',
+                              ),
+                              banned ? 'User restored' : 'User banned',
+                            );
+                            return;
+                          }
+                          if (action == 'delete') {
+                            final reason = await _reason(
+                              context,
+                              'Why delete ${_str(u['email'])}?',
+                            );
+                            if (reason == null || !context.mounted) return;
+                            if (await _confirm(
+                                  context,
+                                  'Permanently delete this user?',
+                                  '${_str(u['email'])} and their OnaNet data will be deleted. This action cannot be undone.\n\nReason: $reason',
+                                ) !=
+                                true) {
+                              return;
+                            }
+                            widget.run(
+                              () => widget.auth.adminAction(
+                                '/users/${u['id']}/delete',
+                                action: 'delete',
+                                reason: reason,
+                              ),
+                              'Account deleted successfully',
+                            );
+                          }
                         },
-                        child: Text(banned ? 'Unban' : 'Ban'),
+                        itemBuilder: (context) => [
+                          if (_str(u['role'], 'user') != 'admin')
+                            const PopupMenuItem(
+                              value: 'promote',
+                              child: ListTile(
+                                dense: true,
+                                leading: Icon(
+                                  Icons.admin_panel_settings_outlined,
+                                ),
+                                title: Text('Promote to admin'),
+                              ),
+                            ),
+                          PopupMenuItem(
+                            value: 'moderate',
+                            child: ListTile(
+                              dense: true,
+                              leading: Icon(
+                                banned
+                                    ? Icons.lock_open_rounded
+                                    : Icons.block_rounded,
+                              ),
+                              title: Text(banned ? 'Unban user' : 'Ban user'),
+                            ),
+                          ),
+                          if (_str(u['role'], 'user') != 'admin')
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: ListTile(
+                                dense: true,
+                                leading: Icon(
+                                  Icons.delete_forever_outlined,
+                                  color: Colors.redAccent,
+                                ),
+                                title: Text(
+                                  'Delete user',
+                                  style: TextStyle(color: Colors.redAccent),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ],
@@ -2101,7 +2196,7 @@ class _Panel extends StatelessWidget {
                   ),
                 ),
               ),
-              if (trailing != null) trailing!,
+              ?trailing,
             ],
           ),
         ),
@@ -2403,14 +2498,37 @@ Future<bool?> _confirm(BuildContext context, String title, String body) =>
       ),
     );
 
-Future<String?> _reason(BuildContext context, String title) async {
-  final controller = TextEditingController();
-  final result = await showDialog<String>(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: Text(title),
+Future<String?> _reason(BuildContext context, String title) =>
+    showDialog<String>(
+      context: context,
+      builder: (_) => _ReasonDialog(title: title),
+    );
+
+class _ReasonDialog extends StatefulWidget {
+  const _ReasonDialog({required this.title});
+
+  final String title;
+
+  @override
+  State<_ReasonDialog> createState() => _ReasonDialogState();
+}
+
+class _ReasonDialogState extends State<_ReasonDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
       content: TextField(
-        controller: controller,
+        controller: _controller,
+        autofocus: true,
         minLines: 3,
         maxLines: 5,
         decoration: const InputDecoration(
@@ -2425,17 +2543,14 @@ Future<String?> _reason(BuildContext context, String title) async {
         ),
         FilledButton(
           onPressed: () {
-            if (controller.text.trim().isNotEmpty) {
-              Navigator.pop(context, controller.text.trim());
-            }
+            final reason = _controller.text.trim();
+            if (reason.isNotEmpty) Navigator.pop(context, reason);
           },
           child: const Text('Continue'),
         ),
       ],
-    ),
-  );
-  controller.dispose();
-  return result;
+    );
+  }
 }
 
 void _showInvoice(BuildContext context, Json invoice) => showDialog<void>(

@@ -231,6 +231,23 @@ class AuthService {
     }
   }
 
+  Future<String?> refreshAccountEmail() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw const AuthServiceException('Please sign in again.');
+    }
+    try {
+      await user.reload();
+      await _auth.currentUser?.getIdToken(true);
+      await getMyAccount();
+      return _auth.currentUser?.email;
+    } on FirebaseAuthException catch (error) {
+      throw AuthServiceException(_firebaseErrorMessage(error));
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,

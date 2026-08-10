@@ -1,21 +1,24 @@
 from __future__ import annotations
 
-import asyncio
+import logging
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
+import anyio
 from pydantic import BaseModel, Field
 from supabase import create_client
 
 from backend.api.auth import _get_current_firebase_user
 from backend.core.config import settings
+from backend.core.firebase import delete_firebase_user
 from backend.db.session import get_db_connection
 from backend.services.email_notifications import send_provider_status_email
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+log = logging.getLogger(__name__)
 DOCUMENT_BUCKET = "provider-documents"
 DOCUMENT_URL_MARKER = f"/storage/v1/object/public/{DOCUMENT_BUCKET}/"
 supabase = create_client(
@@ -84,6 +87,16 @@ async def ensure_admin_schema() -> None:
                 message text NOT NULL,
                 created_at timestamptz NOT NULL DEFAULT now()
             );
+            CREATE TABLE IF NOT EXISTS admin_deleted_users (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                deleted_user_id uuid NOT NULL,
+                firebase_uid text NOT NULL UNIQUE,
+                email text NOT NULL,
+                reason text NOT NULL,
+                deleted_by_id uuid NOT NULL,
+                deleted_by_email text NOT NULL,
+                deleted_at timestamptz NOT NULL DEFAULT now()
+            );
             ALTER TABLE provider_packages
                 ADD COLUMN IF NOT EXISTS is_available boolean NOT NULL DEFAULT true;
             """
@@ -114,6 +127,17 @@ def _signed_document_url(file_url: str) -> str:
     if signed_url.startswith("http"):
         return signed_url
     return f"{settings.SUPABASE_URL.rstrip('/')}{signed_url}"
+
+
+def _safe_signed_document_url(file_url: str) -> str:
+    try:
+        return _signed_document_url(file_url)
+    except Exception:
+        log.warning(
+            "Could not create a signed provider-document URL",
+            exc_info=True,
+        )
+        return file_url
 
 
 async def _require_admin(authorization: str | None) -> dict[str, Any]:
@@ -227,11 +251,11 @@ async def admin_snapshot(
             """
         )
 
-    signed_document_urls = await asyncio.gather(
-        *[
-            asyncio.to_thread(_signed_document_url, row["file_url"])
-            for row in documents
-        ]
+    # The Supabase sync storage client owns one HTTP connection pool and must
+    # not be used concurrently across several worker threads. Generate URLs
+    # sequentially inside one worker so snapshot requests remain reliable.
+    signed_document_urls = await anyio.to_thread.run_sync(
+        lambda: [_safe_signed_document_url(row["file_url"]) for row in documents]
     )
 
     return {
@@ -469,6 +493,111 @@ async def moderate_user(
             user_id, state, body.reason,
         )
     return {"id": str(user_id), "status": state}
+
+
+@router.post("/users/{user_id}/role")
+async def promote_user_to_admin(
+    user_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    acting_admin = await _require_admin(authorization)
+    if body.action != "promote_admin":
+        raise HTTPException(status_code=400, detail="Invalid role action.")
+    async with get_db_connection() as db:
+        target = await db.fetchrow(
+            "SELECT id, email, role FROM users WHERE id=$1",
+            user_id,
+        )
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if target["role"] == "admin":
+            return {"id": str(user_id), "role": "admin"}
+        row = await db.fetchrow(
+            """
+            UPDATE users
+               SET role='admin', updated_at=now()
+             WHERE id=$1
+             RETURNING id, email, role
+            """,
+            user_id,
+        )
+    log.info(
+        "Admin %s promoted %s (%s) to admin",
+        acting_admin["email"],
+        row["email"],
+        row["id"],
+    )
+    return {"id": str(row["id"]), "email": row["email"], "role": row["role"]}
+
+
+@router.post("/users/{user_id}/delete")
+async def delete_user_account(
+    user_id: UUID,
+    body: AdminAction,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    acting_admin = await _require_admin(authorization)
+    reason = (body.reason or "").strip()
+    if body.action != "delete" or len(reason) < 5:
+        raise HTTPException(
+            status_code=400,
+            detail="A deletion reason of at least 5 characters is required.",
+        )
+    if user_id == acting_admin["id"]:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
+
+    async with get_db_connection() as db:
+        async with db.transaction():
+            target = await db.fetchrow(
+                "SELECT id, firebase_uid, email, role FROM users WHERE id=$1 FOR UPDATE",
+                user_id,
+            )
+            if target is None:
+                raise HTTPException(status_code=404, detail="User not found.")
+            if target["role"] == "admin":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Administrator accounts cannot be deleted here.",
+                )
+            await db.execute(
+                """
+                INSERT INTO admin_deleted_users (
+                    deleted_user_id, firebase_uid, email, reason,
+                    deleted_by_id, deleted_by_email
+                ) VALUES ($1,$2,$3,$4,$5,$6)
+                ON CONFLICT (firebase_uid) DO UPDATE
+                   SET reason=excluded.reason,
+                       deleted_by_id=excluded.deleted_by_id,
+                       deleted_by_email=excluded.deleted_by_email,
+                       deleted_at=now()
+                """,
+                target["id"],
+                target["firebase_uid"],
+                target["email"],
+                reason,
+                acting_admin["id"],
+                acting_admin["email"],
+            )
+            # Preserve staff accounts created by this user by transferring the
+            # immutable creator reference to the acting administrator.
+            await db.execute(
+                "UPDATE provider_staff_accounts SET created_by=$1 WHERE created_by=$2",
+                acting_admin["id"],
+                target["id"],
+            )
+            await db.execute("DELETE FROM users WHERE id=$1", target["id"])
+
+    firebase_deleted = await delete_firebase_user(str(target["firebase_uid"]))
+    log.warning(
+        "Admin %s deleted user %s (%s); Firebase deleted=%s; reason=%s",
+        acting_admin["email"],
+        target["email"],
+        target["id"],
+        firebase_deleted,
+        reason,
+    )
+    return {"id": str(user_id), "deleted": True, "firebase_deleted": firebase_deleted}
 
 
 @router.post("/reports/{report_id}/action")

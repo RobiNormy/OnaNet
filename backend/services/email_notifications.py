@@ -58,7 +58,7 @@ async def send_welcome_email(email: str, first_name: str | None) -> None:
                     <tr>
                       <td style="background:#102a43;padding:28px 32px;">
                         <div style="font-size:28px;font-weight:800;color:#ffffff;">
-                          Ona<span style="color:#f5a623;">Net</span>
+                          Ona<span style="color:#00a6d6;">Net</span>
                         </div>
                       </td>
                     </tr>

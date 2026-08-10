@@ -86,6 +86,20 @@ async def verify_firebase_token(token: str) -> dict | None:
         return None
 
 
+async def delete_firebase_user(firebase_uid: str) -> bool:
+    """Delete an Auth identity when Firebase Admin credentials are available."""
+    if not _firebase_admin_ready:
+        return False
+    try:
+        await anyio.to_thread.run_sync(auth.delete_user, firebase_uid)
+        return True
+    except auth.UserNotFoundError:
+        return True
+    except Exception:
+        log.exception("Firebase user deletion failed for %s", firebase_uid)
+        return False
+
+
 async def create_firebase_user_rest(email: str, password: str, display_name: str | None = None) -> str:
     async with httpx.AsyncClient() as client:
         res = await client.post(
