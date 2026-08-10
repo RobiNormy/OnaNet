@@ -22,14 +22,18 @@ class GeoapifyLocation:
     subtitle: str
     latitude: float
     longitude: float
+    landmark: str | None = None
 
     def to_dict(self) -> dict[str, str | float]:
-        return {
+        result: dict[str, str | float] = {
             "title": self.title,
             "subtitle": self.subtitle,
             "latitude": self.latitude,
             "longitude": self.longitude,
         }
+        if self.landmark:
+            result["landmark"] = self.landmark
+        return result
 
 
 class GeoapifyService:
@@ -141,7 +145,7 @@ class GeoapifyService:
             },
         )
         for feature in payload.get("features", []):
-            location = self._location_from_feature(feature)
+            location = self._location_from_feature(feature, prefer_area=True)
             if location is not None:
                 return location
         return None
@@ -160,7 +164,10 @@ class GeoapifyService:
         return payload
 
     @staticmethod
-    def _location_from_feature(feature: Any) -> GeoapifyLocation | None:
+    def _location_from_feature(
+        feature: Any,
+        prefer_area: bool = False,
+    ) -> GeoapifyLocation | None:
         if not isinstance(feature, dict):
             return None
         properties = feature.get("properties")
@@ -173,15 +180,23 @@ class GeoapifyService:
         ):
             return None
 
-        title = GeoapifyService._first_text(
-            properties,
-            "name",
-            "address_line1",
-            "street",
-            "suburb",
-            "district",
-            "city",
-            "county",
+        area = GeoapifyService._first_text(
+            properties, "suburb", "district", "city", "county", "state"
+        )
+        place_name = GeoapifyService._first_text(properties, "name")
+        title = (
+            area
+            if prefer_area and area is not None
+            else GeoapifyService._first_text(
+                properties,
+                "name",
+                "address_line1",
+                "street",
+                "suburb",
+                "district",
+                "city",
+                "county",
+            )
         )
         if title is None:
             return None
@@ -196,6 +211,13 @@ class GeoapifyService:
             subtitle=subtitle,
             latitude=float(latitude),
             longitude=float(longitude),
+            landmark=(
+                place_name
+                if prefer_area
+                and place_name is not None
+                and place_name.casefold() != title.casefold()
+                else None
+            ),
         )
 
     @staticmethod

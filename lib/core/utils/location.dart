@@ -35,8 +35,20 @@ class Location {
     double latitude,
     double longitude,
   ) async {
-    final place = await _reverseLocation(latitude, longitude);
-    return place == null ? null : 'Near ${place.title}';
+    try {
+      final response = await sharedApiClient.get<dynamic>(
+        '$onaNetApiBaseUrl/locations/reverse',
+        queryParameters: {'latitude': latitude, 'longitude': longitude},
+      );
+      final body = response.data;
+      if (body is! Map || body['result'] is! Map) return null;
+      final result = body['result'] as Map;
+      final landmark = result['landmark']?.toString().trim();
+      if (landmark == null || landmark.isEmpty) return null;
+      return 'Near $landmark';
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<String?> getCurrentArea() async {

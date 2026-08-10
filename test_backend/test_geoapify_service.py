@@ -57,6 +57,25 @@ class GeoapifyServiceTests(unittest.TestCase):
         )
         self.assertFalse(GeoapifyService._is_relevant("Kutus", helipad))
 
+    def test_reverse_uses_area_instead_of_business_name(self) -> None:
+        location = GeoapifyService._location_from_feature(
+            {
+                "properties": {
+                    "name": "Moto Moto Chicken & Chips",
+                    "suburb": "Tassia",
+                    "city": "Nairobi",
+                    "formatted": "Outer Ring Road, Tassia, Nairobi, Kenya",
+                    "lat": -1.31,
+                    "lon": 36.89,
+                }
+            },
+            prefer_area=True,
+        )
+        self.assertIsNotNone(location)
+        assert location is not None
+        self.assertEqual(location.title, "Tassia")
+        self.assertEqual(location.landmark, "Moto Moto Chicken & Chips")
+
 
 if __name__ == "__main__":
     unittest.main()
