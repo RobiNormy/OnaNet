@@ -534,7 +534,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   void _onQueryChanged(String value) {
     _debounce?.cancel();
     final query = value.trim();
-    if (query.length < 2) {
+    if (query.length < 3) {
       setState(() {
         _isSearching = false;
         _suggestions = [];
@@ -556,10 +556,15 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final availableHeight =
+        (MediaQuery.sizeOf(context).height - bottomInset - 32)
+            .clamp(240.0, 620.0)
+            .toDouble();
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(bottom: bottomInset),
         child: Container(
+          constraints: BoxConstraints(maxHeight: availableHeight),
           margin: EdgeInsets.all(16),
           padding: EdgeInsets.fromLTRB(16, 10, 16, 16),
           decoration: BoxDecoration(
@@ -657,7 +662,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                     color: AppTheme.amber,
                   ),
                 )
-              else if (_controller.text.trim().length >= 2 &&
+              else if (_controller.text.trim().length >= 3 &&
                   _suggestions.isEmpty)
                 Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
@@ -670,9 +675,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                     ),
                   ),
                 )
-              else
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: 260),
+              else if (_suggestions.isNotEmpty)
+                Flexible(
+                  fit: FlexFit.loose,
                   child: ListView.separated(
                     shrinkWrap: true,
                     itemCount: _suggestions.length,
@@ -692,6 +697,8 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                         ),
                         title: Text(
                           suggestion.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.plusJakartaSans(
                             color: widget.isDark
                                 ? AppTheme.white
@@ -704,6 +711,8 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                             ? null
                             : Text(
                                 suggestion.subtitle,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.plusJakartaSans(
                                   color: AppTheme.gray,
                                   fontSize: 11,
