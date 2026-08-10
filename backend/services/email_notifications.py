@@ -182,21 +182,77 @@ async def send_provider_status_email(
         )
     if row is None:
         return
-    label = status.replace("_", " ")
-    reason_text = f" Reason: {reason.strip()}" if reason and reason.strip() else ""
+    provider_name = str(row["provider_name"])
+    safe_provider = escape(provider_name)
+    normalized_status = status.strip().lower().replace("_", " ")
+    clean_reason = (reason or "").strip()
+    safe_reason = escape(clean_reason or "The submitted details or documents did not meet our verification requirements.")
+
+    if normalized_status in {"verified", "approved"}:
+        subject = "Your OnaNet provider verification has been approved"
+        html = (
+            f"<h1>Congratulations, {safe_provider} is verified</h1>"
+            "<p>Our team has reviewed your provider details and supporting documents. "
+            "Your verification has been approved, and your verified status is now visible on OnaNet.</p>"
+            "<p>You can continue managing your coverage areas, packages, and installation requests from your provider dashboard.</p>"
+            "<p>Thank you for helping clients choose internet providers with confidence.</p>"
+        )
+        text = (
+            f"Congratulations, {provider_name} is verified.\n\n"
+            "Our team reviewed your provider details and supporting documents. "
+            "Your verification has been approved, and your verified status is now visible on OnaNet.\n\n"
+            "You can continue managing your coverage areas, packages, and installation requests from your provider dashboard."
+        )
+    elif normalized_status in {"verification rejected", "rejected"}:
+        subject = "Action needed: update your OnaNet provider verification"
+        html = (
+            f"<h1>Your verification needs some changes</h1>"
+            f"<p>We reviewed the verification submission for <strong>{safe_provider}</strong>, "
+            "but we could not approve it in its current form.</p>"
+            f"<div style=\"background:#fff4f4;border-left:4px solid #dc2626;padding:16px;margin:20px 0;\">"
+            f"<strong>Reason from our verification team:</strong><br>{safe_reason}</div>"
+            "<p><strong>What to do next:</strong></p>"
+            "<ol>"
+            "<li>Open your OnaNet provider profile.</li>"
+            "<li>Correct the details mentioned above and replace any unclear, incorrect, expired, or mismatched documents.</li>"
+            "<li>Check that every name and business detail matches the official documents.</li>"
+            "<li>Submit the profile for verification again.</li>"
+            "</ol>"
+            "<p>Once you resubmit, our team will review the corrected information. "
+            "If you need help understanding the decision, reply to this email and OnaNet Support will assist you.</p>"
+        )
+        text = (
+            f"Your verification for {provider_name} needs some changes.\n\n"
+            "We could not approve the submission in its current form.\n\n"
+            f"Reason from our verification team: {clean_reason or 'The submitted details or documents did not meet our verification requirements.'}\n\n"
+            "What to do next:\n"
+            "1. Open your OnaNet provider profile.\n"
+            "2. Correct the details mentioned above and replace unclear, incorrect, expired, or mismatched documents.\n"
+            "3. Check that names and business details match the official documents.\n"
+            "4. Submit your provider profile for verification again.\n\n"
+            "Reply to this email if you need help from OnaNet Support."
+        )
+    else:
+        label = normalized_status
+        subject = f"Update to your OnaNet provider account: {label}"
+        reason_sentence = f"\n\nReason: {clean_reason}" if clean_reason else ""
+        html_reason = f"<p><strong>Reason:</strong> {escape(clean_reason)}</p>" if clean_reason else ""
+        html = (
+            f"<h1>Provider account update</h1>"
+            f"<p>The status of <strong>{safe_provider}</strong> has been updated to "
+            f"<strong>{escape(label)}</strong>.</p>{html_reason}"
+            "<p>Reply to this email if you need assistance from OnaNet Support.</p>"
+        )
+        text = f"The status of {provider_name} has been updated to {label}.{reason_sentence}"
+
     await _deliver(
         to=str(row["email"]),
-        subject=f"Your OnaNet provider account is {label}",
-        html=(
-            f"<h1>Provider account {escape(label)}</h1><p>"
-            f"<strong>{escape(str(row['provider_name']))}</strong> is now "
-            f"{escape(label)}.{escape(reason_text)}</p>"
-        ),
-        text=(
-            f"Your provider {row['provider_name']} is now {label}.{reason_text}"
-        ),
+        from_email=settings.RESEND_SUPPORT_FROM_EMAIL,
+        reply_to=settings.RESEND_REPLY_TO,
+        subject=subject,
+        html=html,
+        text=text,
         tags={"category": "provider_status"},
-        idempotency_key=f"provider-{status}-{provider_id}",
     )
 
 

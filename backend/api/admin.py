@@ -442,7 +442,11 @@ async def verify_provider(
                 provider_id,
                 "Verification approved" if approved else "Verification needs attention",
                 "Your provider account is now verified." if approved
-                else f"Your verification was rejected: {body.reason or 'Documents did not meet requirements.'}",
+                else (
+                    "We could not approve your verification yet. "
+                    f"Reason: {body.reason or 'The submitted details or documents did not meet our requirements.'} "
+                    "Correct the affected details or documents, then submit your provider profile for verification again."
+                ),
             )
     background_tasks.add_task(
         send_provider_status_email,
