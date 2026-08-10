@@ -61,7 +61,7 @@ class _CoverageAreasScreenState extends State<CoverageAreasScreen> {
   void _onSearchChanged(String value) {
     _debounce?.cancel();
     final query = value.trim();
-    if (query.length < 2) {
+    if (query.length < 3) {
       setState(() {
         _isSearching = false;
         _suggestions = [];

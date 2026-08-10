@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     FIREBASE_SERVICE_ACCOUNT_PATH: str | None = None
     FIREBASE_API_KEY: str
     FIREBASE_PROJECT_ID: str | None = None
+    GEOAPIFY_API_KEY: str | None = None
 
     SMS_PROVIDER: str = "console"
     DEV_OTP: str | None = None
