@@ -1453,6 +1453,12 @@ class UsersScreen extends StatefulWidget {
 class _UsersScreenState extends State<UsersScreen> {
   String query = '', filter = 'all';
   final Set<String> _selectedUserIds = {};
+  bool _selectionMode = false;
+
+  void _clearSelection() {
+    _selectedUserIds.clear();
+    _selectionMode = false;
+  }
 
   List<Json> get _selectedUsers => widget.users
       .where((user) => _selectedUserIds.contains(_str(user['id'])))
@@ -1477,7 +1483,7 @@ class _UsersScreenState extends State<UsersScreen> {
             action: ban ? 'ban' : 'unban',
           );
         }
-        if (mounted) setState(_selectedUserIds.clear);
+        if (mounted) setState(_clearSelection);
       },
       ban
           ? '${selected.length} accounts banned'
@@ -1511,7 +1517,7 @@ class _UsersScreenState extends State<UsersScreen> {
           reason: reason,
         );
       }
-      if (mounted) setState(_selectedUserIds.clear);
+      if (mounted) setState(_clearSelection);
     }, '${selected.length} accounts deleted successfully');
   }
 
@@ -1555,7 +1561,7 @@ class _UsersScreenState extends State<UsersScreen> {
                   ),
                 ),
                 TextButton(
-                  onPressed: () => setState(_selectedUserIds.clear),
+                  onPressed: () => setState(_clearSelection),
                   child: const Text('Clear'),
                 ),
                 PopupMenuButton<String>(
@@ -1592,18 +1598,23 @@ class _UsersScreenState extends State<UsersScreen> {
           title: '${users.length} users',
           child: _TableWrap(
             child: DataTable(
-              onSelectAll: (selected) {
-                setState(() {
-                  final selectableIds = users
-                      .where((user) => _str(user['role'], 'user') != 'admin')
-                      .map((user) => _str(user['id']));
-                  if (selected == true) {
-                    _selectedUserIds.addAll(selectableIds);
-                  } else {
-                    _selectedUserIds.removeAll(selectableIds);
-                  }
-                });
-              },
+              showCheckboxColumn: _selectionMode,
+              onSelectAll: _selectionMode
+                  ? (selected) {
+                      setState(() {
+                        final selectableIds = users
+                            .where(
+                              (user) => _str(user['role'], 'user') != 'admin',
+                            )
+                            .map((user) => _str(user['id']));
+                        if (selected == true) {
+                          _selectedUserIds.addAll(selectableIds);
+                        } else {
+                          _clearSelection();
+                        }
+                      });
+                    }
+                  : null,
               columns: const [
                 DataColumn(label: Text('User')),
                 DataColumn(label: Text('Phone')),
@@ -1620,13 +1631,22 @@ class _UsersScreenState extends State<UsersScreen> {
                 final isAdmin = _str(u['role'], 'user') == 'admin';
                 return DataRow(
                   selected: _selectedUserIds.contains(userId),
-                  onSelectChanged: isAdmin
+                  onLongPress: isAdmin
+                      ? null
+                      : () => setState(() {
+                          _selectionMode = true;
+                          _selectedUserIds.add(userId);
+                        }),
+                  onSelectChanged: !_selectionMode || isAdmin
                       ? null
                       : (selected) => setState(() {
                           if (selected == true) {
                             _selectedUserIds.add(userId);
                           } else {
                             _selectedUserIds.remove(userId);
+                            if (_selectedUserIds.isEmpty) {
+                              _selectionMode = false;
+                            }
                           }
                         }),
                   cells: [
