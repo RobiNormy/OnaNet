@@ -120,6 +120,17 @@ class Location {
 
         final place = placemarks.first;
         final placeParts = [
+          place.subLocality,
+          place.locality,
+          place.name,
+          place.street,
+          place.thoroughfare,
+          place.subAdministrativeArea,
+          place.administrativeArea,
+        ];
+        final title = _matchingSearchPart(trimmedQuery, placeParts);
+        if (title == null) continue;
+        final subtitle = _joinUnique([
           place.name,
           place.street,
           place.thoroughfare,
@@ -128,26 +139,8 @@ class Location {
           place.subAdministrativeArea,
           place.administrativeArea,
           place.country,
-        ];
-        if (!_matchesSearch(trimmedQuery, placeParts)) continue;
-
-        final title = _firstNotEmpty([
-          place.subLocality,
-          place.locality,
-          place.name,
-          place.street,
-          place.subAdministrativeArea,
-        ]);
-        final subtitle = _joinUnique([
-          place.name,
-          place.subLocality,
-          place.locality,
-          place.subAdministrativeArea,
-          place.administrativeArea,
-          place.country,
         ], skip: title);
 
-        if (title == null) continue;
         final key = '$title|$subtitle'.toLowerCase();
         if (!seen.add(key)) continue;
 
@@ -186,29 +179,31 @@ class Location {
     return null;
   }
 
-  static bool _matchesSearch(String query, List<String?> placeParts) {
+  static String? _matchingSearchPart(String query, List<String?> placeParts) {
     final normalizedQuery = _normalizeSearchText(query);
-    if (normalizedQuery.length < 3) return false;
-
-    final searchablePlace = _normalizeSearchText(
-      placeParts.whereType<String>().join(' '),
-    );
-    if (searchablePlace.contains(normalizedQuery)) return true;
+    if (normalizedQuery.length < 3) return null;
 
     final queryWords = normalizedQuery
         .split(' ')
         .where((word) => word.length >= 3)
         .toList();
-    if (queryWords.isEmpty) return false;
+    if (queryWords.isEmpty) return null;
 
-    final placeWords = searchablePlace.split(' ');
-    return queryWords.every(
-      (queryWord) => placeWords.any(
-        (placeWord) =>
-            placeWord == queryWord ||
-            (queryWord.length >= 4 && placeWord.startsWith(queryWord)),
-      ),
-    );
+    for (final value in placeParts) {
+      final candidate = value?.trim();
+      if (candidate == null || candidate.isEmpty) continue;
+      final normalizedCandidate = _normalizeSearchText(candidate);
+      final candidateWords = normalizedCandidate.split(' ');
+      final matches = queryWords.every(
+        (queryWord) => candidateWords.any(
+          (candidateWord) =>
+              candidateWord == queryWord ||
+              (queryWord.length >= 4 && candidateWord.startsWith(queryWord)),
+        ),
+      );
+      if (matches) return candidate;
+    }
+    return null;
   }
 
   static String _normalizeSearchText(String value) {
