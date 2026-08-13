@@ -5,6 +5,7 @@ import 'package:ona_net/features/provider_registration/data/package_service.dart
 import 'package:ona_net/features/installations/presentation/installation_request_screen.dart';
 import 'package:ona_net/features/auth/presentation/login_screen.dart';
 import 'package:ona_net/features/auth/presentation/sign_up_screen.dart';
+import 'package:ona_net/features/auth/data/auth_service.dart';
 import 'package:ona_net/features/customer/data/saved_providers_store.dart';
 import 'package:ona_net/features/provider_dashboard/data/pro_analytics_service.dart';
 import 'package:ona_net/features/customer/data/provider_share_link.dart';
@@ -29,6 +30,47 @@ class ProviderDetailScreen extends StatefulWidget {
 
 class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
   int? _selectedPackageIndex;
+
+  Future<void> _reportProvider({Map<String, dynamic>? review}) async {
+    if (FirebaseAuth.instance.currentUser == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sign in to submit a report.')),
+      );
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const Login()),
+      );
+      return;
+    }
+    final providerId = widget.provider['id']?.toString() ?? '';
+    final reviewId = review?['id']?.toString();
+    if (providerId.isEmpty || (review != null && (reviewId?.isEmpty ?? true))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This item cannot be reported right now.'),
+        ),
+      );
+      return;
+    }
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ReportDialog(
+        providerId: providerId,
+        reviewId: reviewId,
+        targetName: review == null ? 'provider' : 'review',
+      ),
+    );
+    if (submitted == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppTheme.green,
+          content: Text('Report submitted. Our team will review it.'),
+        ),
+      );
+    }
+  }
 
   Future<void> _shareProvider(BuildContext shareContext) async {
     final provider = widget.provider;
@@ -153,6 +195,22 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                       ),
                     ),
                   ),
+                  Container(
+                    margin: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: IconButton(
+                      tooltip: 'Report provider',
+                      icon: const Icon(
+                        Icons.flag_outlined,
+                        color: Colors.white,
+                        size: 19,
+                      ),
+                      onPressed: _reportProvider,
+                    ),
+                  ),
                 ],
                 title: Text(
                   provider['name'],
@@ -224,7 +282,10 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
                         )
                       else
                         ...customerReviews.map(
-                          (review) => _CustomerReviewCard(review: review),
+                          (review) => _CustomerReviewCard(
+                            review: review,
+                            onReport: () => _reportProvider(review: review),
+                          ),
                         ),
                     ],
                   ),
@@ -505,9 +566,10 @@ List<Map<String, dynamic>> _providerCustomerReviews(
 }
 
 class _CustomerReviewCard extends StatelessWidget {
-  const _CustomerReviewCard({required this.review});
+  const _CustomerReviewCard({required this.review, this.onReport});
 
   final Map<String, dynamic> review;
+  final VoidCallback? onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -600,6 +662,13 @@ class _CustomerReviewCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onReport != null)
+                IconButton(
+                  tooltip: 'Report review',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onReport,
+                  icon: const Icon(Icons.flag_outlined, size: 18),
+                ),
             ],
           ),
           if (comment.isNotEmpty) ...[
@@ -610,6 +679,131 @@ class _CustomerReviewCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ReportDialog extends StatefulWidget {
+  const _ReportDialog({
+    required this.providerId,
+    required this.reviewId,
+    required this.targetName,
+  });
+
+  final String providerId;
+  final String? reviewId;
+  final String targetName;
+
+  @override
+  State<_ReportDialog> createState() => _ReportDialogState();
+}
+
+class _ReportDialogState extends State<_ReportDialog> {
+  final _details = TextEditingController();
+  String _reason = 'misleading_information';
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _details.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_details.text.trim().length < 10) {
+      setState(
+        () => _error = 'Add at least 10 characters explaining the problem.',
+      );
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      await AuthService().submitReport(
+        providerId: widget.providerId,
+        reviewId: widget.reviewId,
+        reason: _reason,
+        details: _details.text,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _error = error.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    scrollable: true,
+    title: Text('Report ${widget.targetName}'),
+    content: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: _reason,
+          decoration: const InputDecoration(labelText: 'Reason'),
+          items:
+              const {
+                    'misleading_information': 'Misleading information',
+                    'fraud_or_scam': 'Fraud or scam',
+                    'abusive_content': 'Abusive content',
+                    'spam': 'Spam',
+                    'privacy_or_safety': 'Privacy or safety concern',
+                    'other': 'Other',
+                  }.entries
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item.key,
+                      child: Text(item.value),
+                    ),
+                  )
+                  .toList(),
+          onChanged: _submitting
+              ? null
+              : (value) => setState(() => _reason = value ?? _reason),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: _details,
+          enabled: !_submitting,
+          maxLength: 1000,
+          minLines: 3,
+          maxLines: 6,
+          decoration: const InputDecoration(
+            labelText: 'What happened?',
+            hintText: 'Give enough detail for the OnaNet team to investigate.',
+            alignLabelWithHint: true,
+          ),
+        ),
+        if (_error != null)
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: _submitting ? null : () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton.icon(
+        onPressed: _submitting ? null : _submit,
+        icon: _submitting
+            ? const SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.flag_outlined),
+        label: Text(_submitting ? 'Submitting...' : 'Submit report'),
+      ),
+    ],
+  );
 }
 
 String _shortReviewDate(DateTime value) {

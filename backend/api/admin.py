@@ -68,6 +68,10 @@ async def ensure_admin_schema() -> None:
                 created_at timestamptz NOT NULL DEFAULT now(),
                 updated_at timestamptz NOT NULL DEFAULT now()
             );
+            ALTER TABLE admin_reports
+                ADD COLUMN IF NOT EXISTS reporter_user_id uuid REFERENCES users(id) ON DELETE SET NULL;
+            ALTER TABLE admin_reports
+                ADD COLUMN IF NOT EXISTS reported_review_id uuid REFERENCES provider_reviews(id) ON DELETE SET NULL;
             CREATE TABLE IF NOT EXISTS admin_invoices (
                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                 invoice_number text UNIQUE NOT NULL,

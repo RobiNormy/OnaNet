@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, status
@@ -47,6 +47,21 @@ class ReviewCreate(BaseModel):
     installation_request_id: UUID
     rating: int = Field(ge=1, le=5)
     comment: str | None = Field(default=None, max_length=1000)
+
+
+class ReportCreate(BaseModel):
+    target_type: Literal["provider", "review"]
+    provider_id: UUID
+    review_id: UUID | None = None
+    reason: Literal[
+        "misleading_information",
+        "fraud_or_scam",
+        "abusive_content",
+        "spam",
+        "privacy_or_safety",
+        "other",
+    ]
+    details: str = Field(min_length=10, max_length=1000)
 
 
 class ReviewOut(BaseModel):
@@ -190,6 +205,103 @@ async def my_reviews(authorization: str | None = Header(default=None)) -> list[A
         )
         for row in rows
     ]
+
+
+@router.post("/report", status_code=status.HTTP_201_CREATED)
+async def report_provider_or_review(
+    body: ReportCreate,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    firebase_user = await _get_current_firebase_user(authorization)
+    if body.target_type == "review" and body.review_id is None:
+        raise HTTPException(status_code=400, detail="Select a review to report.")
+    if body.target_type == "provider" and body.review_id is not None:
+        raise HTTPException(status_code=400, detail="A provider report cannot include a review.")
+
+    async with get_db_connection() as conn:
+        async with conn.transaction():
+            reporter = await conn.fetchrow(
+                """
+                SELECT id, first_name, last_name, email
+                FROM users WHERE firebase_uid=$1
+                """,
+                firebase_user["uid"],
+            )
+            if reporter is None:
+                raise HTTPException(status_code=404, detail="User account not found.")
+            provider = await conn.fetchrow(
+                """
+                SELECT p.id, p.provider_name, p.user_id
+                FROM providers p WHERE p.id=$1
+                """,
+                body.provider_id,
+            )
+            if provider is None:
+                raise HTTPException(status_code=404, detail="Provider not found.")
+            if provider["user_id"] == reporter["id"]:
+                raise HTTPException(status_code=400, detail="You cannot report your own provider profile.")
+
+            reported_name = provider["provider_name"]
+            if body.target_type == "review":
+                review = await conn.fetchrow(
+                    """
+                    SELECT pr.id, pr.provider_id, pr.user_id, pr.comment,
+                           u.first_name, u.last_name
+                    FROM provider_reviews pr
+                    JOIN users u ON u.id=pr.user_id
+                    WHERE pr.id=$1 AND pr.provider_id=$2
+                    """,
+                    body.review_id,
+                    body.provider_id,
+                )
+                if review is None:
+                    raise HTTPException(status_code=404, detail="Review not found.")
+                if review["user_id"] == reporter["id"]:
+                    raise HTTPException(status_code=400, detail="You cannot report your own review.")
+                reviewer_name = " ".join(
+                    part for part in [review["first_name"], review["last_name"]] if part
+                ).strip() or "OnaNet customer"
+                reported_name = f"Review by {reviewer_name} for {provider['provider_name']}"
+
+            duplicate = await conn.fetchval(
+                """
+                SELECT EXISTS(
+                    SELECT 1 FROM admin_reports
+                    WHERE reporter_user_id=$1 AND reported_provider_id=$2
+                      AND report_type=$3
+                      AND reported_review_id IS NOT DISTINCT FROM $4
+                      AND status IN ('open','investigating')
+                )
+                """,
+                reporter["id"],
+                body.provider_id,
+                body.target_type,
+                body.review_id,
+            )
+            if duplicate:
+                raise HTTPException(status_code=409, detail="You already submitted this report.")
+
+            reporter_name = " ".join(
+                part for part in [reporter["first_name"], reporter["last_name"]] if part
+            ).strip() or reporter["email"]
+            row = await conn.fetchrow(
+                """
+                INSERT INTO admin_reports(
+                    report_type, reporter_name, reporter_user_id,
+                    reported_provider_id, reported_review_id,
+                    reported_name, details
+                ) VALUES($1,$2,$3,$4,$5,$6,$7)
+                RETURNING id, status
+                """,
+                body.target_type,
+                reporter_name,
+                reporter["id"],
+                body.provider_id,
+                body.review_id,
+                reported_name,
+                f"Reason: {body.reason.replace('_', ' ')}\n{body.details.strip()}",
+            )
+    return {"id": str(row["id"]), "status": row["status"]}
 
 
 def _customer_name(row: dict[str, Any]) -> str | None:

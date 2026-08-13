@@ -319,6 +319,25 @@ class AuthService {
     return _asMapList(response.data);
   }
 
+  Future<void> submitReport({
+    required String providerId,
+    String? reviewId,
+    required String reason,
+    required String details,
+  }) async {
+    try {
+      await _postJson('/reviews/report', {
+        'target_type': reviewId == null ? 'provider' : 'review',
+        'provider_id': providerId,
+        'review_id': reviewId,
+        'reason': reason,
+        'details': details.trim(),
+      });
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
   Future<String?> getFirebaseIdToken() async => _auth.currentUser?.getIdToken();
 
   Future<Map<String, dynamic>> submitProviderRegistration(
