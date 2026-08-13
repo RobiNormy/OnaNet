@@ -930,21 +930,60 @@ async def upload_provider_document(
                 detail="Could not upload document to storage",
             ) from exc
 
-        row = await db.fetchrow(
-            """
-            INSERT INTO provider_documents (
+        async with db.transaction():
+            rejected = await db.fetchrow(
+                """
+                SELECT id
+                FROM provider_documents
+                WHERE provider_id=$1 AND document_type=$2 AND status='rejected'
+                ORDER BY created_at DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
                 provider_id,
                 document_type,
-                file_url,
-                status
             )
-            VALUES ($1, $2, $3, 'pending')
-            RETURNING id;
-            """,
-            provider_id,
-            document_type,
-            public_url,
-        )
+            if rejected:
+                row = await db.fetchrow(
+                    """
+                    UPDATE provider_documents
+                    SET file_url=$2, status='pending', created_at=now()
+                    WHERE id=$1
+                    RETURNING id
+                    """,
+                    rejected["id"],
+                    public_url,
+                )
+                await db.execute(
+                    """
+                    DELETE FROM provider_documents
+                    WHERE provider_id=$1 AND document_type=$2
+                      AND status='rejected' AND id != $3
+                    """,
+                    provider_id,
+                    document_type,
+                    rejected["id"],
+                )
+            else:
+                row = await db.fetchrow(
+                    """
+                    INSERT INTO provider_documents (
+                        provider_id, document_type, file_url, status
+                    ) VALUES ($1, $2, $3, 'pending')
+                    RETURNING id
+                    """,
+                    provider_id,
+                    document_type,
+                    public_url,
+                )
+            await db.execute(
+                """
+                UPDATE provider_verification_reviews
+                SET status='resubmitted', resubmitted_at=now()
+                WHERE provider_id=$1
+                """,
+                provider_id,
+            )
 
     return {
         "message": "Document uploaded successfully",
@@ -962,10 +1001,14 @@ async def list_provider_documents(
     async with get_db_connection() as db:
         rows = await db.fetch(
             """
-            SELECT documents.id, documents.document_type, documents.status
+            SELECT documents.id, documents.document_type, documents.status,
+                   review.status AS verification_status,
+                   review.reason AS rejection_reason
             FROM provider_documents AS documents
             JOIN providers ON providers.id = documents.provider_id
             JOIN users ON users.id = providers.user_id
+            LEFT JOIN provider_verification_reviews AS review
+              ON review.provider_id = providers.id
             WHERE users.firebase_uid = $1;
             """,
             firebase_user["uid"],
@@ -976,6 +1019,8 @@ async def list_provider_documents(
             "id": str(row["id"]),
             "document_type": row["document_type"],
             "status": row["status"] or "pending",
+            "verification_status": row["verification_status"],
+            "rejection_reason": row["rejection_reason"],
         }
         for row in rows
     ]

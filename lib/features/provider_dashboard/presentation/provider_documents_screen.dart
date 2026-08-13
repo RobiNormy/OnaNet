@@ -248,9 +248,28 @@ class _ProviderDocumentsPageState extends State<ProviderDocumentsPage> {
               );
             }
             final documents = snapshot.data ?? const [];
+            final rejected = documents.any(
+              (document) =>
+                  document['status']?.toString().toLowerCase() == 'rejected',
+            );
+            final resubmitted = documents.any(
+              (document) => document['verification_status'] == 'resubmitted',
+            );
+            final rejectionReason = documents
+                .map((document) => document['rejection_reason']?.toString())
+                .whereType<String>()
+                .where((reason) => reason.trim().isNotEmpty)
+                .firstOrNull;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (rejected || resubmitted) ...[
+                  _VerificationFeedbackCard(
+                    resubmitted: resubmitted && !rejected,
+                    reason: rejectionReason,
+                  ),
+                  const SizedBox(height: 18),
+                ],
                 for (final category in const ['Identity', 'Business']) ...[
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
@@ -282,6 +301,66 @@ class _ProviderDocumentsPageState extends State<ProviderDocumentsPage> {
           },
         ),
       ],
+    );
+  }
+}
+
+class _VerificationFeedbackCard extends StatelessWidget {
+  const _VerificationFeedbackCard({
+    required this.resubmitted,
+    required this.reason,
+  });
+
+  final bool resubmitted;
+  final String? reason;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = resubmitted ? AppTheme.amberDark : Colors.red.shade700;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            resubmitted ? Icons.hourglass_top_rounded : Icons.error_outline,
+            color: color,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  resubmitted
+                      ? 'Re-verification is in progress'
+                      : 'Changes are required',
+                  style: GoogleFonts.plusJakartaSans(
+                    color: color,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  resubmitted
+                      ? 'Your replacement documents are back in the review queue.'
+                      : '${reason ?? 'One or more documents need to be corrected.'} Replace every rejected document below to submit it for re-verification.',
+                  style: GoogleFonts.urbanist(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

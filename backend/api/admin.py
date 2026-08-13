@@ -87,6 +87,13 @@ async def ensure_admin_schema() -> None:
                 message text NOT NULL,
                 created_at timestamptz NOT NULL DEFAULT now()
             );
+            CREATE TABLE IF NOT EXISTS provider_verification_reviews (
+                provider_id uuid PRIMARY KEY REFERENCES providers(id) ON DELETE CASCADE,
+                status text NOT NULL,
+                reason text,
+                reviewed_at timestamptz NOT NULL DEFAULT now(),
+                resubmitted_at timestamptz
+            );
             CREATE TABLE IF NOT EXISTS admin_deleted_users (
                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                 deleted_user_id uuid NOT NULL,
@@ -368,12 +375,26 @@ async def review_document(
                         """,
                         row["provider_id"],
                     )
+                    await db.execute(
+                        "DELETE FROM provider_verification_reviews WHERE provider_id=$1",
+                        row["provider_id"],
+                    )
             else:
                 await db.execute(
                     """
                     UPDATE providers
                     SET is_verified = false, updated_at = now()
                     WHERE id = $1
+                    """,
+                    row["provider_id"],
+                )
+                await db.execute(
+                    """
+                    INSERT INTO provider_verification_reviews(provider_id,status,reason)
+                    VALUES($1,'rejected','One or more documents need to be corrected.')
+                    ON CONFLICT(provider_id) DO UPDATE
+                    SET status='rejected', reason=excluded.reason,
+                        reviewed_at=now(), resubmitted_at=NULL
                     """,
                     row["provider_id"],
                 )
@@ -436,6 +457,23 @@ async def verify_provider(
                 "UPDATE providers SET is_verified=$2, updated_at=now() WHERE id=$1",
                 provider_id, approved,
             )
+            if approved:
+                await db.execute(
+                    "DELETE FROM provider_verification_reviews WHERE provider_id=$1",
+                    provider_id,
+                )
+            else:
+                await db.execute(
+                    """
+                    INSERT INTO provider_verification_reviews(provider_id,status,reason)
+                    VALUES($1,'rejected',$2)
+                    ON CONFLICT(provider_id) DO UPDATE
+                    SET status='rejected', reason=excluded.reason,
+                        reviewed_at=now(), resubmitted_at=NULL
+                    """,
+                    provider_id,
+                    body.reason or "The submitted details or documents did not meet our requirements.",
+                )
             await db.execute(
                 """INSERT INTO admin_notifications(provider_id,title,message)
                    VALUES($1,$2,$3)""",
