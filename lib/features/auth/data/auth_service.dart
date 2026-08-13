@@ -267,6 +267,53 @@ class AuthService {
     }
   }
 
+  Future<void> deleteMyAccount({String? password}) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+    if (user == null || email == null) {
+      throw const AuthServiceException('Please sign in again.');
+    }
+    try {
+      final usesPassword = user.providerData.any(
+        (provider) => provider.providerId == 'password',
+      );
+      if (usesPassword) {
+        if (password == null || password.isEmpty) {
+          throw const AuthServiceException(
+            'Enter your password to delete the account.',
+          );
+        }
+        await user.reauthenticateWithCredential(
+          EmailAuthProvider.credential(email: email, password: password),
+        );
+      } else if (user.providerData.any(
+        (provider) => provider.providerId == 'google.com',
+      )) {
+        final googleUser = await _googleSignIn.authenticate();
+        final googleAuth = googleUser.authentication;
+        await user.reauthenticateWithCredential(
+          GoogleAuthProvider.credential(idToken: googleAuth.idToken),
+        );
+      }
+
+      final response = await _postJson('/auth/me/delete', {
+        'confirmation': 'DELETE',
+      });
+      final payload = _asMap(response.data);
+      if (payload['firebase_deleted'] != true) {
+        await user.delete();
+      }
+      await _auth.signOut();
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
+    } on FirebaseAuthException catch (error) {
+      throw AuthServiceException(_firebaseErrorMessage(error));
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getMyReviews() async {
     final response = await _getJson('/reviews/me');
     return _asMapList(response.data);

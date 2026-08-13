@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/features/auth/data/auth_service.dart';
+import 'package:ona_net/features/auth/presentation/login_screen.dart';
 import 'package:ona_net/features/installations/data/installation_request_service.dart';
 import 'package:ona_net/features/customer/data/customer_notification_store.dart';
 import 'package:ona_net/features/customer/data/preferred_location_store.dart';
@@ -216,6 +217,159 @@ class PasswordSecurityScreen extends StatelessWidget {
           title: 'Forgot your password?',
           subtitle: 'Email me a secure password reset link',
           onTap: () => _resetPassword(context),
+        ),
+        const SizedBox(height: 28),
+        const Divider(),
+        const SizedBox(height: 12),
+        _ActionCard(
+          icon: Icons.delete_forever_outlined,
+          title: 'Delete account',
+          subtitle:
+              'Permanently delete your account, provider profile and OnaNet data',
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (_) => const _DeleteAccountDialog(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteAccountDialog extends StatefulWidget {
+  const _DeleteAccountDialog();
+
+  @override
+  State<_DeleteAccountDialog> createState() => _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
+  final _confirmation = TextEditingController();
+  final _password = TextEditingController();
+  bool _deleting = false;
+  bool _obscurePassword = true;
+  String? _error;
+
+  bool get _usesPassword =>
+      FirebaseAuth.instance.currentUser?.providerData.any(
+        (provider) => provider.providerId == 'password',
+      ) ??
+      false;
+
+  @override
+  void dispose() {
+    _confirmation.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _delete() async {
+    if (_deleting) return;
+    if (_confirmation.text.trim().toUpperCase() != 'DELETE') {
+      setState(() => _error = 'Type DELETE exactly to confirm.');
+      return;
+    }
+    if (_usesPassword && _password.text.isEmpty) {
+      setState(() => _error = 'Enter your current password.');
+      return;
+    }
+    setState(() {
+      _deleting = true;
+      _error = null;
+    });
+    try {
+      await AuthService().deleteMyAccount(password: _password.text);
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const Login()),
+        (route) => false,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _deleting = false;
+        _error = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      scrollable: true,
+      icon: const Icon(
+        Icons.warning_amber_rounded,
+        color: Colors.redAccent,
+        size: 42,
+      ),
+      title: const Text('Permanently delete account?'),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'This permanently deletes your OnaNet account, provider profile (if any), installation history, saved data and access. This cannot be undone.',
+          ),
+          const SizedBox(height: 18),
+          TextField(
+            controller: _confirmation,
+            enabled: !_deleting,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(
+              labelText: 'Type DELETE',
+              prefixIcon: Icon(Icons.delete_outline_rounded),
+            ),
+          ),
+          if (_usesPassword) ...[
+            const SizedBox(height: 14),
+            TextField(
+              controller: _password,
+              enabled: !_deleting,
+              obscureText: _obscurePassword,
+              decoration: InputDecoration(
+                labelText: 'Current password',
+                prefixIcon: const Icon(Icons.lock_outline_rounded),
+                suffixIcon: IconButton(
+                  onPressed: _deleting
+                      ? null
+                      : () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _deleting ? null : () => Navigator.pop(context),
+          child: const Text('Keep account'),
+        ),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+          onPressed: _deleting ? null : _delete,
+          icon: _deleting
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.delete_forever_outlined),
+          label: Text(_deleting ? 'Deleting...' : 'Delete permanently'),
         ),
       ],
     );

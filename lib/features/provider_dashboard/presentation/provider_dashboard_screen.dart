@@ -12,6 +12,7 @@ import 'package:ona_net/features/provider_dashboard/presentation/pro_analytics_s
 import 'package:ona_net/features/provider_dashboard/presentation/provider_documents_screen.dart';
 import 'package:ona_net/features/provider_dashboard/presentation/provider_team_accounts_screen.dart';
 import 'package:ona_net/features/auth/presentation/login_screen.dart';
+import 'package:ona_net/features/customer/presentation/customer_profile_pages.dart';
 import 'package:ona_net/core/theme/app_theme.dart';
 import 'package:ona_net/features/provider_dashboard/data/provider_inbox_service.dart';
 import 'package:ona_net/features/subscriptions/data/subscription_service.dart';
@@ -110,7 +111,13 @@ enum _ProviderDashView {
   analytics,
 }
 
-enum _DashboardProfileAction { dashboard, packages, coverage, signOut }
+enum _DashboardProfileAction {
+  dashboard,
+  packages,
+  coverage,
+  security,
+  signOut,
+}
 
 class _DashboardState extends State<Dashboard> {
   _ProviderDashView _activeView = _ProviderDashView.dashboard;
@@ -2723,6 +2730,10 @@ class _ProfileChip extends StatelessWidget {
             dashboard?._showView(_ProviderDashView.packages);
           case _DashboardProfileAction.coverage:
             dashboard?._showView(_ProviderDashView.coverage);
+          case _DashboardProfileAction.security:
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const PasswordSecurityScreen()),
+            );
           case _DashboardProfileAction.signOut:
             dashboard?._logoutProvider();
         }
@@ -2753,6 +2764,15 @@ class _ProfileChip extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.map_outlined),
             title: Text('Coverage'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _DashboardProfileAction.security,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.security_outlined),
+            title: Text('Account & security'),
           ),
         ),
         PopupMenuDivider(),

@@ -2,7 +2,11 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from backend.db.session import get_db_connection
-from backend.core.firebase import create_firebase_user_rest,verify_firebase_token
+from backend.core.firebase import (
+    create_firebase_user_rest,
+    delete_firebase_user,
+    verify_firebase_token,
+)
 from backend.core.security import create_access_token
 from backend.schemas.user import AuthResponse
 from backend.services.provider_access import current_staff_actor
@@ -23,6 +27,10 @@ class SignUpRequest(BaseModel):
 class PersonalInfoUpdate(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(default="", max_length=100)
+
+
+class AccountDeletionRequest(BaseModel):
+    confirmation: str = Field(min_length=6, max_length=20)
 
 
 def _user_response(row: dict) -> dict:
@@ -133,6 +141,71 @@ async def update_my_account(
     if row is None:
         raise HTTPException(status_code=404, detail="User profile not found.")
     return _user_response(dict(row))
+
+
+@router.post("/me/delete")
+async def delete_my_account(
+    body: AccountDeletionRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    if body.confirmation.strip().upper() != "DELETE":
+        raise HTTPException(status_code=400, detail="Type DELETE to confirm account deletion.")
+
+    firebase_user = await _get_current_firebase_user(authorization)
+    if firebase_user.get("provider_staff"):
+        account_uid = firebase_user.get("actor_uid")
+    else:
+        account_uid = firebase_user["uid"]
+
+    async with get_db_connection() as connection:
+        async with connection.transaction():
+            user = await connection.fetchrow(
+                """
+                SELECT id, firebase_uid, email, role
+                FROM users
+                WHERE firebase_uid=$1
+                FOR UPDATE
+                """,
+                account_uid,
+            )
+            if user is None:
+                raise HTTPException(status_code=404, detail="User profile not found.")
+            if user["role"] == "admin":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Administrator accounts must be transferred or removed by another administrator.",
+                )
+
+            await connection.execute(
+                """
+                INSERT INTO admin_deleted_users (
+                    deleted_user_id, firebase_uid, email, reason,
+                    deleted_by_id, deleted_by_email
+                ) VALUES ($1,$2,$3,'Self-service account deletion',$1,$3)
+                ON CONFLICT (firebase_uid) DO UPDATE
+                   SET reason='Self-service account deletion',
+                       deleted_by_id=excluded.deleted_by_id,
+                       deleted_by_email=excluded.deleted_by_email,
+                       deleted_at=now()
+                """,
+                user["id"],
+                user["firebase_uid"],
+                user["email"],
+            )
+            await connection.execute(
+                "DELETE FROM provider_staff_accounts WHERE created_by=$1",
+                user["id"],
+            )
+            await connection.execute("DELETE FROM users WHERE id=$1", user["id"])
+
+    firebase_deleted = await delete_firebase_user(str(user["firebase_uid"]))
+    log.warning(
+        "User %s (%s) deleted their OnaNet account; Firebase deleted=%s",
+        user["email"],
+        user["id"],
+        firebase_deleted,
+    )
+    return {"deleted": True, "firebase_deleted": firebase_deleted}
 
 
 @router.post('/signup', response_model=AuthResponse)
