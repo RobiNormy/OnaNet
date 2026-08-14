@@ -243,7 +243,7 @@ async function signOut(confirm = true) {
 }
 
 $('#login-form').addEventListener('submit', async (event) => {
-  event.preventDefault(); const button = event.submitter; const error = $('#login-error'); error.hidden = true; button.disabled = true;
+  event.preventDefault(); const button = event.submitter; const error = $('#login-error'); error.hidden = true; $('#login-notice').hidden = true; button.disabled = true;
   try {
     const { data, error: authError } = await state.supabase.auth.signInWithPassword({ email: $('#admin-email').value.trim(), password: $('#admin-password').value });
     if (authError) throw authError; await enterApp(data.session);
@@ -251,6 +251,37 @@ $('#login-form').addEventListener('submit', async (event) => {
   finally { button.disabled = false; }
 });
 $('#toggle-password').addEventListener('click', () => { const input = $('#admin-password'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggle-password').textContent = input.type === 'password' ? 'Show' : 'Hide'; });
+$('#forgot-password').addEventListener('click', async () => {
+  const emailInput = $('#admin-email');
+  const email = emailInput.value.trim();
+  const error = $('#login-error');
+  const notice = $('#login-notice');
+  error.hidden = true;
+  notice.hidden = true;
+  if (!email || !emailInput.checkValidity()) {
+    error.textContent = 'Enter your admin email address first.';
+    error.hidden = false;
+    emailInput.focus();
+    return;
+  }
+  const button = $('#forgot-password');
+  button.disabled = true;
+  button.textContent = 'Sending reset link…';
+  try {
+    const { error: resetError } = await state.supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'https://onanet.app/reset-password',
+    });
+    if (resetError) throw resetError;
+    notice.textContent = 'If that email belongs to an OnaNet account, a secure password-reset link has been sent.';
+    notice.hidden = false;
+  } catch (failure) {
+    error.textContent = failure.message || 'The reset link could not be sent. Try again shortly.';
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Forgot password?';
+  }
+});
 $('#main-nav').addEventListener('click', (event) => { const button = event.target.closest('[data-view]'); if (button) setView(button.dataset.view); });
 $('#refresh-button').addEventListener('click', () => execute(async () => { await loadSnapshot(); }, 'Control data refreshed.'));
 $('#global-search').addEventListener('input', (event) => { state.search = event.target.value; render(); });
