@@ -78,12 +78,21 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     try {
       final verified = await AuthService().completeEmailVerification();
       if (!verified) {
-        if (mounted) {
-          setState(() {
-            _message =
-                'Open the link in your email first, then return here and continue.';
-          });
-        }
+        await AuthService().signOut();
+        if (!mounted) return;
+        final messenger = ScaffoldMessenger.of(context);
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => Login(providerMode: widget.providerMode),
+          ),
+          (route) => false,
+        );
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Email confirmation completed. Sign in to continue.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
         return;
       }
       if (!mounted) return;
