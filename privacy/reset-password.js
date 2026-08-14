@@ -1,20 +1,4 @@
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
-import {
-  confirmPasswordReset,
-  getAuth,
-  verifyPasswordResetCode,
-} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-
-const firebaseConfig = {
-  apiKey: 'AIzaSyAkM_ow1lFbgcpJTMI1z_56TapXgruXO6Q',
-  authDomain: 'onanet-956af.firebaseapp.com',
-  projectId: 'onanet-956af',
-};
-
-const auth = getAuth(initializeApp(firebaseConfig));
-const params = new URLSearchParams(window.location.search);
-const mode = params.get('mode');
-const code = params.get('oobCode');
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const states = {
   loading: document.querySelector('#loading-state'),
@@ -22,6 +6,8 @@ const states = {
   success: document.querySelector('#success-state'),
   invalid: document.querySelector('#invalid-state'),
 };
+
+let supabase;
 
 function showState(name) {
   Object.entries(states).forEach(([key, element]) => {
@@ -32,6 +18,10 @@ function showState(name) {
 function invalidLink(message) {
   if (message) document.querySelector('#invalid-message').textContent = message;
   showState('invalid');
+}
+
+function showSuccess() {
+  showState('success');
 }
 
 function passwordIsStrong(password) {
@@ -52,18 +42,30 @@ document.querySelectorAll('.password-toggle').forEach((button) => {
   });
 });
 
-async function prepareReset() {
-  if (mode !== 'resetPassword' || !code) {
-    invalidLink('This link is incomplete. Return to OnaNet and request a new password-reset email.');
-    return;
-  }
-
+async function prepareRecovery() {
   try {
-    const email = await verifyPasswordResetCode(auth, code);
-    document.querySelector('#reset-email').textContent = email;
+    const response = await fetch('https://api.onanet.app/auth/public-config', {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error('Configuration unavailable');
+    const config = await response.json();
+    supabase = createClient(
+      config.supabase_url,
+      config.supabase_publishable_key,
+      { auth: { detectSessionInUrl: true, persistSession: false } },
+    );
+
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data.session) {
+      invalidLink();
+      return;
+    }
+
+    const email = data.session.user?.email;
+    document.querySelector('#reset-email').textContent = email || 'your OnaNet account';
     showState('form');
   } catch (_) {
-    invalidLink();
+    invalidLink('Password reset is temporarily unavailable. Please try again later or contact OnaNet support.');
   }
 }
 
@@ -88,12 +90,18 @@ document.querySelector('#reset-form').addEventListener('submit', async (event) =
 
   button.disabled = true;
   button.textContent = 'Resetting password…';
-  try {
-    await confirmPasswordReset(auth, code, password);
-    showState('success');
-  } catch (_) {
-    invalidLink('This link has expired or was already used. Return to OnaNet and request a new one.');
+  const { error: updateError } = await supabase.auth.updateUser({ password });
+  if (updateError) {
+    button.disabled = false;
+    button.textContent = 'Reset password';
+    error.textContent = updateError.message || 'Could not update your password. Request a new reset link.';
+    error.hidden = false;
+    return;
   }
+
+  await supabase.auth.signOut();
+  window.history.replaceState({}, document.title, '/reset-password');
+  showSuccess();
 });
 
-prepareReset();
+prepareRecovery();
