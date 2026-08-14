@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="canonical" href="https://onanet.app/reset-password">
+  <title>Reset your password | OnaNet</title>
+</head>
+<body class="account-action-page">
+  <main class="account-action-card">
+    <a class="brand" href="/">Ona<span>Net</span></a>
+
+    <section id="loading-state" class="action-state" aria-live="polite">
+      <div class="action-spinner" aria-hidden="true"></div>
+      <h1>Checking your link</h1>
+      <p>Please wait while OnaNet verifies your password-reset request.</p>
+    </section>
+
+    <section id="form-state" class="action-state" hidden>
+      <p class="eyebrow">Account security</p>
+      <h1>Create a new password</h1>
+      <p class="action-copy">Resetting the password for <strong id="reset-email"></strong>.</p>
+
+      <form id="reset-form" novalidate>
+        <label for="new-password">New password</label>
+        <div class="password-field">
+          <input id="new-password" name="new-password" type="password"
+                 minlength="8" autocomplete="new-password" required>
+          <button class="password-toggle" type="button" data-target="new-password"
+                  aria-label="Show new password">Show</button>
+        </div>
+
+        <label for="confirm-password">Confirm new password</label>
+        <div class="password-field">
+          <input id="confirm-password" name="confirm-password" type="password"
+                 minlength="8" autocomplete="new-password" required>
+          <button class="password-toggle" type="button" data-target="confirm-password"
+                  aria-label="Show confirmed password">Show</button>
+        </div>
+
+        <p class="password-help">Use at least 8 characters with uppercase, lowercase, a number and a symbol.</p>
+        <p id="form-error" class="form-message error-message" role="alert" hidden></p>
+        <button id="reset-button" class="action-button" type="submit">Reset password</button>
+      </form>
+    </section>
+
+    <section id="success-state" class="action-state" hidden>
+      <div class="action-icon success-icon" aria-hidden="true">✓</div>
+      <p class="eyebrow">Password updated</p>
+      <h1>You’re all set</h1>
+      <p>Your OnaNet password has been changed. Return to the app and sign in with your new password.</p>
+    </section>
+
+    <section id="invalid-state" class="action-state" hidden>
+      <div class="action-icon error-icon" aria-hidden="true">!</div>
+      <p class="eyebrow">Link unavailable</p>
+      <h1>Request a new link</h1>
+      <p id="invalid-message">This password-reset link is invalid or has expired. Return to OnaNet and request another one.</p>
+    </section>
+
+    <p class="action-support">Need help? <a href="mailto:support@mail.onanet.app">Contact OnaNet support</a>.</p>
+  </main>
+  <script type="module" src="../reset-password.js"></script>
+</body>
+</html>

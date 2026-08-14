@@ -116,6 +116,7 @@ enum _DashboardProfileAction {
   packages,
   coverage,
   security,
+  legal,
   signOut,
 }
 
@@ -2734,6 +2735,10 @@ class _ProfileChip extends StatelessWidget {
             Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const PasswordSecurityScreen()),
             );
+          case _DashboardProfileAction.legal:
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AboutOnaNetScreen()),
+            );
           case _DashboardProfileAction.signOut:
             dashboard?._logoutProvider();
         }
@@ -2773,6 +2778,15 @@ class _ProfileChip extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.security_outlined),
             title: Text('Account & security'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _DashboardProfileAction.legal,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.description_outlined),
+            title: Text('About & legal'),
           ),
         ),
         PopupMenuDivider(),

@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 from backend.db.session import get_db_connection
 from backend.core.firebase import (
@@ -10,6 +10,7 @@ from backend.core.firebase import (
 from backend.core.security import create_access_token
 from backend.schemas.user import AuthResponse
 from backend.services.provider_access import current_staff_actor
+from backend.services.email_notifications import send_welcome_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = logging.getLogger(__name__)
@@ -298,7 +299,7 @@ async def sign_up(body: SignUpRequest):
 
 
 @router.post('/firebase', response_model=AuthResponse)
-async def firebase_auth(body: FirebaseTokenRequest):
+async def firebase_auth(body: FirebaseTokenRequest, background_tasks: BackgroundTasks):
     firebase_data = await verify_firebase_token(body.token)
 
     if not firebase_data:
@@ -320,11 +321,13 @@ async def firebase_auth(body: FirebaseTokenRequest):
 
     firebase_info = firebase_data.get('firebase', {})
     provider = firebase_info.get('sign_in_provider', 'email')
+    email_is_verified = bool(firebase_data.get('email_verified')) or provider == 'google.com'
 
     name_parts = name.strip().split(' ', 1)
     first_name = name_parts[0] if name_parts else None
     last_name = name_parts[1] if len(name_parts) > 1 else None
 
+    should_send_welcome = False
     async with get_db_connection() as connection:
         deleted = await connection.fetchval(
             """
@@ -346,6 +349,7 @@ async def firebase_auth(body: FirebaseTokenRequest):
             firebase_uid,
         )
         if not user_row:
+            should_send_welcome = email_is_verified
             user_row = await connection.fetchrow(
                 """
                 INSERT INTO users (
@@ -371,9 +375,12 @@ async def firebase_auth(body: FirebaseTokenRequest):
                 'user',
                 False,
                 False,
-                False,
+                email_is_verified,
             )
         else:
+            should_send_welcome = email_is_verified and not bool(
+                user_row['is_email_verified']
+            )
             user_row = await connection.fetchrow(
                 """
                 UPDATE users
@@ -381,6 +388,7 @@ async def firebase_auth(body: FirebaseTokenRequest):
                     first_name = coalesce($3, first_name),
                     last_name = coalesce($4, last_name),
                     profile_image_url = coalesce($5, profile_image_url),
+                    is_email_verified = is_email_verified OR $6,
                     updated_at = now()
                 WHERE firebase_uid = $1
                 RETURNING *
@@ -390,7 +398,15 @@ async def firebase_auth(body: FirebaseTokenRequest):
                 first_name,
                 last_name,
                 photo,
+                email_is_verified,
             )
+
+    if should_send_welcome:
+        background_tasks.add_task(
+            send_welcome_email,
+            str(user_row['email']),
+            user_row['first_name'],
+        )
 
     access_token = create_access_token(
         data={

@@ -5,12 +5,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ona_net/features/auth/data/auth_service.dart';
-import 'package:ona_net/features/auth/presentation/login_screen.dart';
 import 'package:ona_net/features/installations/data/installation_request_service.dart';
 import 'package:ona_net/features/customer/data/customer_notification_store.dart';
 import 'package:ona_net/features/customer/data/preferred_location_store.dart';
 import 'package:ona_net/core/theme/app_theme.dart';
 import 'package:ona_net/core/utils/location.dart';
+import 'package:ona_net/core/utils/legal_links.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -231,6 +231,14 @@ class PasswordSecurityScreen extends StatelessWidget {
             builder: (_) => const _DeleteAccountDialog(),
           ),
         ),
+        const SizedBox(height: 12),
+        _ActionCard(
+          icon: Icons.open_in_new_rounded,
+          title: 'Account deletion information',
+          subtitle: 'View OnaNet’s external account-deletion page',
+          onTap: () =>
+              openOnaNetLegalLink(context, OnaNetLegalLinks.accountDeletion),
+        ),
       ],
     );
   }
@@ -280,10 +288,9 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
     try {
       await AuthService().deleteMyAccount(password: _password.text);
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const Login()),
-        (route) => false,
-      );
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil('/customer', (route) => false);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -908,9 +915,26 @@ class AboutOnaNetScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        const _EmptyHint(
+        _ActionCard(
+          icon: Icons.privacy_tip_outlined,
+          title: 'Privacy Policy',
+          subtitle: 'How OnaNet collects, uses and protects information',
+          onTap: () => openOnaNetLegalLink(context, OnaNetLegalLinks.privacy),
+        ),
+        const SizedBox(height: 12),
+        _ActionCard(
           icon: Icons.description_outlined,
-          text: 'Terms and policies will be added here later.',
+          title: 'Terms of Service',
+          subtitle: 'The terms governing your use of OnaNet',
+          onTap: () => openOnaNetLegalLink(context, OnaNetLegalLinks.terms),
+        ),
+        const SizedBox(height: 12),
+        _ActionCard(
+          icon: Icons.person_remove_outlined,
+          title: 'Account deletion',
+          subtitle: 'Instructions and available deletion methods',
+          onTap: () =>
+              openOnaNetLegalLink(context, OnaNetLegalLinks.accountDeletion),
         ),
       ],
     );

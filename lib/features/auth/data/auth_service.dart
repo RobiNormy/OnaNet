@@ -42,10 +42,25 @@ class AuthService {
       final credential = GoogleAuthProvider.credential(
         idToken: googleAuth.idToken,
       );
-      return _auth.signInWithCredential(credential);
+      final userCredential = await _auth.signInWithCredential(credential);
+      final idToken = await userCredential.user?.getIdToken();
+      if (idToken == null || idToken.isEmpty) {
+        throw const AuthServiceException(
+          'Google sign-in could not be verified. Please try again.',
+        );
+      }
+      await _dio.post<dynamic>(
+        _url('/auth/firebase'),
+        data: {'token': idToken},
+      );
+      return userCredential;
     } on FirebaseAuthException catch (e) {
       throw AuthServiceException(_firebaseErrorMessage(e));
+    } on DioException catch (e) {
+      await _auth.signOut();
+      throw AuthServiceException(_errorMessage(e));
     } catch (e) {
+      if (e is AuthServiceException) rethrow;
       throw AuthServiceException('Google sign-in failed: $e');
     }
   }
@@ -286,14 +301,6 @@ class AuthService {
         await user.reauthenticateWithCredential(
           EmailAuthProvider.credential(email: email, password: password),
         );
-      } else if (user.providerData.any(
-        (provider) => provider.providerId == 'google.com',
-      )) {
-        final googleUser = await _googleSignIn.authenticate();
-        final googleAuth = googleUser.authentication;
-        await user.reauthenticateWithCredential(
-          GoogleAuthProvider.credential(idToken: googleAuth.idToken),
-        );
       }
 
       final response = await _postJson('/auth/me/delete', {
@@ -301,6 +308,18 @@ class AuthService {
       });
       final payload = _asMap(response.data);
       if (payload['firebase_deleted'] != true) {
+        if (user.providerData.any(
+          (provider) => provider.providerId == 'google.com',
+        )) {
+          final lightweight = _googleSignIn.attemptLightweightAuthentication();
+          final googleUser =
+              (lightweight == null ? null : await lightweight) ??
+              await _googleSignIn.authenticate();
+          final googleAuth = googleUser.authentication;
+          await user.reauthenticateWithCredential(
+            GoogleAuthProvider.credential(idToken: googleAuth.idToken),
+          );
+        }
         await user.delete();
       }
       await _auth.signOut();

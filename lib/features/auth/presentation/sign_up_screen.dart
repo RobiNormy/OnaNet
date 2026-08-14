@@ -6,6 +6,7 @@ import 'package:ona_net/features/provider_registration/presentation/registration
 import 'package:ona_net/features/auth/presentation/login_screen.dart';
 import 'package:ona_net/features/auth/presentation/email_verification_screen.dart';
 import 'package:ona_net/core/theme/app_theme.dart';
+import 'package:ona_net/core/utils/legal_links.dart';
 
 class SignUp extends StatefulWidget {
   const SignUp({super.key, this.providerMode = false});
@@ -223,7 +224,49 @@ class _SignUpState extends State<SignUp> {
                           },
                         ),
                       ),
-                      const SizedBox(height: 28),
+                      const SizedBox(height: 18),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            'By signing up, you agree to our ',
+                            style: GoogleFonts.urbanist(
+                              fontSize: 13,
+                              color: mutedTextColor,
+                            ),
+                          ),
+                          _LegalTextButton(
+                            label: 'Terms of Service',
+                            onTap: () => openOnaNetLegalLink(
+                              context,
+                              OnaNetLegalLinks.terms,
+                            ),
+                          ),
+                          Text(
+                            ' and ',
+                            style: GoogleFonts.urbanist(
+                              fontSize: 13,
+                              color: mutedTextColor,
+                            ),
+                          ),
+                          _LegalTextButton(
+                            label: 'Privacy Policy',
+                            onTap: () => openOnaNetLegalLink(
+                              context,
+                              OnaNetLegalLinks.privacy,
+                            ),
+                          ),
+                          Text(
+                            '.',
+                            style: GoogleFonts.urbanist(
+                              fontSize: 13,
+                              color: mutedTextColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
                       SizedBox(
                         width: double.infinity,
                         height: 54,
@@ -241,7 +284,9 @@ class _SignUpState extends State<SignUp> {
                                         firstName: _firstname.text.trim(),
                                         lastName: _lastname.text.trim(),
                                       );
-                                      _afterSuccessfulSignUp(_email.text.trim());
+                                      _afterSuccessfulSignUp(
+                                        _email.text.trim(),
+                                      );
                                     } catch (e) {
                                       if (context.mounted) {
                                         ScaffoldMessenger.of(
@@ -398,6 +443,33 @@ class _SignUpState extends State<SignUp> {
                 ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LegalTextButton extends StatelessWidget {
+  const _LegalTextButton({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Text(
+          label,
+          style: GoogleFonts.urbanist(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: Theme.of(context).colorScheme.primary,
+            decoration: TextDecoration.underline,
           ),
         ),
       ),
