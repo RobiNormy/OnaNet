@@ -96,7 +96,8 @@ class AuthService {
               .where((part) => part.isNotEmpty)
               .join(' '),
         },
-        emailRedirectTo: 'https://onanet.app/verify-email',
+        emailRedirectTo:
+            'https://onanet.app/verify-email?source=email-verification',
       );
       final accessToken = response.session?.accessToken;
       if (accessToken != null && accessToken.isNotEmpty) {
@@ -158,7 +159,8 @@ class AuthService {
       await _auth.resend(
         type: OtpType.signup,
         email: email.trim(),
-        emailRedirectTo: 'https://onanet.app/verify-email',
+        emailRedirectTo:
+            'https://onanet.app/verify-email?source=email-verification',
       );
     } on AuthException catch (error) {
       throw AuthServiceException(_supabaseErrorMessage(error));
