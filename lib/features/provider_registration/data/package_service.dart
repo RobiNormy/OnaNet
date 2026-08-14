@@ -1,6 +1,6 @@
 // Public package lookup service used during provider selection.
 import 'package:dio/dio.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/core/network/api_client.dart';
 import 'package:ona_net/core/utils/provider_filters.dart';
 
@@ -24,7 +24,7 @@ class ProviderPackageService {
   }
 
   Future<Options> _authorizedOptions() async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = AuthSession.accessToken;
     return Options(
       headers: {if (token != null) 'Authorization': 'Bearer $token'},
     );

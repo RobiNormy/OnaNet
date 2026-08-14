@@ -52,7 +52,43 @@ def _init_firebase_admin() -> None:
 _init_firebase_admin()
 
 
-async def verify_firebase_token(token: str) -> dict | None:
+async def _verify_supabase_token(token: str) -> dict | None:
+    """Validate a Supabase access token and normalize its identity claims."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/user",
+                headers={
+                    "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {token}",
+                },
+            )
+        if response.status_code != 200:
+            return None
+
+        user = response.json()
+        metadata = user.get("user_metadata") or {}
+        app_metadata = user.get("app_metadata") or {}
+        provider = app_metadata.get("provider") or "email"
+        return {
+            "uid": user["id"],
+            "email": user.get("email"),
+            "email_verified": bool(user.get("email_confirmed_at")),
+            "name": metadata.get("full_name") or metadata.get("name") or "",
+            "picture": metadata.get("avatar_url") or metadata.get("picture"),
+            "firebase": {
+                "sign_in_provider": (
+                    "google.com" if provider == "google" else "password"
+                )
+            },
+            "auth_system": "supabase",
+        }
+    except Exception:
+        log.exception("Supabase token verification failed")
+        return None
+
+
+async def _verify_firebase_token(token: str) -> dict | None:
     if _firebase_admin_ready:
         try:
             return await anyio.to_thread.run_sync(auth.verify_id_token, token)
@@ -86,8 +122,30 @@ async def verify_firebase_token(token: str) -> dict | None:
         return None
 
 
+async def verify_firebase_token(token: str) -> dict | None:
+    """Accept Supabase sessions first, with Firebase retained for rollback."""
+    supabase_user = await _verify_supabase_token(token)
+    if supabase_user:
+        return supabase_user
+    return await _verify_firebase_token(token)
+
+
 async def delete_firebase_user(firebase_uid: str) -> bool:
-    """Delete an Auth identity when Firebase Admin credentials are available."""
+    """Delete an auth identity from Supabase, falling back to Firebase."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users/{firebase_uid}",
+                headers={
+                    "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+                },
+            )
+        if response.status_code in {200, 204}:
+            return True
+    except Exception:
+        log.exception("Supabase user deletion failed for %s", firebase_uid)
+
     if not _firebase_admin_ready:
         return False
     try:
@@ -101,30 +159,74 @@ async def delete_firebase_user(firebase_uid: str) -> bool:
 
 
 async def create_firebase_user_rest(email: str, password: str, display_name: str | None = None) -> str:
+    """Create a legacy Firebase identity for installed pre-migration apps."""
     async with httpx.AsyncClient() as client:
-        res = await client.post(
-            f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={settings.FIREBASE_API_KEY}",
-            json={"email": email, "password": password, "returnSecureToken": True}
+        response = await client.post(
+            "https://identitytoolkit.googleapis.com/v1/accounts:signUp",
+            params={"key": settings.FIREBASE_API_KEY},
+            json={"email": email, "password": password, "returnSecureToken": True},
         )
-        data = res.json()
-        if "error" in data:
-            raise Exception(data["error"]["message"])
-        firebase_uid = data["localId"]
-        id_token = data["idToken"]
-
+    data = response.json()
+    if "error" in data:
+        raise Exception(data["error"]["message"])
+    firebase_uid = data["localId"]
     if display_name:
         async with httpx.AsyncClient() as client:
             await client.post(
-                f"https://identitytoolkit.googleapis.com/v1/accounts:update?key={settings.FIREBASE_API_KEY}",
-                json={"idToken": id_token, "displayName": display_name}
+                "https://identitytoolkit.googleapis.com/v1/accounts:update",
+                params={"key": settings.FIREBASE_API_KEY},
+                json={"idToken": data["idToken"], "displayName": display_name},
             )
-
     return firebase_uid
 
 
-async def verify_firebase_password(email: str, password: str) -> str:
+async def create_supabase_user_rest(
+    email: str,
+    password: str,
+    display_name: str | None = None,
+) -> str:
+    """Create a Supabase Auth identity for a provider team account."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
+            f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/admin/users",
+            headers={
+                "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            json={
+                "email": email.strip().lower(),
+                "password": password,
+                "email_confirm": True,
+                "user_metadata": {"full_name": display_name or ""},
+            },
+        )
+    data = response.json()
+    if response.status_code not in {200, 201}:
+        message = data.get("msg") or data.get("message") or "Could not create account"
+        if "already" in message.lower() or "exist" in message.lower():
+            raise Exception("EMAIL_EXISTS")
+        raise Exception(message)
+    return data["id"]
+
+
+async def verify_firebase_password(email: str, password: str) -> str:
+    """Verify a password with Supabase, retaining Firebase as rollback."""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/token",
+            params={"grant_type": "password"},
+            headers={"apikey": settings.SUPABASE_SERVICE_ROLE_KEY},
+            json={
+                "email": email.strip().lower(),
+                "password": password,
+            },
+        )
+    data = response.json()
+    if response.status_code == 200 and data.get("user", {}).get("id"):
+        return data["user"]["id"]
+
+    async with httpx.AsyncClient() as client:
+        firebase_response = await client.post(
             "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword",
             params={"key": settings.FIREBASE_API_KEY},
             json={
@@ -133,7 +235,7 @@ async def verify_firebase_password(email: str, password: str) -> str:
                 "returnSecureToken": True,
             },
         )
-    data = response.json()
-    if "error" in data:
+    firebase_data = firebase_response.json()
+    if "error" in firebase_data:
         raise ValueError("The provider owner password is incorrect.")
-    return data["localId"]
+    return firebase_data["localId"]

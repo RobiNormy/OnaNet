@@ -1,6 +1,6 @@
 // Provider registration wizard entry point.
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/features/provider_registration/presentation/account_details_screen.dart';
 import 'package:ona_net/features/provider_registration/domain/provider_registration_data.dart';
 import 'package:ona_net/features/auth/presentation/login_screen.dart';
@@ -20,7 +20,7 @@ class _ProviderRegState extends State<ProviderReg> {
 
   @override
   Widget build(BuildContext context) {
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!AuthSession.isSignedIn) {
       return const _ProviderAuthGate();
     }
 

@@ -1,6 +1,6 @@
 // Provider subscription and verified payment API service.
 import 'package:dio/dio.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/core/network/api_client.dart';
 
 class SubscriptionService {
@@ -30,7 +30,7 @@ class SubscriptionService {
     required String tier,
     required String email,
   }) async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = AuthSession.accessToken;
     if (token == null) {
       throw const SubscriptionException('Please sign in before upgrading.');
     }
@@ -61,7 +61,7 @@ class SubscriptionService {
   }
 
   Future<Map<String, dynamic>> verifyPayment(String reference) async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = AuthSession.accessToken;
     if (token == null) {
       throw const SubscriptionException('Please sign in before verifying.');
     }
@@ -86,7 +86,7 @@ class SubscriptionService {
   }
 
   Future<Map<String, dynamic>> getCurrentSubscription() async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = AuthSession.accessToken;
     if (token == null) {
       throw const SubscriptionException(
         'Please sign in to view your current billing.',

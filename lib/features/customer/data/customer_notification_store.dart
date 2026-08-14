@@ -1,7 +1,7 @@
 // Local customer notification persistence.
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/features/installations/data/installation_request_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,7 +14,7 @@ class CustomerNotificationStore {
   };
 
   static String get _storageKey {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+    final uid = AuthSession.currentUser?.id ?? 'guest';
     return 'onanet_read_customer_notifications_$uid';
   }
 

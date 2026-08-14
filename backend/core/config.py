@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
+    SUPABASE_PUBLISHABLE_KEY: str | None = None
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
     FIREBASE_SERVICE_ACCOUNT_PATH: str | None = None
     FIREBASE_API_KEY: str

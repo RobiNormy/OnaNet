@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:csv/csv.dart';
 import 'package:dio/dio.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -29,7 +29,7 @@ class ProAnalyticsService {
   }
 
   Future<Options> _options() async {
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    final token = AuthSession.accessToken;
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 

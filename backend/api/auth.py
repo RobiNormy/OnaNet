@@ -15,6 +15,36 @@ from backend.services.email_notifications import send_welcome_email
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = logging.getLogger(__name__)
 
+
+async def ensure_auth_schema() -> None:
+    async with get_db_connection() as connection:
+        await connection.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS supabase_uid text"
+        )
+        await connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS users_supabase_uid_unique_idx
+            ON users(supabase_uid)
+            WHERE supabase_uid IS NOT NULL
+            """
+        )
+
+
+@router.get('/public-config')
+async def public_auth_config() -> dict[str, str]:
+    """Return browser-safe Supabase configuration for OnaNet's auth pages."""
+    from backend.core.config import settings
+
+    if not settings.SUPABASE_PUBLISHABLE_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Password reset is temporarily unavailable.",
+        )
+    return {
+        "supabase_url": settings.SUPABASE_URL,
+        "supabase_publishable_key": settings.SUPABASE_PUBLISHABLE_KEY,
+    }
+
 class FirebaseTokenRequest(BaseModel):
     token: str
 
@@ -76,6 +106,19 @@ async def _get_current_firebase_user(authorization: str | None) -> dict:
             status_code=401,
             detail="Invalid or expired token",
         )
+
+    if decoded.get("auth_system") == "supabase":
+        async with get_db_connection() as connection:
+            legacy_uid = await connection.fetchval(
+                "SELECT firebase_uid FROM users WHERE supabase_uid = $1",
+                decoded["uid"],
+            )
+        if legacy_uid:
+            decoded = {
+                **decoded,
+                "supabase_uid": decoded["uid"],
+                "uid": legacy_uid,
+            }
 
     staff_actor = current_staff_actor()
     if staff_actor and staff_actor["staff_firebase_uid"] == decoded.get("uid"):
@@ -162,7 +205,7 @@ async def delete_my_account(
         async with connection.transaction():
             user = await connection.fetchrow(
                 """
-                SELECT id, firebase_uid, email, role
+                SELECT id, firebase_uid, supabase_uid, email, role
                 FROM users
                 WHERE firebase_uid=$1
                 FOR UPDATE
@@ -199,6 +242,9 @@ async def delete_my_account(
             )
             await connection.execute("DELETE FROM users WHERE id=$1", user["id"])
 
+    supabase_deleted = True
+    if user["supabase_uid"]:
+        supabase_deleted = await delete_firebase_user(str(user["supabase_uid"]))
     firebase_deleted = await delete_firebase_user(str(user["firebase_uid"]))
     log.warning(
         "User %s (%s) deleted their OnaNet account; Firebase deleted=%s",
@@ -206,7 +252,11 @@ async def delete_my_account(
         user["id"],
         firebase_deleted,
     )
-    return {"deleted": True, "firebase_deleted": firebase_deleted}
+    return {
+        "deleted": True,
+        "firebase_deleted": firebase_deleted,
+        "supabase_deleted": supabase_deleted,
+    }
 
 
 @router.post('/signup', response_model=AuthResponse)
@@ -298,14 +348,15 @@ async def sign_up(body: SignUpRequest):
     )
 
 
-@router.post('/firebase', response_model=AuthResponse)
+@router.post('/session', response_model=AuthResponse)
+@router.post('/firebase', response_model=AuthResponse, deprecated=True)
 async def firebase_auth(body: FirebaseTokenRequest, background_tasks: BackgroundTasks):
     firebase_data = await verify_firebase_token(body.token)
 
     if not firebase_data:
         raise HTTPException(
             status_code=401,
-            detail="Invalid or expired Firebase token",
+            detail="Invalid or expired authentication token",
         )
 
     firebase_uid = firebase_data['uid']
@@ -316,7 +367,7 @@ async def firebase_auth(body: FirebaseTokenRequest, background_tasks: Background
     if not email:
         raise HTTPException(
             status_code=400,
-            detail="Firebase account has no email",
+            detail="Authenticated account has no email",
         )
 
     firebase_info = firebase_data.get('firebase', {})
@@ -345,39 +396,10 @@ async def firebase_auth(body: FirebaseTokenRequest, background_tasks: Background
                 detail="This OnaNet account has been deleted.",
             )
         user_row = await connection.fetchrow(
-            "SELECT * FROM users WHERE firebase_uid = $1",
+            "SELECT * FROM users WHERE firebase_uid = $1 OR supabase_uid = $1",
             firebase_uid,
         )
-        if not user_row:
-            should_send_welcome = email_is_verified
-            user_row = await connection.fetchrow(
-                """
-                INSERT INTO users (
-                    firebase_uid,
-                    email,
-                    first_name,
-                    last_name,
-                    profile_image_url,
-                    auth_provider,
-                    role,
-                    is_profile_complete,
-                    is_phone_verified,
-                    is_email_verified
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-                RETURNING *
-                """,
-                firebase_uid,
-                email.strip().lower(),
-                first_name,
-                last_name,
-                photo,
-                provider,
-                'user',
-                False,
-                False,
-                email_is_verified,
-            )
-        else:
+        if user_row:
             should_send_welcome = email_is_verified and not bool(
                 user_row['is_email_verified']
             )
@@ -390,16 +412,72 @@ async def firebase_auth(body: FirebaseTokenRequest, background_tasks: Background
                     profile_image_url = coalesce($5, profile_image_url),
                     is_email_verified = is_email_verified OR $6,
                     updated_at = now()
-                WHERE firebase_uid = $1
+                WHERE id = $1
                 RETURNING *
                 """,
-                firebase_uid,
+                user_row["id"],
                 email.strip().lower(),
                 first_name,
                 last_name,
                 photo,
                 email_is_verified,
             )
+        else:
+            existing_email_user = await connection.fetchrow(
+                "SELECT * FROM users WHERE lower(email) = lower($1)",
+                email,
+            )
+            if existing_email_user:
+                should_send_welcome = email_is_verified and not bool(
+                    existing_email_user["is_email_verified"]
+                )
+                user_row = await connection.fetchrow(
+                    """
+                    UPDATE users
+                    SET supabase_uid = $1,
+                        auth_provider = $2,
+                        profile_image_url = coalesce($3, profile_image_url),
+                        is_email_verified = is_email_verified OR $4,
+                        updated_at = now()
+                    WHERE id = $5
+                    RETURNING *
+                    """,
+                    firebase_uid,
+                    provider,
+                    photo,
+                    email_is_verified,
+                    existing_email_user["id"],
+                )
+            else:
+                should_send_welcome = email_is_verified
+                user_row = await connection.fetchrow(
+                    """
+                    INSERT INTO users (
+                        firebase_uid,
+                        supabase_uid,
+                        email,
+                        first_name,
+                        last_name,
+                        profile_image_url,
+                        auth_provider,
+                        role,
+                        is_profile_complete,
+                        is_phone_verified,
+                        is_email_verified
+                    ) VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    RETURNING *
+                    """,
+                    firebase_uid,
+                    email.strip().lower(),
+                    first_name,
+                    last_name,
+                    photo,
+                    provider,
+                    'user',
+                    False,
+                    False,
+                    email_is_verified,
+                )
 
     if should_send_welcome:
         background_tasks.add_task(

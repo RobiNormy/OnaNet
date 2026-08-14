@@ -596,7 +596,7 @@ async def delete_user_account(
     async with get_db_connection() as db:
         async with db.transaction():
             target = await db.fetchrow(
-                "SELECT id, firebase_uid, email, role FROM users WHERE id=$1 FOR UPDATE",
+                "SELECT id, firebase_uid, supabase_uid, email, role FROM users WHERE id=$1 FOR UPDATE",
                 user_id,
             )
             if target is None:
@@ -634,6 +634,9 @@ async def delete_user_account(
             )
             await db.execute("DELETE FROM users WHERE id=$1", target["id"])
 
+    supabase_deleted = True
+    if target["supabase_uid"]:
+        supabase_deleted = await delete_firebase_user(str(target["supabase_uid"]))
     firebase_deleted = await delete_firebase_user(str(target["firebase_uid"]))
     log.warning(
         "Admin %s deleted user %s (%s); Firebase deleted=%s; reason=%s",
@@ -643,7 +646,12 @@ async def delete_user_account(
         firebase_deleted,
         reason,
     )
-    return {"id": str(user_id), "deleted": True, "firebase_deleted": firebase_deleted}
+    return {
+        "id": str(user_id),
+        "deleted": True,
+        "firebase_deleted": firebase_deleted,
+        "supabase_deleted": supabase_deleted,
+    }
 
 
 @router.post("/reports/{report_id}/action")

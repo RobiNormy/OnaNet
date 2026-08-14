@@ -1,9 +1,9 @@
 // Secondary customer account and settings pages.
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/features/auth/data/auth_service.dart';
 import 'package:ona_net/features/installations/data/installation_request_service.dart';
 import 'package:ona_net/features/customer/data/customer_notification_store.dart';
@@ -140,7 +140,7 @@ class PasswordSecurityScreen extends StatelessWidget {
     final email = await showDialog<String>(
       context: context,
       builder: (_) => _EmailChangeDialog(
-        currentEmail: FirebaseAuth.instance.currentUser?.email ?? '',
+        currentEmail: AuthSession.currentUser?.email ?? '',
       ),
     );
     if (email == null || email.isEmpty || !context.mounted) return;
@@ -176,7 +176,7 @@ class PasswordSecurityScreen extends StatelessWidget {
   }
 
   Future<void> _resetPassword(BuildContext context) async {
-    final email = FirebaseAuth.instance.currentUser?.email;
+    final email = AuthSession.currentUser?.email;
     if (email == null) return;
     try {
       await AuthService().sendPasswordReset(email: email);
@@ -201,7 +201,7 @@ class PasswordSecurityScreen extends StatelessWidget {
         _ActionCard(
           icon: Icons.alternate_email_rounded,
           title: 'Change email',
-          subtitle: FirebaseAuth.instance.currentUser?.email ?? '',
+          subtitle: AuthSession.currentUser?.email ?? '',
           onTap: () => _changeEmail(context),
         ),
         const SizedBox(height: 12),
@@ -258,11 +258,7 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
   bool _obscurePassword = true;
   String? _error;
 
-  bool get _usesPassword =>
-      FirebaseAuth.instance.currentUser?.providerData.any(
-        (provider) => provider.providerId == 'password',
-      ) ??
-      false;
+  bool get _usesPassword => AuthService().currentUserUsesPassword;
 
   @override
   void dispose() {

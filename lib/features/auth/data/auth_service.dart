@@ -1,13 +1,13 @@
-// Firebase authentication and authenticated OnaNet API operations.
+// Supabase authentication and authenticated OnaNet API operations.
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:ona_net/core/network/api_client.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide MultipartFile;
 
 class AuthServiceException implements Exception {
   const AuthServiceException(this.message);
@@ -23,7 +23,7 @@ class AuthService {
     : _dio = dio ?? sharedApiClient,
       _apiBaseUrl = apiBaseUrl ?? onaNetApiBaseUrl;
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GoTrueClient _auth = Supabase.instance.client.auth;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   final Dio _dio;
   final String _apiBaseUrl;
@@ -31,31 +31,38 @@ class AuthService {
   static const _providerCacheTtl = Duration(minutes: 1);
   static final Map<String, _ProviderCatalogCache> _providerCaches = {};
 
-  Stream<User?> get authStateChanges => _auth.authStateChanges();
+  Stream<User?> get authStateChanges =>
+      _auth.onAuthStateChange.map((state) => state.session?.user);
 
   User? get currentUser => _auth.currentUser;
 
-  Future<UserCredential?> signInWithGoogle() async {
+  Future<AuthResponse?> signInWithGoogle() async {
     try {
       final googleUser = await _googleSignIn.authenticate();
       final googleAuth = googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-      );
-      final userCredential = await _auth.signInWithCredential(credential);
-      final idToken = await userCredential.user?.getIdToken();
+      final idToken = googleAuth.idToken;
       if (idToken == null || idToken.isEmpty) {
+        throw const AuthServiceException(
+          'Google sign-in did not return a secure identity token.',
+        );
+      }
+      final response = await _auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+      );
+      final accessToken = response.session?.accessToken;
+      if (accessToken == null || accessToken.isEmpty) {
         throw const AuthServiceException(
           'Google sign-in could not be verified. Please try again.',
         );
       }
       await _dio.post<dynamic>(
-        _url('/auth/firebase'),
-        data: {'token': idToken},
+        _url('/auth/session'),
+        data: {'token': accessToken},
       );
-      return userCredential;
-    } on FirebaseAuthException catch (e) {
-      throw AuthServiceException(_firebaseErrorMessage(e));
+      return response;
+    } on AuthException catch (e) {
+      throw AuthServiceException(_supabaseErrorMessage(e));
     } on DioException catch (e) {
       await _auth.signOut();
       throw AuthServiceException(_errorMessage(e));
@@ -72,30 +79,29 @@ class AuthService {
     String? lastName,
   }) async {
     try {
-      await _dio.post<dynamic>(
-        _url('/auth/signup'),
-        data: {
-          'email': email.trim(),
-          'password': password,
-          'first_name': firstName?.trim(),
-          'last_name': lastName?.trim(),
-        },
-      );
-
-      final credential = await _auth.signInWithEmailAndPassword(
+      final response = await _auth.signUp(
         email: email.trim(),
         password: password,
+        data: {
+          'first_name': firstName?.trim(),
+          'last_name': lastName?.trim(),
+          'full_name': [firstName, lastName]
+              .whereType<String>()
+              .map((part) => part.trim())
+              .where((part) => part.isNotEmpty)
+              .join(' '),
+        },
+        emailRedirectTo: 'com.robinson.ona_net://login-callback/',
       );
-
-      final displayName = [firstName, lastName]
-          .where((part) => part != null && part.trim().isNotEmpty)
-          .map((part) => part!.trim())
-          .join(' ');
-      if (displayName.isNotEmpty) {
-        await credential.user?.updateDisplayName(displayName);
+      final accessToken = response.session?.accessToken;
+      if (accessToken != null && accessToken.isNotEmpty) {
+        await _dio.post<dynamic>(
+          _url('/auth/session'),
+          data: {'token': accessToken},
+        );
       }
-    } on FirebaseAuthException catch (e) {
-      throw AuthServiceException(_firebaseErrorMessage(e));
+    } on AuthException catch (e) {
+      throw AuthServiceException(_supabaseErrorMessage(e));
     } on DioException catch (e) {
       throw AuthServiceException(_errorMessage(e));
     } catch (e) {
@@ -108,34 +114,61 @@ class AuthService {
     required String password,
   }) async {
     try {
-      await _auth.signInWithEmailAndPassword(
+      final response = await _auth.signInWithPassword(
         email: email.trim(),
         password: password,
       );
-    } on FirebaseAuthException catch (e) {
-      throw AuthServiceException(_firebaseErrorMessage(e));
+      final accessToken = response.session?.accessToken;
+      if (accessToken == null || accessToken.isEmpty) {
+        throw const AuthServiceException('Sign-in did not create a session.');
+      }
+      await _dio.post<dynamic>(
+        _url('/auth/session'),
+        data: {'token': accessToken},
+      );
+    } on AuthException catch (e) {
+      throw AuthServiceException(_supabaseErrorMessage(e));
+    } on DioException catch (e) {
+      await _auth.signOut();
+      throw AuthServiceException(_errorMessage(e));
     }
   }
 
   Future<void> sendPasswordReset({required String email}) async {
     try {
-      await _auth.sendPasswordResetEmail(email: email.trim());
-    } on FirebaseAuthException catch (e) {
-      throw AuthServiceException(_firebaseErrorMessage(e));
+      await _auth.resetPasswordForEmail(
+        email.trim(),
+        redirectTo: 'https://onanet.app/reset-password',
+      );
+    } on AuthException catch (e) {
+      throw AuthServiceException(_supabaseErrorMessage(e));
     }
   }
 
-  Future<void> startEmailVerification() async {
+  Future<void> startEmailVerification({required String email}) async {
     try {
-      await _postJson('/email-verification/start', const {});
-    } on DioException catch (error) {
-      throw AuthServiceException(_errorMessage(error));
+      await _auth.resend(
+        type: OtpType.signup,
+        email: email.trim(),
+        emailRedirectTo: 'com.robinson.ona_net://login-callback/',
+      );
+    } on AuthException catch (error) {
+      throw AuthServiceException(_supabaseErrorMessage(error));
     }
   }
 
-  Future<void> verifyEmailVerification(String otp) async {
+  Future<bool> completeEmailVerification() async {
     try {
-      await _postJson('/email-verification/verify', {'otp': otp.trim()});
+      if (_auth.currentSession != null) await _auth.refreshSession();
+      final user = _auth.currentUser;
+      final token = _auth.currentSession?.accessToken;
+      if (user?.emailConfirmedAt == null || token == null || token.isEmpty) {
+        return false;
+      }
+      await _dio.post<dynamic>(_url('/auth/session'), data: {'token': token});
+      return true;
+    } on AuthException catch (error) {
+      throw AuthServiceException(_supabaseErrorMessage(error));
     } on DioException catch (error) {
       throw AuthServiceException(_errorMessage(error));
     }
@@ -144,6 +177,18 @@ class AuthService {
   Future<Map<String, dynamic>> getMyAccount() async {
     final response = await _getJson('/auth/me');
     return _asMap(response.data);
+  }
+
+  Future<void> syncCurrentSession() async {
+    final token = _auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) {
+      throw const AuthServiceException('Please sign in again.');
+    }
+    try {
+      await _dio.post<dynamic>(_url('/auth/session'), data: {'token': token});
+    } on DioException catch (error) {
+      throw AuthServiceException(_errorMessage(error));
+    }
   }
 
   Future<Map<String, dynamic>> getAdminSnapshot() async {
@@ -225,10 +270,20 @@ class AuthService {
         firstName,
         lastName,
       ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(' ');
-      await _auth.currentUser?.updateDisplayName(displayName);
+      if (displayName.isNotEmpty) {
+        await _auth.updateUser(
+          UserAttributes(
+            data: {
+              'first_name': firstName.trim(),
+              'last_name': lastName.trim(),
+              'full_name': displayName,
+            },
+          ),
+        );
+      }
       return _asMap(response.data);
-    } on FirebaseAuthException catch (error) {
-      throw AuthServiceException(_firebaseErrorMessage(error));
+    } on AuthException catch (error) {
+      throw AuthServiceException(_supabaseErrorMessage(error));
     } on DioException catch (error) {
       throw AuthServiceException(_errorMessage(error));
     }
@@ -240,9 +295,9 @@ class AuthService {
       throw const AuthServiceException('Please sign in again.');
     }
     try {
-      await user.verifyBeforeUpdateEmail(newEmail.trim());
-    } on FirebaseAuthException catch (error) {
-      throw AuthServiceException(_firebaseErrorMessage(error));
+      await _auth.updateUser(UserAttributes(email: newEmail.trim()));
+    } on AuthException catch (error) {
+      throw AuthServiceException(_supabaseErrorMessage(error));
     }
   }
 
@@ -252,12 +307,11 @@ class AuthService {
       throw const AuthServiceException('Please sign in again.');
     }
     try {
-      await user.reload();
-      await _auth.currentUser?.getIdToken(true);
+      await _auth.refreshSession();
       await getMyAccount();
       return _auth.currentUser?.email;
-    } on FirebaseAuthException catch (error) {
-      throw AuthServiceException(_firebaseErrorMessage(error));
+    } on AuthException catch (error) {
+      throw AuthServiceException(_supabaseErrorMessage(error));
     } on DioException catch (error) {
       throw AuthServiceException(_errorMessage(error));
     }
@@ -273,12 +327,10 @@ class AuthService {
       throw const AuthServiceException('Please sign in again.');
     }
     try {
-      await user.reauthenticateWithCredential(
-        EmailAuthProvider.credential(email: email, password: currentPassword),
-      );
-      await user.updatePassword(newPassword);
-    } on FirebaseAuthException catch (error) {
-      throw AuthServiceException(_firebaseErrorMessage(error));
+      await _auth.signInWithPassword(email: email, password: currentPassword);
+      await _auth.updateUser(UserAttributes(password: newPassword));
+    } on AuthException catch (error) {
+      throw AuthServiceException(_supabaseErrorMessage(error));
     }
   }
 
@@ -289,48 +341,47 @@ class AuthService {
       throw const AuthServiceException('Please sign in again.');
     }
     try {
-      final usesPassword = user.providerData.any(
-        (provider) => provider.providerId == 'password',
-      );
+      final usesPassword =
+          user.identities?.any((identity) => identity.provider == 'email') ??
+          false;
       if (usesPassword) {
         if (password == null || password.isEmpty) {
           throw const AuthServiceException(
             'Enter your password to delete the account.',
           );
         }
-        await user.reauthenticateWithCredential(
-          EmailAuthProvider.credential(email: email, password: password),
-        );
+        await _auth.signInWithPassword(email: email, password: password);
       }
 
-      final response = await _postJson('/auth/me/delete', {
-        'confirmation': 'DELETE',
-      });
-      final payload = _asMap(response.data);
-      if (payload['firebase_deleted'] != true) {
-        if (user.providerData.any(
-          (provider) => provider.providerId == 'google.com',
-        )) {
-          final lightweight = _googleSignIn.attemptLightweightAuthentication();
-          final googleUser =
-              (lightweight == null ? null : await lightweight) ??
-              await _googleSignIn.authenticate();
-          final googleAuth = googleUser.authentication;
-          await user.reauthenticateWithCredential(
-            GoogleAuthProvider.credential(idToken: googleAuth.idToken),
-          );
-        }
-        await user.delete();
-      }
+      await _postJson('/auth/me/delete', {'confirmation': 'DELETE'});
       await _auth.signOut();
       try {
         await _googleSignIn.signOut();
       } catch (_) {}
-    } on FirebaseAuthException catch (error) {
-      throw AuthServiceException(_firebaseErrorMessage(error));
+    } on AuthException catch (error) {
+      throw AuthServiceException(_supabaseErrorMessage(error));
     } on DioException catch (error) {
       throw AuthServiceException(_errorMessage(error));
     }
+  }
+
+  bool get currentUserUsesPassword {
+    return _auth.currentUser?.identities?.any(
+          (identity) => identity.provider == 'email',
+        ) ??
+        false;
+  }
+
+  bool get currentUserUsesGoogle {
+    return _auth.currentUser?.identities?.any(
+          (identity) => identity.provider == 'google',
+        ) ??
+        false;
+  }
+
+  String? get currentUserDisplayName {
+    final metadata = _auth.currentUser?.userMetadata;
+    return (metadata?['full_name'] ?? metadata?['name'])?.toString();
   }
 
   Future<List<Map<String, dynamic>>> getMyReviews() async {
@@ -357,7 +408,11 @@ class AuthService {
     }
   }
 
-  Future<String?> getFirebaseIdToken() async => _auth.currentUser?.getIdToken();
+  Future<String?> getAuthAccessToken() async =>
+      _auth.currentSession?.accessToken;
+
+  @Deprecated('Use getAuthAccessToken')
+  Future<String?> getFirebaseIdToken() => getAuthAccessToken();
 
   Future<Map<String, dynamic>> submitProviderRegistration(
     Map<String, dynamic> payload,
@@ -618,8 +673,6 @@ class AuthService {
   }
 
   Future<void> signOut() async {
-    // Firebase owns the app session, so clear it first. Google cleanup is
-    // best-effort and must not leave the app looking signed in if it fails.
     await _auth.signOut();
     try {
       await _googleSignIn.signOut();
@@ -674,7 +727,7 @@ class AuthService {
   }
 
   Future<Options> _authorizedOptions() async {
-    final token = await getFirebaseIdToken();
+    final token = await getAuthAccessToken();
     return Options(
       headers: {if (token != null) 'Authorization': 'Bearer $token'},
     );
@@ -749,23 +802,25 @@ class AuthService {
     throw const AuthServiceException('The API returned an invalid response.');
   }
 
-  String _firebaseErrorMessage(FirebaseAuthException error) {
-    return switch (error.code) {
-      'email-already-in-use' => 'That email is already registered.',
-      'invalid-email' => 'Please enter a valid email address.',
-      'user-disabled' => 'This account has been disabled.',
-      'user-not-found' => 'No account was found for that email.',
-      'wrong-password' || 'invalid-credential' => 'Invalid email or password.',
-      'weak-password' => 'Please choose a stronger password.',
-      'requires-recent-login' =>
-        'For security, log out and sign in again before making this change.',
-      'too-many-requests' =>
-        'Too many attempts. Please wait a moment and try again.',
-      'operation-not-allowed' =>
-        'This sign-in method does not support that password change.',
-      'network-request-failed' => 'Network error. Please try again.',
-      _ => error.message ?? 'Authentication failed.',
-    };
+  String _supabaseErrorMessage(AuthException error) {
+    final message = error.message.toLowerCase();
+    if (message.contains('already registered') ||
+        message.contains('already been registered')) {
+      return 'That email is already registered.';
+    }
+    if (message.contains('invalid login credentials')) {
+      return 'Invalid email or password.';
+    }
+    if (message.contains('email not confirmed')) {
+      return 'Verify your email before signing in.';
+    }
+    if (message.contains('password') && message.contains('weak')) {
+      return 'Please choose a stronger password.';
+    }
+    if (message.contains('rate') || message.contains('too many')) {
+      return 'Too many attempts. Please wait a moment and try again.';
+    }
+    return error.message;
   }
 
   String _errorMessage(DioException error) {

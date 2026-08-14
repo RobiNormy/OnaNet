@@ -1,6 +1,6 @@
 // Public provider details and package selection screen.
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/features/provider_registration/data/package_service.dart';
 import 'package:ona_net/features/installations/presentation/installation_request_screen.dart';
 import 'package:ona_net/features/auth/presentation/login_screen.dart';
@@ -32,7 +32,7 @@ class _ProviderDetailScreenState extends State<ProviderDetailScreen> {
   int? _selectedPackageIndex;
 
   Future<void> _reportProvider({Map<String, dynamic>? review}) async {
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!AuthSession.isSignedIn) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Sign in to submit a report.')),
@@ -1621,7 +1621,7 @@ class _PackageBottomBar extends StatelessWidget {
               textColor: AppTheme.navy,
               icon: Icons.handyman_rounded,
               onTap: () async {
-                if (FirebaseAuth.instance.currentUser == null) {
+                if (!AuthSession.isSignedIn) {
                   final authAction = await showDialog<String>(
                     context: context,
                     builder: (dialogContext) => AlertDialog(

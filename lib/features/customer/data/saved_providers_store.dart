@@ -2,9 +2,10 @@
 import 'dart:convert';
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SavedProvidersStore extends ChangeNotifier {
   static const _storageKey = 'onanet_saved_providers';
@@ -15,10 +16,10 @@ class SavedProvidersStore extends ChangeNotifier {
   late final StreamSubscription<User?> _authSubscription;
 
   SavedProvidersStore() {
-    _authSubscription = FirebaseAuth.instance.authStateChanges().listen(
-      (user) => _loadForAccount(user?.uid ?? 'guest'),
+    _authSubscription = AuthSession.userChanges.listen(
+      (user) => _loadForAccount(user?.id ?? 'guest'),
     );
-    _loadForAccount(FirebaseAuth.instance.currentUser?.uid ?? 'guest');
+    _loadForAccount(AuthSession.currentUser?.id ?? 'guest');
   }
 
   bool get isLoaded => _loaded;

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
-from backend.api.auth import router as auth_router
+from backend.api.auth import ensure_auth_schema, router as auth_router
 from backend.api.provider import router as provider_router
 from backend.api.subscription import router as subscription_router
 from backend.db.session import init_db_pool, close_db_pool
@@ -31,6 +31,7 @@ from backend.services.provider_access import provider_staff_access_middleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db_pool()
+    await ensure_auth_schema()
     await ensure_installation_requests_schema()
     await ensure_reviews_schema()
     await ensure_pro_analytics_schema()
@@ -57,6 +58,7 @@ app.add_middleware(
         "http://127.0.0.1",
         "http://localhost:8080",
         "https://onanet-production.up.railway.app",
+        "https://onanet.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],

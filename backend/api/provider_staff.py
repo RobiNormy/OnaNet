@@ -9,7 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from backend.api.auth import _get_current_firebase_user
 from backend.core.firebase import (
-    create_firebase_user_rest,
+    create_supabase_user_rest,
     verify_firebase_password,
 )
 from backend.db.session import get_db_connection
@@ -255,7 +255,7 @@ async def create_provider_staff(
     names = body.display_name.strip().split(" ", 1)
     firebase_uid: str
     try:
-        firebase_uid = await create_firebase_user_rest(
+        firebase_uid = await create_supabase_user_rest(
             email=email,
             password=body.password,
             display_name=body.display_name.strip(),

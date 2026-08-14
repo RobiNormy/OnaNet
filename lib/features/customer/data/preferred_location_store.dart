@@ -1,7 +1,7 @@
 // Persists the customer's preferred search location.
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class PreferredLocation {
@@ -32,7 +32,7 @@ class PreferredLocation {
 
 class PreferredLocationStore {
   static String get _key {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+    final uid = AuthSession.currentUser?.id ?? 'guest';
     return 'onanet_preferred_location_$uid';
   }
 

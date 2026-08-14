@@ -1,12 +1,12 @@
 // Main provider dashboard and navigation shell.
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:ona_net/features/auth/data/auth_service.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/features/provider_dashboard/presentation/widgets/dashboard_components.dart';
 import 'package:ona_net/features/provider_dashboard/presentation/pro_analytics_screen.dart';
 import 'package:ona_net/features/provider_dashboard/presentation/provider_documents_screen.dart';
@@ -204,7 +204,7 @@ class _DashboardState extends State<Dashboard> {
   Future<void> _startPlanPayment(String tier) async {
     final provider = await _providerFuture;
     final providerId = provider['id']?.toString();
-    final email = FirebaseAuth.instance.currentUser?.email;
+    final email = AuthSession.currentUser?.email;
     if (providerId == null || providerId.isEmpty) {
       throw const SubscriptionException('Provider account ID is unavailable.');
     }
@@ -742,7 +742,7 @@ class _DashboardState extends State<Dashboard> {
     final name = provider?['provider_name']?.toString().trim();
     if (name != null && name.isNotEmpty) return name;
 
-    final userName = AuthService().currentUser?.displayName?.trim();
+    final userName = AuthService().currentUserDisplayName?.trim();
     if (userName != null && userName.isNotEmpty) return userName;
 
     return 'Provider';

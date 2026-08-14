@@ -7,6 +7,7 @@ import 'package:ona_net/features/customer/presentation/home_screen.dart';
 import 'package:ona_net/features/onboarding/data/onboarding_store.dart';
 import 'package:ona_net/features/onboarding/presentation/onboarding_screen.dart';
 import 'package:ona_net/features/provider_registration/presentation/registration_screen.dart';
+import 'package:ona_net/features/auth/presentation/sign_up_screen.dart';
 
 class EmailVerificationScreen extends StatefulWidget {
   const EmailVerificationScreen({
@@ -24,40 +25,32 @@ class EmailVerificationScreen extends StatefulWidget {
 }
 
 class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
-  final _codeController = TextEditingController();
-  final _emailController = TextEditingController();
   bool _loading = false;
   bool _leaving = false;
-  String? _message;
-  late String _email = widget.email;
+  String? _message = 'We sent a secure verification link to your email.';
+  late final String _email = widget.email;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _sendCode());
   }
 
   @override
   void dispose() {
-    _codeController.dispose();
-    _emailController.dispose();
     super.dispose();
   }
 
-  Future<void> _sendCode() async {
+  Future<void> _sendLink() async {
     setState(() {
       _loading = true;
       _message = null;
     });
     try {
-      final authService = AuthService();
-      final refreshedEmail = await authService.refreshAccountEmail();
-      if (refreshedEmail != null && refreshedEmail.trim().isNotEmpty) {
-        _email = refreshedEmail.trim();
-      }
-      await authService.startEmailVerification();
+      await AuthService().startEmailVerification(email: _email);
       if (mounted) {
-        setState(() => _message = 'A verification code was sent to $_email.');
+        setState(
+          () => _message = 'A new verification link was sent to $_email.',
+        );
       }
     } on AuthServiceException catch (error) {
       if (mounted) setState(() => _message = error.message);
@@ -67,73 +60,32 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   }
 
   Future<void> _changeEmail() async {
-    _emailController.text = _email;
-    final newEmail = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Change email'),
-        content: TextField(
-          controller: _emailController,
-          autofocus: true,
-          keyboardType: TextInputType.emailAddress,
-          textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(
-            labelText: 'Correct email address',
-            prefixIcon: Icon(Icons.email_outlined),
-          ),
-          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, _emailController.text.trim()),
-            child: const Text('Continue'),
-          ),
-        ],
+    await AuthService().signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => SignUp(providerMode: widget.providerMode),
       ),
+      (route) => false,
     );
-    if (newEmail == null || !mounted) return;
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(newEmail)) {
-      setState(() => _message = 'Enter a valid email address.');
-      return;
-    }
-    if (newEmail.toLowerCase() == _email.toLowerCase()) return;
-
-    setState(() {
-      _loading = true;
-      _message = null;
-    });
-    try {
-      await AuthService().requestEmailChange(newEmail);
-      if (mounted) {
-        setState(() {
-          _message =
-              'A confirmation link was sent to $newEmail. Open it, then come back and tap Resend code.';
-        });
-      }
-    } on AuthServiceException catch (error) {
-      if (mounted) setState(() => _message = error.message);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
   }
 
   Future<void> _verify() async {
-    final code = _codeController.text.trim();
-    if (code.length < 4) {
-      setState(() => _message = 'Enter the verification code from your email.');
-      return;
-    }
     setState(() {
       _loading = true;
       _message = null;
     });
     try {
-      await AuthService().verifyEmailVerification(code);
+      final verified = await AuthService().completeEmailVerification();
+      if (!verified) {
+        if (mounted) {
+          setState(() {
+            _message =
+                'Open the link in your email first, then return here and continue.';
+          });
+        }
+        return;
+      }
       if (!mounted) return;
       final onboardingCompleted = await OnboardingStore.isCompleted();
       if (!mounted) return;
@@ -209,7 +161,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          'Enter the code sent to $_email. You need to verify your email before continuing.',
+                          'Open the verification link sent to $_email, then return to OnaNet and continue.',
                           textAlign: TextAlign.center,
                           style: GoogleFonts.urbanist(
                             color: textColor.withValues(alpha: 0.7),
@@ -218,25 +170,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                         TextButton.icon(
                           onPressed: _loading ? null : _changeEmail,
                           icon: const Icon(Icons.edit_outlined, size: 18),
-                          label: const Text('Wrong email? Change it'),
-                        ),
-                        const SizedBox(height: 24),
-                        TextField(
-                          controller: _codeController,
-                          autofocus: true,
-                          keyboardType: TextInputType.number,
-                          maxLength: 8,
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.urbanist(
-                            fontSize: 24,
-                            letterSpacing: 8,
-                            fontWeight: FontWeight.w800,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Verification code',
-                            counterText: '',
-                          ),
-                          onSubmitted: (_) => _verify(),
+                          label: const Text('Wrong email? Start again'),
                         ),
                         if (_message != null) ...[
                           const SizedBox(height: 14),
@@ -261,12 +195,12 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                                       strokeWidth: 2,
                                     ),
                                   )
-                                : const Text('Verify email'),
+                                : const Text('I verified my email — Continue'),
                           ),
                         ),
                         TextButton(
-                          onPressed: _loading ? null : _sendCode,
-                          child: const Text('Resend code'),
+                          onPressed: _loading ? null : _sendLink,
+                          child: const Text('Resend verification link'),
                         ),
                         TextButton.icon(
                           onPressed: _loading || _leaving ? null : _backToLogin,

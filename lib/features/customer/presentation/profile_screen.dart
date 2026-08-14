@@ -1,7 +1,7 @@
 // Customer profile and account screen.
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/features/auth/presentation/phone_verification.dart';
 import 'package:ona_net/features/auth/data/auth_service.dart';
 import 'package:ona_net/features/auth/presentation/login_screen.dart';
@@ -15,6 +15,7 @@ import 'package:ona_net/core/theme/app_theme.dart';
 import 'package:ona_net/core/theme/theme_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:ona_net/features/provider_registration/presentation/registration_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class Profile extends StatefulWidget {
   const Profile({super.key});
@@ -35,7 +36,7 @@ class _ProfileState extends State<Profile> {
   bool _isSigningOut = false;
 
   Future<OtpStatusResult?> _loadPhoneStatus() async {
-    if (FirebaseAuth.instance.currentUser == null) return null;
+    if (!AuthSession.isSignedIn) return null;
     try {
       return await _phoneVerificationService.status();
     } catch (_) {
@@ -59,22 +60,22 @@ class _ProfileState extends State<Profile> {
   }
 
   Future<Map<String, dynamic>> _loadAccount() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = AuthSession.currentUser;
     if (user == null) return const {};
     try {
       return await AuthService().getMyAccount();
     } catch (_) {
       return {
         'email': user.email,
-        'first_name': user.displayName?.split(' ').first,
-        'last_name': user.displayName?.split(' ').skip(1).join(' '),
-        'created_at': user.metadata.creationTime?.toIso8601String(),
+        'first_name': user.userMetadata?['first_name'],
+        'last_name': user.userMetadata?['last_name'],
+        'created_at': user.createdAt,
       };
     }
   }
 
   Future<List<InstallationRequestResult>> _loadRequestUpdates() async {
-    if (FirebaseAuth.instance.currentUser == null) return const [];
+    if (!AuthSession.isSignedIn) return const [];
     try {
       return await InstallationServiceRequest().myRequests();
     } catch (_) {
@@ -98,11 +99,11 @@ class _ProfileState extends State<Profile> {
   }
 
   Future<bool> _requireAccount() async {
-    if (FirebaseAuth.instance.currentUser != null) return true;
+    if (AuthSession.isSignedIn) return true;
     await Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const Login()));
-    if (FirebaseAuth.instance.currentUser == null) return false;
+    if (!AuthSession.isSignedIn) return false;
     await _refreshProfile();
     return true;
   }
@@ -126,7 +127,7 @@ class _ProfileState extends State<Profile> {
   }
 
   Future<void> _openMyRequests() async {
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!AuthSession.isSignedIn) {
       await Navigator.of(
         context,
       ).push(MaterialPageRoute(builder: (_) => const Login()));
@@ -182,7 +183,7 @@ class _ProfileState extends State<Profile> {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = AuthSession.currentUser;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
     final mutedTextColor = textColor.withValues(alpha: 0.62);
@@ -387,7 +388,10 @@ class _ProfileState extends State<Profile> {
   }
 
   String _displayName(User? user) {
-    final displayName = user?.displayName?.trim();
+    final displayName =
+        (user?.userMetadata?['full_name'] ?? user?.userMetadata?['name'])
+            ?.toString()
+            .trim();
     if (displayName != null && displayName.isNotEmpty) return displayName;
     final email = user?.email?.trim();
     if (email != null && email.isNotEmpty) return email.split('@').first;

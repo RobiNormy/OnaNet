@@ -1,9 +1,9 @@
 // Main customer discovery and navigation shell.
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ona_net/core/auth/auth_session.dart';
 import 'package:ona_net/features/auth/data/auth_service.dart';
 import 'package:ona_net/features/auth/presentation/email_verification_screen.dart';
 import 'package:ona_net/features/onboarding/data/onboarding_store.dart';
@@ -83,10 +83,11 @@ class _AuthenticatedLandingState extends State<AuthenticatedLanding> {
   late final Future<_LandingDestination> _destination = _resolveDestination();
 
   Future<_LandingDestination> _resolveDestination() async {
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!AuthSession.isSignedIn) {
       return _LandingDestination.customer;
     }
     try {
+      await AuthService().syncCurrentSession();
       final account = await AuthService().getMyAccount();
       if (account['is_email_verified'] == false) {
         return _LandingDestination.emailVerification;
@@ -115,7 +116,7 @@ class _AuthenticatedLandingState extends State<AuthenticatedLanding> {
         }
         return switch (snapshot.data) {
           _LandingDestination.emailVerification => EmailVerificationScreen(
-            email: FirebaseAuth.instance.currentUser?.email ?? '',
+            email: AuthSession.currentUser?.email ?? '',
           ),
           _LandingDestination.admin => const OnaNetAdminDashboard(),
           _LandingDestination.provider => const Dashboard(),
