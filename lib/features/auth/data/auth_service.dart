@@ -96,7 +96,7 @@ class AuthService {
               .where((part) => part.isNotEmpty)
               .join(' '),
         },
-        emailRedirectTo: 'com.robinson.ona_net://login-callback/',
+        emailRedirectTo: 'https://onanet.app/verify-email',
       );
       final accessToken = response.session?.accessToken;
       if (accessToken != null && accessToken.isNotEmpty) {
@@ -158,7 +158,7 @@ class AuthService {
       await _auth.resend(
         type: OtpType.signup,
         email: email.trim(),
-        emailRedirectTo: 'com.robinson.ona_net://login-callback/',
+        emailRedirectTo: 'https://onanet.app/verify-email',
       );
     } on AuthException catch (error) {
       throw AuthServiceException(_supabaseErrorMessage(error));

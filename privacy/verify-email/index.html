@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="canonical" href="https://onanet.app/verify-email">
+  <title>Email verified | OnaNet</title>
+</head>
+<body class="account-action-page">
+  <main class="account-action-card verification-result-card">
+    <a class="brand" href="/">Ona<span>Net</span></a>
+
+    <section id="verified-state" class="action-state" aria-live="polite">
+      <div class="action-icon success-icon" aria-hidden="true">✓</div>
+      <p class="eyebrow">Email verified</p>
+      <h1>Your account is verified</h1>
+      <p>You can return to the OnaNet app and continue.</p>
+    </section>
+
+    <section id="verification-error-state" class="action-state" hidden aria-live="polite">
+      <div class="action-icon error-icon" aria-hidden="true">!</div>
+      <p class="eyebrow">Link unavailable</p>
+      <h1>Verification wasn’t completed</h1>
+      <p>This verification link is invalid or has expired. Return to OnaNet and request a new one.</p>
+    </section>
+
+    <p class="action-support">Need help? <a href="mailto:support@mail.onanet.app">Contact OnaNet support</a>.</p>
+  </main>
+  <script src="../verify-email.js"></script>
+</body>
+</html>

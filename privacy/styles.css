@@ -211,6 +211,8 @@ footer { padding: 25px 20px; color: var(--muted); border-top: 1px solid var(--li
 .success-icon { color: var(--success); background: #dcfce7; }
 .error-icon { color: #9b1c1c; background: #fee2e2; }
 .action-support { margin: 34px 0 0; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; }
+.verification-result-card { text-align: center; }
+.verification-result-card .action-icon { margin-right: auto; margin-left: auto; }
 @keyframes action-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 620px) {
