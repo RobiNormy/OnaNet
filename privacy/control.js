@@ -34,6 +34,10 @@ async function initialise() {
 async function enterApp(session, silent = false) {
   state.session = session;
   try {
+    await api('/auth/session', {
+      method: 'POST',
+      body: JSON.stringify({ token: session.access_token }),
+    });
     await loadSnapshot();
     $('#auth-shell').hidden = true;
     $('#app-shell').hidden = false;
