@@ -110,7 +110,8 @@ async def _owner_provider(firebase_uid: str) -> Any:
               provider.subscription_tier,
               owner.id AS owner_id,
               owner.email AS owner_email,
-              owner.firebase_uid AS owner_firebase_uid
+              owner.firebase_uid AS owner_firebase_uid,
+              owner.supabase_uid AS owner_supabase_uid
             FROM providers provider
             JOIN users owner ON owner.id = provider.user_id
             WHERE owner.firebase_uid = $1
@@ -233,7 +234,15 @@ async def create_provider_staff(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
         ) from exc
-    if confirmed_uid != provider["owner_firebase_uid"]:
+    owner_auth_ids = {
+        str(value)
+        for value in (
+            provider["owner_firebase_uid"],
+            provider["owner_supabase_uid"],
+        )
+        if value
+    }
+    if confirmed_uid not in owner_auth_ids:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Owner confirmation did not match this provider.",
@@ -245,7 +254,7 @@ async def create_provider_staff(
             "SELECT count(*) FROM provider_staff_accounts WHERE provider_id = $1",
             provider["id"],
         )
-    if int(staff_count) + 1 >= int(limits["max_staff_accounts"]):
+    if int(staff_count) >= int(limits["max_staff_accounts"]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your current plan has reached its provider account limit.",
@@ -287,7 +296,9 @@ async def create_provider_staff(
             """
             SELECT id
             FROM users
-            WHERE firebase_uid = $1 OR lower(email) = $2
+            WHERE firebase_uid = $1
+               OR supabase_uid = $1
+               OR lower(email) = $2
             LIMIT 1;
             """,
             firebase_uid,
@@ -308,10 +319,10 @@ async def create_provider_staff(
             member = await db.fetchrow(
                 """
                 INSERT INTO users(
-                  firebase_uid, email, first_name, last_name,
+                  firebase_uid, supabase_uid, email, first_name, last_name,
                   auth_provider, role, is_profile_complete, is_phone_verified
                 )
-                VALUES($1,$2,$3,$4,'email','provider_staff',true,false)
+                VALUES($1,$1,$2,$3,$4,'email','provider_staff',true,false)
                 RETURNING id;
                 """,
                 firebase_uid,

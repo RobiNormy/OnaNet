@@ -121,7 +121,8 @@ async def _get_current_firebase_user(authorization: str | None) -> dict:
             }
 
     staff_actor = current_staff_actor()
-    if staff_actor and staff_actor["staff_firebase_uid"] == decoded.get("uid"):
+    actor_auth_ids = {decoded.get("uid"), decoded.get("supabase_uid")}
+    if staff_actor and staff_actor["staff_auth_uid"] in actor_auth_ids:
         return {
             **decoded,
             "actor_uid": decoded["uid"],

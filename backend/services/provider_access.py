@@ -103,7 +103,7 @@ async def provider_staff_access_middleware(
             JOIN users member ON member.id = staff.user_id
             JOIN providers provider ON provider.id = staff.provider_id
             JOIN users owner ON owner.id = provider.user_id
-            WHERE member.firebase_uid = $1
+            WHERE member.firebase_uid = $1 OR member.supabase_uid = $1
             LIMIT 1;
             """,
             decoded["uid"],
@@ -148,7 +148,7 @@ async def provider_staff_access_middleware(
             )
 
     actor = {
-        "staff_firebase_uid": decoded["uid"],
+        "staff_auth_uid": decoded["uid"],
         "owner_firebase_uid": staff["owner_firebase_uid"],
         "provider_id": str(staff["provider_id"]),
         "role": staff["role"],
