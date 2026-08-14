@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     PAYSTACK_PRO_AMOUNT_KES: int = 5000
 
     RESEND_API_KEY: str | None = None
+    RESEND_WEBHOOK_SECRET: str | None = None
     RESEND_FROM_EMAIL: str = "OnaNet <hello@mail.onanet.app>"
     RESEND_SECURITY_FROM_EMAIL: str = (
         "OnaNet Security <no-reply@mail.onanet.app>"
