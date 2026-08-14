@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from email.utils import parseaddr
 from typing import Any
 
 import resend
@@ -86,6 +87,10 @@ def _attachment_metadata(value: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _plain_address(value: str) -> str:
+    return parseaddr(value)[1].strip().lower()
+
+
 @router.post("/resend", status_code=status.HTTP_200_OK)
 async def receive_resend_webhook(
     request: Request,
@@ -146,6 +151,17 @@ async def receive_resend_webhook(
     sender = str(email.get("from") or event_data.get("from") or "Unknown sender").strip()
     subject = str(email.get("subject") or event_data.get("subject") or "(no subject)").strip()
     recipients = _string_list(email.get("to") or event_data.get("to"))
+    received_for = _string_list(email.get("received_for") or event_data.get("received_for"))
+    allowed_inbox = _plain_address(settings.RESEND_REPLY_TO or "support@mail.onanet.app")
+    delivered_addresses = {
+        _plain_address(address) for address in [*recipients, *received_for]
+    }
+    if allowed_inbox not in delivered_addresses:
+        log.info(
+            "Ignored inbound email %s delivered to non-support address(es)",
+            email_id,
+        )
+        return {"ok": True, "ignored": True, "email_id": email_id}
     received_at = _received_at(email.get("created_at") or event_data.get("created_at"))
     attachments = _attachment_metadata(email.get("attachments"))
 

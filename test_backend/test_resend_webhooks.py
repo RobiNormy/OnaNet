@@ -12,6 +12,7 @@ import resend
 from backend.api.resend_webhooks import (
     _attachment_metadata,
     _received_at,
+    _plain_address,
     _string_list,
     _trim_body,
 )
@@ -76,6 +77,10 @@ class ResendWebhookTests(unittest.TestCase):
                 [{"id": "a", "filename": "proof.pdf", "size": 42}]
             ),
             [{"id": "a", "filename": "proof.pdf"}],
+        )
+        self.assertEqual(
+            _plain_address("OnaNet Support <Support@Mail.OnaNet.App>"),
+            "support@mail.onanet.app",
         )
 
 

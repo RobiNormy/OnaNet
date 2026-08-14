@@ -102,7 +102,13 @@ class EmailService:
         if bcc is not None:
             payload["bcc"] = _recipients(bcc)
 
-        effective_reply_to = (reply_to or self._reply_to).strip()
+        # Only the dedicated support identity should invite replies. General
+        # hello/security mail remains transactional even when a global support
+        # reply address is configured.
+        support_sender = settings.RESEND_SUPPORT_FROM_EMAIL.strip().lower()
+        effective_reply_to = (reply_to or "").strip()
+        if reply_to is None and effective_from.lower() == support_sender:
+            effective_reply_to = self._reply_to
         if effective_reply_to:
             payload["reply_to"] = effective_reply_to
         if tags:
