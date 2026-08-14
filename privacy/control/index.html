@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="description" content="OnaNet administration control panel.">
+  <title>OnaNet Control</title>
+  <link rel="stylesheet" href="../control.css">
+</head>
+<body>
+  <section class="auth-shell" id="auth-shell">
+    <div class="auth-visual" aria-hidden="true">
+      <div class="signal signal-one"></div>
+      <div class="signal signal-two"></div>
+      <div class="signal signal-three"></div>
+      <div class="visual-copy">
+        <a class="brand brand-light" href="/">Ona<span>Net</span></a>
+        <p class="overline">Operations centre</p>
+        <h1>Keep the network trustworthy.</h1>
+        <p>Review providers, protect customers and manage OnaNet from one secure workspace.</p>
+      </div>
+    </div>
+    <main class="auth-panel">
+      <form class="login-card" id="login-form">
+        <div class="mobile-brand"><a class="brand" href="/">Ona<span>Net</span></a></div>
+        <p class="overline">Authorised personnel</p>
+        <h2>Sign in to Control</h2>
+        <p class="subtle">Use an OnaNet account that has been promoted to administrator.</p>
+        <label for="admin-email">Email address</label>
+        <input id="admin-email" name="email" type="email" autocomplete="username" required>
+        <label for="admin-password">Password</label>
+        <div class="password-wrap">
+          <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+          <button class="text-button" id="toggle-password" type="button">Show</button>
+        </div>
+        <p class="form-error" id="login-error" role="alert" hidden></p>
+        <button class="primary-button login-button" type="submit">Enter control panel</button>
+        <a class="forgot-link" href="/reset-password">Forgot password?</a>
+        <p class="security-note">Protected by Supabase authentication and OnaNet role verification.</p>
+      </form>
+    </main>
+  </section>
+
+  <div class="app-shell" id="app-shell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <a class="brand brand-light" href="/">Ona<span>Net</span></a>
+        <span class="admin-chip">Control</span>
+      </div>
+      <nav id="main-nav" aria-label="Control panel navigation">
+        <p class="nav-label">Overview</p>
+        <button class="nav-item active" data-view="dashboard"><span>⌂</span>Dashboard</button>
+        <p class="nav-label">Trust & safety</p>
+        <button class="nav-item" data-view="verification"><span>✓</span>Verification</button>
+        <button class="nav-item" data-view="providers"><span>⌁</span>Providers</button>
+        <button class="nav-item" data-view="users"><span>♙</span>Users</button>
+        <button class="nav-item" data-view="reports"><span>⚑</span>Reports</button>
+        <p class="nav-label">Operations</p>
+        <button class="nav-item" data-view="packages"><span>▤</span>Packages</button>
+        <button class="nav-item" data-view="coverage"><span>◎</span>Coverage</button>
+        <button class="nav-item" data-view="subscriptions"><span>◇</span>Subscriptions</button>
+        <button class="nav-item" data-view="invoices"><span>▧</span>Invoices</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="admin-identity">
+          <span class="avatar" id="admin-avatar">A</span>
+          <div><strong id="admin-name">Administrator</strong><small id="admin-email-label"></small></div>
+        </div>
+        <button class="signout-button" id="signout-button" type="button">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <button class="menu-button" id="menu-button" type="button" aria-label="Open navigation">☰</button>
+        <div><p class="breadcrumb">OnaNet / Control</p><h1 id="page-title">Dashboard</h1></div>
+        <div class="topbar-actions">
+          <label class="global-search"><span>⌕</span><input id="global-search" type="search" placeholder="Search current view"></label>
+          <button class="icon-button" id="refresh-button" type="button" title="Refresh data">↻</button>
+        </div>
+      </header>
+      <div class="loading-bar" id="loading-bar" hidden></div>
+      <section class="content" id="content" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="modal-close" id="modal-close" type="button" aria-label="Close">×</button>
+      <p class="overline" id="modal-kicker">Confirm action</p>
+      <h2 id="modal-title">Continue?</h2>
+      <p class="subtle" id="modal-description"></p>
+      <div id="modal-fields"></div>
+      <p class="form-error" id="modal-error" role="alert" hidden></p>
+      <div class="modal-actions">
+        <button class="secondary-button" id="modal-cancel" type="button">Cancel</button>
+        <button class="primary-button" id="modal-confirm" type="button">Confirm</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <script type="module" src="../control.js"></script>
+</body>
+</html>
