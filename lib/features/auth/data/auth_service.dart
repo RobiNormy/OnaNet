@@ -18,6 +18,11 @@ class AuthServiceException implements Exception {
   String toString() => message;
 }
 
+class EmailNotVerifiedException extends AuthServiceException {
+  const EmailNotVerifiedException()
+    : super('Verify your email before signing in.');
+}
+
 class AuthService {
   AuthService({Dio? dio, String? apiBaseUrl})
     : _dio = dio ?? sharedApiClient,
@@ -127,6 +132,9 @@ class AuthService {
         data: {'token': accessToken},
       );
     } on AuthException catch (e) {
+      if (e.message.toLowerCase().contains('email not confirmed')) {
+        throw const EmailNotVerifiedException();
+      }
       throw AuthServiceException(_supabaseErrorMessage(e));
     } on DioException catch (e) {
       await _auth.signOut();

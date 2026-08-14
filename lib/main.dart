@@ -23,6 +23,9 @@ void main() async {
   await Supabase.initialize(
     url: _supabaseUrl,
     publishableKey: _supabasePublishableKey,
+    authOptions: const FlutterAuthClientOptions(
+      authFlowType: AuthFlowType.implicit,
+    ),
   );
   await Firebase.initializeApp();
   await GoogleSignIn.instance.initialize();

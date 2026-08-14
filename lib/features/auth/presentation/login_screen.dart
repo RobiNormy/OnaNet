@@ -284,6 +284,17 @@ class _LoginState extends State<Login> {
                                     }
 
                                     await _afterSuccessfulSignIn();
+                                  } on EmailNotVerifiedException {
+                                    if (!context.mounted) return;
+                                    Navigator.of(context).pushAndRemoveUntil(
+                                      MaterialPageRoute(
+                                        builder: (_) => EmailVerificationScreen(
+                                          email: _emailController.text.trim(),
+                                          providerMode: widget.providerMode,
+                                        ),
+                                      ),
+                                      (route) => false,
+                                    );
                                   } catch (e) {
                                     if (!context.mounted) {
                                       return;
