@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.db.session import get_db_connection
 from backend.services.subscription_services import get_provider_tier
 
@@ -190,7 +190,7 @@ async def package_comparison(
     area: str = Query(min_length=2, max_length=200),
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id, provider_name = await _owned_pro_provider(firebase_user["uid"])
     clean_area = area.strip()
 
@@ -398,7 +398,7 @@ async def package_comparison(
 async def pro_analytics(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id, provider_name = await _owned_pro_provider(firebase_user["uid"])
     async with get_db_connection() as db:
         funnel = await db.fetchrow(

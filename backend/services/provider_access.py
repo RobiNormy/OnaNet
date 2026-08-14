@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
-from backend.core.firebase import verify_firebase_token
+from backend.core.supabase_auth import verify_supabase_token
 from backend.db.session import get_db_connection
 
 
@@ -86,7 +86,7 @@ async def provider_staff_access_middleware(
     ):
         return await call_next(request)
 
-    decoded = await verify_firebase_token(authorization.split(" ", 1)[1])
+    decoded = await verify_supabase_token(authorization.split(" ", 1)[1])
     if not decoded:
         return await call_next(request)
 

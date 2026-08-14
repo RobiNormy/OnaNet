@@ -10,9 +10,9 @@ import anyio
 from pydantic import BaseModel, Field
 from supabase import create_client
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.core.config import settings
-from backend.core.firebase import delete_firebase_user
+from backend.core.supabase_auth import delete_supabase_user
 from backend.db.session import get_db_connection
 from backend.services.email_notifications import send_provider_status_email
 
@@ -152,7 +152,7 @@ def _safe_signed_document_url(file_url: str) -> str:
 
 
 async def _require_admin(authorization: str | None) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     account_uid = firebase_user.get("actor_uid") or firebase_user["uid"]
     async with get_db_connection() as db:
         account = await db.fetchrow(
@@ -634,22 +634,19 @@ async def delete_user_account(
             )
             await db.execute("DELETE FROM users WHERE id=$1", target["id"])
 
-    supabase_deleted = True
-    if target["supabase_uid"]:
-        supabase_deleted = await delete_firebase_user(str(target["supabase_uid"]))
-    firebase_deleted = await delete_firebase_user(str(target["firebase_uid"]))
+    auth_user_id = target["supabase_uid"] or target["firebase_uid"]
+    supabase_deleted = await delete_supabase_user(str(auth_user_id))
     log.warning(
-        "Admin %s deleted user %s (%s); Firebase deleted=%s; reason=%s",
+        "Admin %s deleted user %s (%s); Supabase deleted=%s; reason=%s",
         acting_admin["email"],
         target["email"],
         target["id"],
-        firebase_deleted,
+        supabase_deleted,
         reason,
     )
     return {
         "id": str(user_id),
         "deleted": True,
-        "firebase_deleted": firebase_deleted,
         "supabase_deleted": supabase_deleted,
     }
 

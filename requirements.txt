@@ -1,7 +1,6 @@
 asyncpg
 fastapi
 email-validator
-firebase-admin
 httpx
 pydantic-settings
 python-jose[cryptography]

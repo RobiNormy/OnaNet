@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile, status
 from supabase import create_client
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.core.config import settings
 from backend.db.session import get_db_connection
 from backend.providers.repos.provider_contact import (
@@ -389,7 +389,7 @@ async def register_provider(
     provider_in: ProviderRegistrationRequest,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         try:
@@ -413,7 +413,7 @@ async def upload_provider_logo(
     logo_offset_y: float = Form(default=0.0),
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     if file.content_type not in ALLOWED_LOGO_TYPES:
         raise HTTPException(
@@ -540,7 +540,7 @@ async def delete_provider_logo(
     provider_id: UUID,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         provider = await db.fetchrow(
@@ -607,7 +607,7 @@ async def save_provider_contacts(
     contacts_in: ProviderContactsCreate,
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         try:
@@ -632,7 +632,7 @@ async def list_provider_contacts(
     provider_id: UUID,
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         try:
@@ -657,7 +657,7 @@ async def save_provider_coverage_areas(
     coverage_in: ProviderCoverageAreasCreate,
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     tier, limits = await get_provider_tier(provider_id)
 
     async with get_db_connection() as db:
@@ -695,7 +695,7 @@ async def list_provider_coverage_areas(
     provider_id: UUID,
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         try:
@@ -715,7 +715,7 @@ async def list_provider_coverage_areas(
 async def get_my_provider(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         try:
@@ -732,7 +732,7 @@ async def get_my_provider_customers(
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
     """Customers are users with at least one completed installation."""
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     async with get_db_connection() as db:
         rows = await db.fetch(
             """
@@ -788,7 +788,7 @@ async def get_my_provider_customers(
 async def get_my_provider_reviews(
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     async with get_db_connection() as db:
         rows = await db.fetch(
             """
@@ -824,7 +824,7 @@ async def save_provider_services(
     services_in: ProviderServicesCreate,
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         try:
@@ -849,7 +849,7 @@ async def list_provider_services(
     provider_id: UUID,
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, Any]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         try:
@@ -872,7 +872,7 @@ async def upload_provider_document(
     file: UploadFile = File(...),
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     if document_type not in ALLOWED_DOCUMENT_TYPES:
         raise HTTPException(
@@ -996,7 +996,7 @@ async def upload_provider_document(
 async def list_provider_documents(
     authorization: str | None = Header(default=None),
 ) -> list[dict[str, str]]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         rows = await db.fetch(
@@ -1032,7 +1032,7 @@ async def create_provider_package(
     package_in: ProviderPackageCreate,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         provider = await db.fetchrow(
@@ -1096,7 +1096,7 @@ async def complete_provider_registration(
     background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         provider = await db.fetchrow(
@@ -1198,7 +1198,7 @@ async def update_provider_package(
     package_in: ProviderPackageUpdate,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     changes = package_in.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(
@@ -1260,7 +1260,7 @@ async def delete_provider_package(
     package_id: UUID,
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as db:
         package = await db.fetchrow(
@@ -1353,7 +1353,7 @@ async def get_dashboard(
     provider_id: UUID,
     authorization: str | None = Header(default=None),
 ):
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     async with get_db_connection() as db:
         provider = await db.fetchrow(
             """

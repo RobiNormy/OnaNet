@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.db.session import get_db_connection
 from backend.services.subscription_services import Tier, get_provider_subscription_status
 
@@ -43,7 +43,7 @@ async def _resolve_provider_id(firebase_uid: str) -> UUID:
 async def get_subscription_status(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id = await _resolve_provider_id(firebase_user["uid"])
     status_data = await get_provider_subscription_status(provider_id)
 

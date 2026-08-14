@@ -7,10 +7,10 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
-from backend.api.auth import _get_current_firebase_user
-from backend.core.firebase import (
-    create_supabase_user_rest,
-    verify_firebase_password,
+from backend.api.auth import _get_current_user
+from backend.core.supabase_auth import (
+    create_supabase_user,
+    verify_supabase_password,
 )
 from backend.db.session import get_db_connection
 from backend.services.provider_access import (
@@ -153,7 +153,7 @@ def _permissions_object(value: Any) -> dict[str, Any]:
 async def get_provider_account_access(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     staff = firebase_user.get("provider_staff")
     if staff:
         return {
@@ -176,7 +176,7 @@ async def get_provider_account_access(
 async def list_provider_staff(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider = await _owner_provider(firebase_user["uid"])
     tier, limits = await get_provider_tier(provider["id"])
     async with get_db_connection() as db:
@@ -213,7 +213,7 @@ async def create_provider_staff(
     background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider = await _owner_provider(firebase_user["uid"])
     expected_names = {
         str(provider["provider_name"] or "").strip().casefold(),
@@ -225,7 +225,7 @@ async def create_provider_staff(
             detail="Provider name does not match this account.",
         )
     try:
-        confirmed_uid = await verify_firebase_password(
+        confirmed_uid = await verify_supabase_password(
             provider["owner_email"],
             body.owner_password,
         )
@@ -262,9 +262,9 @@ async def create_provider_staff(
 
     email = body.email.strip().lower()
     names = body.display_name.strip().split(" ", 1)
-    firebase_uid: str
+    auth_uid: str
     try:
-        firebase_uid = await create_supabase_user_rest(
+        auth_uid = await create_supabase_user(
             email=email,
             password=body.password,
             display_name=body.display_name.strip(),
@@ -273,7 +273,7 @@ async def create_provider_staff(
         message = str(exc)
         if "EMAIL_EXISTS" in message:
             try:
-                firebase_uid = await verify_firebase_password(
+                auth_uid = await verify_supabase_password(
                     email,
                     body.password,
                 )
@@ -301,7 +301,7 @@ async def create_provider_staff(
                OR lower(email) = $2
             LIMIT 1;
             """,
-            firebase_uid,
+            auth_uid,
             email,
         )
     if existing_user is not None:
@@ -325,7 +325,7 @@ async def create_provider_staff(
                 VALUES($1,$1,$2,$3,$4,'email','provider_staff',true,false)
                 RETURNING id;
                 """,
-                firebase_uid,
+                auth_uid,
                 email,
                 names[0],
                 names[1] if len(names) > 1 else None,
@@ -368,7 +368,7 @@ async def update_provider_staff(
     body: StaffUpdate,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider = await _owner_provider(firebase_user["uid"])
     permissions = (
         _normalized_permissions(body.permissions)

@@ -12,9 +12,6 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str
     SUPABASE_PUBLISHABLE_KEY: str | None = None
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
-    FIREBASE_SERVICE_ACCOUNT_PATH: str | None = None
-    FIREBASE_API_KEY: str
-    FIREBASE_PROJECT_ID: str | None = None
     GEOAPIFY_API_KEY: str | None = None
 
     SMS_PROVIDER: str = "console"
@@ -57,14 +54,6 @@ class Settings(BaseSettings):
     @property
     def supabase_service_role_key(self) -> str:
         return self.SUPABASE_SERVICE_ROLE_KEY
-
-    @property
-    def firebase_service_account_path(self) -> str | None:
-        return self.FIREBASE_SERVICE_ACCOUNT_PATH
-
-    @property
-    def firebase_project_id(self) -> str | None:
-        return self.FIREBASE_PROJECT_ID
 
     model_config = SettingsConfigDict(
         env_file=".env",

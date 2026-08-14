@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Re
 from fastapi.responses import HTMLResponse
 from pydantic import EmailStr
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.db.session import get_db_connection
 from backend.services.paystack_service import (
     PaystackConfigurationError,
@@ -66,7 +66,7 @@ async def initialize_paystack_payment(
     email: EmailStr = Query(),
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     try:
         return await initialize_transaction(
             provider_id=provider_id,
@@ -90,7 +90,7 @@ async def verify_paystack_payment(
     background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     async with get_db_connection() as db:
         owned = await db.fetchval(
             """
@@ -162,7 +162,7 @@ async def payment_status(
     reference: str,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     async with get_db_connection() as db:
         payment = await db.fetchrow(
             """

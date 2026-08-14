@@ -8,7 +8,7 @@ from fastapi import APIRouter,Depends,Header,HTTPException,status
 
 from pydantic import BaseModel,Field
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 
 from backend.db.session import get_db_connection
 from datetime import datetime,timezone
@@ -72,7 +72,7 @@ async def start_verification(
     authorization: str | None = Header (default=None),
     otp_service: OtpService = Depends(get_otp_service),
 )-> StartResponse:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     user_id = await _resolver_user_id(firebase_user["uid"])
     try:
         result = await otp_service.start_verification(
@@ -104,7 +104,7 @@ async def verify_otp(
     authorization: str | None = Header(default=None),
     otp_service: OtpService =  Depends(get_otp_service),
 ) -> VerifyResponse:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     user_id = await _resolver_user_id(firebase_user["uid"])
 
     try:
@@ -137,7 +137,7 @@ async def verify_otp(
 async def phone_status(
     authorization: str | None = Header(default=None),
 ) -> StatusResponse:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     user_id = await _resolver_user_id(firebase_user["uid"])
 
     async with get_db_connection() as conn:

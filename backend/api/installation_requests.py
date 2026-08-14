@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter,BackgroundTasks,Depends,Header,HTTPException,status
 from uuid import UUID
 from pydantic import BaseModel,Field
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.db.session import get_db_connection
 from backend.providers.schema.installation_request import (
     InstallationRequestCreate,
@@ -86,7 +86,7 @@ async def create_installation_request(
     service: InstallationRequestService = Depends(get_installation_request_service),
 )-> Any:
     
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     user_id = await _resolve_user_id(firebase_user["uid"])
 
     try:
@@ -144,7 +144,7 @@ async def my_requests(
     service: InstallationRequestService = Depends(get_installation_request_service),
 ) -> list[Any]:
     
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     user_id = await _resolve_user_id(firebase_user["uid"])
 
@@ -159,7 +159,7 @@ async def cancel_my_request(
     authorization: str | None = Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service),
 ) -> Any:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     user_id = await _resolve_user_id(firebase_user["uid"])
 
     try:
@@ -241,7 +241,7 @@ async def list_provider_inbox(
     authorization: str | None = Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service),
 ) -> list[Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id = await _resolve_provider_id(firebase_user["uid"])
 
     results = await service.list_for_provider(
@@ -259,7 +259,7 @@ async def get_provider_inboc_item(
     service: InstallationRequestService = Depends(get_installation_request_service),
 
 ) -> Any:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id = await _resolve_provider_id(firebase_user["uid"])
 
     result = await service.get_for_provider(
@@ -276,7 +276,7 @@ async def accept_request(
     authorization: str | None = Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service)
 )-> Any:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id = await _resolve_provider_id(firebase_user["uid"])
 
     try : 
@@ -308,7 +308,7 @@ async def decline_request(
     authorization: str | None =Header(default=None),
     service: InstallationRequestService = Depends(get_installation_request_service),
 ) -> Any:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id = await _resolve_provider_id(firebase_user["uid"])
 
     try :
@@ -341,7 +341,7 @@ async def complete_request(
 
 ) -> Any:
 
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     provider_id = await _resolve_provider_id(firebase_user["uid"])
 
     try:

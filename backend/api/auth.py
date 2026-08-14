@@ -1,12 +1,8 @@
 import logging
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from backend.db.session import get_db_connection
-from backend.core.firebase import (
-    create_firebase_user_rest,
-    delete_firebase_user,
-    verify_firebase_token,
-)
+from backend.core.supabase_auth import delete_supabase_user, verify_supabase_token
 from backend.core.security import create_access_token
 from backend.schemas.user import AuthResponse
 from backend.services.provider_access import current_staff_actor
@@ -45,14 +41,8 @@ async def public_auth_config() -> dict[str, str]:
         "supabase_publishable_key": settings.SUPABASE_PUBLISHABLE_KEY,
     }
 
-class FirebaseTokenRequest(BaseModel):
+class AuthTokenRequest(BaseModel):
     token: str
-
-class SignUpRequest(BaseModel):
-    email: EmailStr
-    password: str
-    first_name: str | None = None
-    last_name: str | None = None
 
 
 class PersonalInfoUpdate(BaseModel):
@@ -83,7 +73,7 @@ def _user_response(row: dict) -> dict:
     }
 
 
-async def _get_current_firebase_user(authorization: str | None) -> dict:
+async def _get_current_user(authorization: str | None) -> dict:
     if not authorization:
         raise HTTPException(
             status_code=401,
@@ -100,7 +90,7 @@ async def _get_current_firebase_user(authorization: str | None) -> dict:
             detail="Invalid authorization header format",
         )
 
-    decoded = await verify_firebase_token(token)
+    decoded = await verify_supabase_token(token)
     if not decoded:
         raise HTTPException(
             status_code=401,
@@ -137,7 +127,7 @@ async def _get_current_firebase_user(authorization: str | None) -> dict:
 async def get_my_account(
     authorization: str | None = Header(default=None),
 ) -> dict:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     account_uid = firebase_user.get("actor_uid") or firebase_user["uid"]
     firebase_email = (firebase_user.get("email") or "").strip().lower() or None
     async with get_db_connection() as connection:
@@ -166,7 +156,7 @@ async def update_my_account(
     body: PersonalInfoUpdate,
     authorization: str | None = Header(default=None),
 ) -> dict:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     account_uid = firebase_user.get("actor_uid") or firebase_user["uid"]
     async with get_db_connection() as connection:
         row = await connection.fetchrow(
@@ -196,7 +186,7 @@ async def delete_my_account(
     if body.confirmation.strip().upper() != "DELETE":
         raise HTTPException(status_code=400, detail="Type DELETE to confirm account deletion.")
 
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     if firebase_user.get("provider_staff"):
         account_uid = firebase_user.get("actor_uid")
     else:
@@ -243,116 +233,23 @@ async def delete_my_account(
             )
             await connection.execute("DELETE FROM users WHERE id=$1", user["id"])
 
-    supabase_deleted = True
-    if user["supabase_uid"]:
-        supabase_deleted = await delete_firebase_user(str(user["supabase_uid"]))
-    firebase_deleted = await delete_firebase_user(str(user["firebase_uid"]))
+    auth_user_id = user["supabase_uid"] or user["firebase_uid"]
+    supabase_deleted = await delete_supabase_user(str(auth_user_id))
     log.warning(
-        "User %s (%s) deleted their OnaNet account; Firebase deleted=%s",
+        "User %s (%s) deleted their OnaNet account; Supabase deleted=%s",
         user["email"],
         user["id"],
-        firebase_deleted,
+        supabase_deleted,
     )
     return {
         "deleted": True,
-        "firebase_deleted": firebase_deleted,
         "supabase_deleted": supabase_deleted,
     }
 
 
-@router.post('/signup', response_model=AuthResponse)
-async def sign_up(body: SignUpRequest):
-    email = body.email.strip().lower()
-    display_name_parts = [
-        part.strip() for part in [body.first_name, body.last_name] if part and part.strip()
-    ]
-    display_name = " ".join(display_name_parts) or None
-
-    log.info(f"Attempting to create Firebase user for email: {email}")
-    try:
-        firebase_uid = await create_firebase_user_rest(
-            email=email,
-            password=body.password,
-            display_name=display_name,
-        )
-        log.info(f"Successfully created Firebase user with UID: {firebase_uid}")
-    except Exception as exc:
-        error_msg = str(exc)
-        log.error(f"Error creating Firebase user: {error_msg}")
-        if "EMAIL_EXISTS" in error_msg:
-            raise HTTPException(status_code=400, detail="A user with that email already exists.")
-        raise HTTPException(status_code=500, detail=error_msg)
-
-    async with get_db_connection() as connection:
-        deleted = await connection.fetchval(
-            """
-            SELECT EXISTS(
-                SELECT 1 FROM admin_deleted_users
-                WHERE firebase_uid=$1 OR lower(email)=lower($2)
-            )
-            """,
-            firebase_uid,
-            email,
-        )
-        if deleted:
-            raise HTTPException(
-                status_code=403,
-                detail="This OnaNet account has been deleted.",
-            )
-        user_row = await connection.fetchrow(
-            "SELECT * FROM users WHERE firebase_uid = $1 OR email = $2",
-            firebase_uid,
-            email,
-        )
-        if not user_row:
-            log.info("Inserting new user into Supabase...")
-            try:
-                user_row = await connection.fetchrow(
-                    """
-                    INSERT INTO users (
-                        firebase_uid, email, first_name, last_name,
-                        auth_provider, role, is_profile_complete, is_phone_verified,
-                        is_email_verified
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-                    RETURNING *
-                    """,
-                    firebase_uid, email, body.first_name, body.last_name,
-                    'email', 'user', False, False, False,
-                )
-                log.info(f"User inserted into Supabase with ID: {user_row['id']}")
-            except Exception as exc:
-                log.error(f"DB insert failed: {exc}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"DB error: {str(exc)}")
-
-    if not user_row:
-        raise HTTPException(status_code=500, detail="Failed to create user in database.")
-
-    access_token = create_access_token(
-        data={'sub': str(user_row['id']), 'role': user_row['role']}
-    )
-    return AuthResponse(
-        access_token=access_token,
-        user={
-            'id': user_row['id'],
-            'firebase_uid': user_row['firebase_uid'],
-            'email': user_row['email'],
-            'first_name': user_row['first_name'],
-            'last_name': user_row['last_name'],
-            'phone_number': user_row['phone_number'],
-            'profile_image_url': user_row['profile_image_url'],
-            'auth_provider': user_row['auth_provider'],
-            'role': user_row['role'],
-            'is_email_verified': user_row['is_email_verified'],
-            'is_phone_verified': user_row['is_phone_verified'],
-            'is_profile_complete': user_row['is_profile_complete'],
-        },
-    )
-
-
 @router.post('/session', response_model=AuthResponse)
-@router.post('/firebase', response_model=AuthResponse, deprecated=True)
-async def firebase_auth(body: FirebaseTokenRequest, background_tasks: BackgroundTasks):
-    firebase_data = await verify_firebase_token(body.token)
+async def sync_auth_session(body: AuthTokenRequest, background_tasks: BackgroundTasks):
+    firebase_data = await verify_supabase_token(body.token)
 
     if not firebase_data:
         raise HTTPException(
@@ -371,9 +268,8 @@ async def firebase_auth(body: FirebaseTokenRequest, background_tasks: Background
             detail="Authenticated account has no email",
         )
 
-    firebase_info = firebase_data.get('firebase', {})
-    provider = firebase_info.get('sign_in_provider', 'email')
-    email_is_verified = bool(firebase_data.get('email_verified')) or provider == 'google.com'
+    provider = firebase_data.get('provider', 'email')
+    email_is_verified = bool(firebase_data.get('email_verified')) or provider == 'google'
 
     name_parts = name.strip().split(' ', 1)
     first_name = name_parts[0] if name_parts else None

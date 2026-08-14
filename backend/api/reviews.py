@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.db.session import get_db_connection
 
 router = APIRouter(prefix="/reviews", tags=["reviews"])
@@ -83,7 +83,7 @@ async def submit_review(
     body: ReviewCreate,
     authorization: str | None = Header(default=None),
 ) -> Any:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
 
     async with get_db_connection() as conn:
         async with conn.transaction():
@@ -169,7 +169,7 @@ async def submit_review(
 
 @router.get("/me", response_model=list[ReviewOut])
 async def my_reviews(authorization: str | None = Header(default=None)) -> list[Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     async with get_db_connection() as conn:
         rows = await conn.fetch(
             """
@@ -212,7 +212,7 @@ async def report_provider_or_review(
     body: ReportCreate,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     if body.target_type == "review" and body.review_id is None:
         raise HTTPException(status_code=400, detail="Select a review to report.")
     if body.target_type == "provider" and body.review_id is not None:

@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from backend.api.auth import _get_current_firebase_user
+from backend.api.auth import _get_current_user
 from backend.db.session import get_db_connection
 from backend.services.email_otp_service import (
     EmailOtpError,
@@ -51,7 +51,7 @@ async def start_verification(
     authorization: str | None = Header(default=None),
     otp_service: EmailOtpService = Depends(get_email_otp_service),
 ) -> StartResponse:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     try:
         result = await otp_service.start(user_id=await _user_id(firebase_user["uid"]))
     except EmailOtpRateLimited as exc:
@@ -69,7 +69,7 @@ async def verify_email(
     authorization: str | None = Header(default=None),
     otp_service: EmailOtpService = Depends(get_email_otp_service),
 ) -> dict[str, bool]:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     try:
         await otp_service.verify(
             user_id=await _user_id(firebase_user["uid"]),
@@ -87,7 +87,7 @@ async def verification_status(
     authorization: str | None = Header(default=None),
     otp_service: EmailOtpService = Depends(get_email_otp_service),
 ) -> StatusResponse:
-    firebase_user = await _get_current_firebase_user(authorization)
+    firebase_user = await _get_current_user(authorization)
     try:
         verified = await otp_service.is_verified(
             user_id=await _user_id(firebase_user["uid"])
