@@ -6,19 +6,17 @@ import 'package:ona_net/features/customer/presentation/home_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const _supabaseUrl = String.fromEnvironment(
+  'SUPABASE_URL',
+  defaultValue: 'https://yuisvhqfbmioxqghankl.supabase.co',
+);
 const _supabasePublishableKey = String.fromEnvironment(
   'SUPABASE_PUBLISHABLE_KEY',
+  defaultValue: 'sb_publishable_PRWOKp80WG8yt1rsWZQomA_RUcv6Siw',
 );
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (_supabaseUrl.isEmpty || _supabasePublishableKey.isEmpty) {
-    throw StateError(
-      'Missing Supabase configuration. Run Flutter with '
-      '--dart-define-from-file=supabase.local.json.',
-    );
-  }
   await Supabase.initialize(
     url: _supabaseUrl,
     publishableKey: _supabasePublishableKey,
