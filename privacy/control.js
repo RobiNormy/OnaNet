@@ -4,8 +4,10 @@ const API = 'https://api.onanet.app';
 const titles = {
   dashboard: 'Dashboard', verification: 'Verification queue', providers: 'Providers',
   users: 'Users', reports: 'Reports', packages: 'Packages', coverage: 'Coverage zones',
-  subscriptions: 'Subscriptions', invoices: 'Invoices',
+  subscriptions: 'Subscriptions', invoices: 'Invoices', revenue: 'Revenue',
 };
+const KES_PER_USD = 130;
+const PLAN_USD = { free: 0, growth: 3000 / KES_PER_USD, pro: 5000 / KES_PER_USD };
 const state = { supabase: null, session: null, data: {}, view: 'dashboard', search: '', selected: new Set() };
 
 const $ = (selector) => document.querySelector(selector);
@@ -14,6 +16,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => 
 const lower = (value) => String(value ?? '').toLowerCase();
 const date = (value) => value ? new Intl.DateTimeFormat('en-KE', { dateStyle: 'medium' }).format(new Date(value)) : '—';
 const money = (value) => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', maximumFractionDigits: 0 }).format(Number(value || 0));
+const usd = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
 const initials = (value) => String(value || 'OnaNet').split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 const safeUrl = (value) => { try { const url = new URL(String(value)); return ['http:', 'https:'].includes(url.protocol) ? url.href : '#'; } catch { return '#'; } };
 const list = (key) => Array.isArray(state.data[key]) ? state.data[key] : [];
@@ -96,7 +99,7 @@ function render() {
   $('#page-title').textContent = titles[state.view];
   $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === state.view));
   state.selected.clear();
-  const views = { dashboard: renderDashboard, verification: renderVerification, providers: renderProviders, users: renderUsers, reports: renderReports, packages: renderPackages, coverage: renderCoverage, subscriptions: renderSubscriptions, invoices: renderInvoices };
+  const views = { dashboard: renderDashboard, verification: renderVerification, providers: renderProviders, users: renderUsers, reports: renderReports, packages: renderPackages, coverage: renderCoverage, subscriptions: renderSubscriptions, invoices: renderInvoices, revenue: renderRevenue };
   $('#content').innerHTML = views[state.view]();
   bindViewActions();
 }
@@ -176,6 +179,46 @@ function renderSubscriptions() {
 function renderInvoices() {
   const query = lower(state.search); const rows = list('invoices').filter((i) => !query || lower(`${i.invoice_number} ${i.provider_name} ${i.status}`).includes(query));
   return `${pageIntro('Invoices', 'Track provider billing records and reminders.')}${toolbar('Search invoice or provider')}<div class="table-panel">${rows.length ? `<table class="data-table"><thead><tr><th>Invoice</th><th>Provider</th><th>Plan</th><th>Amount</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows.map((i) => `<tr><td><strong>${escapeHtml(i.invoice_number)}</strong><small>${escapeHtml(i.period || '')}</small></td><td>${escapeHtml(i.provider_name)}</td><td>${status(i.plan)}</td><td>${money(i.amount)}</td><td>${date(i.due_date)}</td><td>${status(i.status)}</td><td><div class="row-actions">${i.status !== 'paid' ? `<button class="action-link" data-action="invoice-paid" data-id="${i.id}">Mark paid</button><button class="action-link" data-action="invoice-remind" data-id="${i.id}">Remind</button>` : ''}</div></td></tr>`).join('')}</tbody></table>` : emptyState('No matching invoices.')}</div>`;
+}
+
+function renderRevenue() {
+  const providers = list('providers');
+  const invoices = list('invoices');
+  const paidProviders = providers.filter((provider) => ['growth', 'pro'].includes(lower(provider.subscription_tier)));
+  const mrr = paidProviders.reduce((total, provider) => total + (PLAN_USD[lower(provider.subscription_tier)] || 0), 0);
+  const arr = mrr * 12;
+  const collectedKes = invoices.filter((invoice) => lower(invoice.status) === 'paid').reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const collectedUsd = collectedKes / KES_PER_USD;
+  const planData = ['free', 'growth', 'pro'].map((plan) => {
+    const count = providers.filter((provider) => lower(provider.subscription_tier) === plan).length;
+    return { plan, count, revenue: count * PLAN_USD[plan] };
+  });
+  const maxRevenue = Math.max(...planData.map((item) => item.revenue), 1);
+  const typeTotals = {};
+  paidProviders.forEach((provider) => {
+    const type = provider.provider_type || 'local_provider';
+    typeTotals[type] = (typeTotals[type] || 0) + (PLAN_USD[lower(provider.subscription_tier)] || 0);
+  });
+  const recentPaid = invoices.filter((invoice) => lower(invoice.status) === 'paid').slice(0, 7);
+  return `${pageIntro('Revenue', 'Recurring revenue and collections shown in US dollars.')}
+    <div class="revenue-note"><strong>Current reporting basis:</strong> MRR and ARR are estimates derived from active provider plan assignments using Growth at ${usd(PLAN_USD.growth)} and Pro at ${usd(PLAN_USD.pro)} per month (KES converted at ${KES_PER_USD}:1). Collected revenue uses paid invoice records. Google Play Billing transaction data will replace these estimates when its server notifications are connected.</div>
+    <div class="stats-grid">
+      ${statCard('Estimated MRR', usd(mrr), `${paidProviders.length} paid providers`)}
+      ${statCard('Estimated ARR', usd(arr), 'MRR × 12 months')}
+      ${statCard('Collected revenue', usd(collectedUsd), `${invoices.filter((i) => lower(i.status) === 'paid').length} paid invoices`)}
+      ${statCard('Average revenue', usd(paidProviders.length ? mrr / paidProviders.length : 0), 'per paid provider / month')}
+    </div>
+    <div class="revenue-grid">
+      <section class="panel"><div class="panel-head"><div><h3>Monthly recurring revenue by plan</h3><p>Current active plan assignments</p></div><strong>${usd(mrr)} MRR</strong></div><div class="panel-body plan-bars">
+        ${planData.map((item) => `<div><div class="plan-bar-head"><span>${escapeHtml(item.plan[0].toUpperCase() + item.plan.slice(1))} · ${item.count} providers</span><strong>${usd(item.revenue)}</strong></div><progress class="plan-progress" max="100" value="${Math.max(item.revenue / maxRevenue * 100, item.count ? 3 : 0).toFixed(1)}">${usd(item.revenue)}</progress></div>`).join('')}
+      </div></section>
+      <section class="panel"><div class="panel-head"><div><h3>Revenue by provider type</h3><p>Estimated monthly contribution</p></div></div><div class="panel-body revenue-list">
+        ${Object.keys(typeTotals).length ? Object.entries(typeTotals).sort((a, b) => b[1] - a[1]).map(([type, value]) => `<div class="revenue-row"><div><strong>${escapeHtml(type.replaceAll('_', ' '))}</strong><small>${providers.filter((p) => p.provider_type === type && ['growth', 'pro'].includes(lower(p.subscription_tier))).length} paid providers</small></div><strong>${usd(value)}</strong></div>`).join('') : emptyState('Paid-provider revenue will appear here.')}
+      </div></section>
+    </div>
+    <section class="panel revenue-recent"><div class="panel-head"><div><h3>Recent collected invoices</h3><p>Paid billing records converted to USD</p></div><strong>${usd(collectedUsd)} total</strong></div><div class="panel-body revenue-list">
+      ${recentPaid.length ? recentPaid.map((invoice) => `<div class="revenue-row"><div><strong>${escapeHtml(invoice.provider_name)}</strong><small>${escapeHtml(invoice.invoice_number)} · ${date(invoice.created_at)}</small></div><strong>${usd(Number(invoice.amount || 0) / KES_PER_USD)}</strong></div>`).join('') : emptyState('No paid invoices have been recorded yet.')}
+    </div></section>`;
 }
 
 function bindViewActions() {
