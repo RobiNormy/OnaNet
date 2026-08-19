@@ -2771,8 +2771,8 @@ IconData _docIcon(String type) => type.contains('photo')
     ? Icons.badge_outlined
     : Icons.description_outlined;
 double _planPrice(String plan) => switch (plan.toLowerCase()) {
-  'growth' => 3000,
-  'pro' => 5000,
+  'growth' => 1500,
+  'pro' => 2500,
   _ => 0,
 };
 List<Json> _list(dynamic value) => value is List

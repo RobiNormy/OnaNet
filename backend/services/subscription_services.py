@@ -18,8 +18,8 @@ class Tier(str, Enum):
 
 TIER_LIMITS: dict[str, dict[str, Any]] = {
     Tier.FREE.value: {
-        "max_packages": 10,
-        "max_coverage_areas": 3,
+        "max_packages": 2,
+        "max_coverage_areas": 1,
         "max_photos": 0,
         "featured_in_search": False,
         "demand_intelligence_enabled": False,
@@ -34,14 +34,14 @@ TIER_LIMITS: dict[str, dict[str, Any]] = {
         "max_staff_accounts": 1,
     },
     Tier.GROWTH.value: {
-        "max_packages": 10,
+        "max_packages": 5,
         "max_coverage_areas": 5,
         "max_photos": 3,
         "featured_in_search": "mid",
         "demand_intelligence_enabled": False,
         "in_app_alerts": True,
         "own_stats": True,
-        "push_request_alerts": True,
+        "push_request_alerts": False,
         "external_alerts": False,
         "priority_inbox": False,
         "auto_request_reminders": False,

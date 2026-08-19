@@ -7,7 +7,7 @@ const titles = {
   subscriptions: 'Subscriptions', invoices: 'Invoices', revenue: 'Revenue',
 };
 const KES_PER_USD = 130;
-const PLAN_USD = { free: 0, growth: 3000 / KES_PER_USD, pro: 5000 / KES_PER_USD };
+const PLAN_USD = { free: 0, growth: 1500 / KES_PER_USD, pro: 2500 / KES_PER_USD };
 const state = { supabase: null, session: null, data: {}, view: 'dashboard', search: '', selected: new Set() };
 
 const $ = (selector) => document.querySelector(selector);

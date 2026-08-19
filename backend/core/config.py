@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     PAYSTACK_PRO_PLAN_CODE: str | None = None
     PAYSTACK_GROWTH_KEY: str | None = None
     PAYSTACK_PRO_KEY: str | None = None
-    PAYSTACK_GROWTH_AMOUNT_KES: int = 3000
-    PAYSTACK_PRO_AMOUNT_KES: int = 5000
+    PAYSTACK_GROWTH_AMOUNT_KES: int = 1500
+    PAYSTACK_PRO_AMOUNT_KES: int = 2500
 
     RESEND_API_KEY: str | None = None
     RESEND_WEBHOOK_SECRET: str | None = None

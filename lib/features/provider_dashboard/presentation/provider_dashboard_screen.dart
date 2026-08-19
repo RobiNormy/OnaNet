@@ -1402,6 +1402,12 @@ class _SubscriptionPlanSelectorState extends State<_SubscriptionPlanSelector> {
   static const _tiers = ['free', 'growth', 'pro'];
   late String _selectedTier = widget.currentTier;
 
+  String get _tagline => switch (_selectedTier) {
+    'growth' => 'Get set up and visible',
+    'pro' => 'Scale and never miss a lead',
+    _ => 'Start receiving requests',
+  };
+
   @override
   void didUpdateWidget(covariant _SubscriptionPlanSelector oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -1412,33 +1418,31 @@ class _SubscriptionPlanSelectorState extends State<_SubscriptionPlanSelector> {
 
   List<String> get _perks => switch (_selectedTier) {
     'growth' => const [
-      'Requests appear in your in-app inbox',
-      'Instant push alert for every new request',
-      'Up to 10 internet packages',
+      'Up to 5 internet packages',
       'Up to 5 coverage areas',
-      '3 provider profile photos',
       'Up to 3 staff accounts',
-      'Your own performance statistics',
+      'Mid-level placement in search',
+      'In-app request alerts',
+      'Basic performance statistics',
+      '3 provider profile photos',
     ],
     'pro' => const [
-      'Requests appear in your in-app inbox',
-      'Instant push alert for every new request',
-      'Email and SMS request alerts',
-      'Priority request inbox',
-      'Automatic reminder for unanswered requests',
-      'Expanded package capacity',
+      'Unlimited internet packages',
       'Unlimited coverage areas',
-      '6 provider profile photos',
+      'Unlimited staff accounts',
       'Pinned placement in search',
+      'Priority request inbox with push, email and SMS alerts',
+      'Automatic reminder for unanswered requests',
       'Advanced analytics and demand intelligence',
-      'Custom cover and expanded staff access',
+      'Custom provider cover',
+      '6 provider profile photos',
     ],
     _ => const [
       'Requests appear in your in-app inbox',
       'No push, email or SMS request alerts',
-      'Up to 10 internet packages',
-      'Up to 3 coverage areas',
-      'Your own performance statistics',
+      'Up to 2 internet packages',
+      '1 coverage area',
+      'Basic performance statistics',
       '1 staff account',
     ],
   };
@@ -1518,7 +1522,21 @@ class _SubscriptionPlanSelectorState extends State<_SubscriptionPlanSelector> {
               );
             }).toList(),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 18),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            child: Text(
+              _tagline,
+              key: ValueKey('tagline-$_selectedTier'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppTheme.offWhite,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 180),
             child: Column(
@@ -1570,7 +1588,7 @@ class _SubscriptionPlanSelectorState extends State<_SubscriptionPlanSelector> {
                           ),
                         ),
                         TextSpan(
-                          text: _selectedTier == 'growth' ? '3,000' : '5,000',
+                          text: _selectedTier == 'growth' ? '1,500' : '2,500',
                           style: GoogleFonts.plusJakartaSans(
                             color: AppTheme.amberLight,
                             fontSize: 48,
