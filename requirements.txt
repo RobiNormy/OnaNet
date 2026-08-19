@@ -1,5 +1,6 @@
 asyncpg
 fastapi
+google-auth
 email-validator
 httpx
 pydantic-settings

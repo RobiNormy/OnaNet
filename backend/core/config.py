@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     RESEND_SUPPORT_FROM_EMAIL: str = "OnaNet Support <support@mail.onanet.app>"
     RESEND_REPLY_TO: str | None = "support@mail.onanet.app"
 
-    PUSH_RELAY_URL: str | None = None
-    PUSH_RELAY_SECRET: str | None = None
+    FCM_SERVICE_ACCOUNT_JSON: str | None = None
+    FCM_TARGET_PROJECT_ID: str | None = None
     NOTIFICATION_WORKER_SECRET: str | None = None
     PRO_SMS_ALERTS_ENABLED: bool = False
 

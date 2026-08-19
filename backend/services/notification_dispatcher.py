@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from html import escape
 from typing import Any
 from uuid import UUID
 
 import httpx
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import service_account
 
 from backend.core.config import settings
 from backend.db.session import get_db_connection
@@ -16,6 +19,9 @@ from backend.services.subscription_services import get_provider_tier
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
+FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
+_fcm_credentials: service_account.Credentials | None = None
+_fcm_credentials_lock = asyncio.Lock()
 
 
 class NotificationChannelNotConfigured(RuntimeError):
@@ -222,10 +228,9 @@ async def _send_email(job: Any, context: Any) -> None:
 
 
 async def _send_push(job: Any, context: Any) -> None:
-    relay_url = (settings.PUSH_RELAY_URL or "").strip()
-    relay_secret = (settings.PUSH_RELAY_SECRET or "").strip()
-    if not relay_url or not relay_secret:
-        raise NotificationChannelNotConfigured("Push relay is not configured")
+    target_project = (settings.FCM_TARGET_PROJECT_ID or "").strip()
+    if not target_project or not (settings.FCM_SERVICE_ACCOUNT_JSON or "").strip():
+        raise NotificationChannelNotConfigured("Direct FCM is not configured")
 
     async with get_db_connection() as db:
         rows = await db.fetch(
@@ -248,33 +253,78 @@ async def _send_push(job: Any, context: Any) -> None:
     if not tokens:
         return
     title, body = _copy(job["kind"], str(context["package_name"]))
+    access_token = await _fcm_access_token()
+    endpoint = (
+        f"https://fcm.googleapis.com/v1/projects/{target_project}/messages:send"
+    )
+    invalid_tokens: list[str] = []
     async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(
-            relay_url,
-            headers={"X-OnaNet-Push-Secret": relay_secret},
-            json={
-                "tokens": tokens,
-                "title": title,
-                "body": body,
-                "data": {
-                    "route": "/provider/installation-requests",
-                    "request_id": str(context["id"]),
+        for token in tokens:
+            response = await client.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={
+                    "message": {
+                        "token": token,
+                        "notification": {"title": title, "body": body},
+                        "data": {
+                            "route": "/provider/installation-requests",
+                            "request_id": str(context["id"]),
+                        },
+                        "android": {
+                            "priority": "high",
+                            "notification": {"channel_id": "onanet_updates"},
+                        },
+                    }
                 },
-            },
-        )
-        response.raise_for_status()
-        result = response.json()
-        invalid_tokens = result.get("invalid_tokens", [])
-        if isinstance(invalid_tokens, list) and invalid_tokens:
-            async with get_db_connection() as db:
-                await db.execute(
-                    """
-                    UPDATE push_notification_devices
-                    SET enabled=false, updated_at=now()
-                    WHERE token=ANY($1::text[])
-                    """,
-                    [str(token) for token in invalid_tokens],
-                )
+            )
+            if response.status_code < 400:
+                continue
+            error_body = response.text
+            if response.status_code in {400, 404} and any(
+                marker in error_body
+                for marker in ("UNREGISTERED", "INVALID_ARGUMENT")
+            ):
+                invalid_tokens.append(token)
+                continue
+            response.raise_for_status()
+
+    if invalid_tokens:
+        async with get_db_connection() as db:
+            await db.execute(
+                """
+                UPDATE push_notification_devices
+                SET enabled=false, updated_at=now()
+                WHERE token=ANY($1::text[])
+                """,
+                invalid_tokens,
+            )
+
+
+async def _fcm_access_token() -> str:
+    global _fcm_credentials
+    async with _fcm_credentials_lock:
+        if _fcm_credentials is None:
+            raw_credentials = (settings.FCM_SERVICE_ACCOUNT_JSON or "").strip()
+            try:
+                credentials_info = json.loads(raw_credentials)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise NotificationChannelNotConfigured(
+                    "FCM service-account JSON is invalid"
+                ) from exc
+            _fcm_credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=[FCM_SCOPE],
+            )
+
+        if not _fcm_credentials.valid:
+            await asyncio.to_thread(
+                _fcm_credentials.refresh,
+                GoogleAuthRequest(),
+            )
+        if not _fcm_credentials.token:
+            raise RuntimeError("Google did not return an FCM access token")
+        return _fcm_credentials.token
 
 
 async def _finish(job_id: UUID, status: str) -> None:
