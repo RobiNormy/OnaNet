@@ -341,9 +341,37 @@ async function execute(run, success) {
 function toast(message, error = false) { const item = document.createElement('div'); item.className = `toast${error ? ' error' : ''}`; item.textContent = message; $('#toast-stack').append(item); setTimeout(() => item.remove(), 4300); }
 function setView(view) { state.view = view; state.search = ''; $('#sidebar').classList.remove('open'); render(); }
 
-async function signOut(confirm = true) {
-  if (confirm && !window.confirm('Sign out of OnaNet Control?')) return;
-  await state.supabase.auth.signOut(); state.session = null; state.data = {}; $('#app-shell').hidden = true; $('#auth-shell').hidden = false;
+async function signOut(askForConfirmation = true) {
+  if (askForConfirmation) {
+    openModal({
+      kicker: 'Secure session',
+      title: 'Sign out of OnaNet Control?',
+      description: 'Your administrator session will end on this device. You can sign in again at any time.',
+      confirm: 'Sign out',
+      onConfirm: async () => {
+        const button = $('#modal-confirm');
+        setButtonBusy(button, true, 'Signing out…');
+        $('#modal-cancel').disabled = true;
+        $('#modal-close').disabled = true;
+        try {
+          await signOut(false);
+          closeModal();
+        } catch (error) {
+          modalError(error.message || 'Could not sign out. Try again.');
+        } finally {
+          setButtonBusy(button, false);
+          $('#modal-cancel').disabled = false;
+          $('#modal-close').disabled = false;
+        }
+      },
+    });
+    return;
+  }
+  await state.supabase.auth.signOut();
+  state.session = null;
+  state.data = {};
+  $('#app-shell').hidden = true;
+  $('#auth-shell').hidden = false;
 }
 
 $('#login-form').addEventListener('submit', async (event) => {
