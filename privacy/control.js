@@ -8,7 +8,7 @@ const titles = {
 };
 const KES_PER_USD = 130;
 const PLAN_USD = { free: 0, growth: 1500 / KES_PER_USD, pro: 2500 / KES_PER_USD };
-const state = { supabase: null, session: null, data: {}, view: 'dashboard', search: '', selected: new Set() };
+const state = { supabase: null, session: null, data: {}, view: 'dashboard', search: '', selected: new Set(), providerDetailId: null };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -156,9 +156,45 @@ function toolbar(placeholder, filters = '') {
 
 function renderVerification() {
   const query = lower(state.search);
-  const docs = list('documents').filter((doc) => !query || lower(`${doc.provider_name} ${doc.document_type} ${doc.owner_email}`).includes(query));
-  return `${pageIntro('Verification queue', 'Inspect provider documents and make a clear approval decision.')}${toolbar('Search provider, owner or document')}
-    <div class="table-panel">${docs.length ? `<table class="data-table"><thead><tr><th>Provider</th><th>Document</th><th>Government check</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead><tbody>${docs.map((doc) => `<tr><td><strong>${escapeHtml(doc.provider_name)}</strong><small>${escapeHtml(doc.owner_email)}</small></td><td><strong>${escapeHtml(doc.document_type)}</strong><small><a class="document-link" href="${escapeHtml(safeUrl(doc.file_url))}" target="_blank" rel="noopener">Open secure document ↗</a></small></td><td>${kraCheckSummary(doc)}</td><td>${date(doc.created_at)}</td><td>${status(doc.status)}</td><td><div class="row-actions">${doc.document_type === 'kra_pin' ? `<button class="action-link" data-action="check-kra-pin" data-id="${doc.id}" data-name="${escapeHtml(doc.provider_name)}">Check KRA PIN</button>` : ''}<button class="action-link" data-action="approve-document" data-id="${doc.id}">Approve</button><button class="action-link danger" data-action="reject-provider" data-provider="${doc.provider_id}" data-name="${escapeHtml(doc.provider_name)}">Reject with reason</button></div></td></tr>`).join('')}</tbody></table>` : emptyState('No matching verification documents.')}</div>`;
+  const selectedProvider = list('providers').find((provider) => provider.id === state.providerDetailId);
+  if (selectedProvider) return renderProviderRecord(selectedProvider);
+
+  const providers = list('providers').filter((provider) => {
+    const documents = providerDocuments(provider.id);
+    const searchable = `${provider.provider_name} ${provider.business_name} ${provider.email} ${provider.primary_city} ${documents.map((doc) => doc.document_type).join(' ')}`;
+    return !query || lower(searchable).includes(query);
+  });
+  return `${pageIntro('Provider verification', 'Choose a provider to review their complete submission in one place.')}${toolbar('Search provider, owner or document')}
+    <div class="table-panel">${providers.length ? `<table class="data-table provider-list-table"><thead><tr><th>Provider</th><th>Documents</th><th>Packages</th><th>Coverage</th><th>Plan</th><th>Verification</th><th></th></tr></thead><tbody>${providers.map((provider) => {
+      const documents = providerDocuments(provider.id);
+      const pending = documents.filter((doc) => lower(doc.status) === 'pending').length;
+      return `<tr class="provider-list-row" data-open-provider="${provider.id}" tabindex="0"><td><div class="provider-identity"><span class="mini-avatar">${escapeHtml(initials(provider.provider_name))}</span><div><strong>${escapeHtml(provider.provider_name)}</strong><small>${escapeHtml(provider.email)}</small></div></div></td><td><strong>${documents.length}</strong><small>${pending ? `${pending} pending` : 'No pending files'}</small></td><td>${provider.package_count || 0}</td><td>${provider.coverage_count || 0}</td><td>${status(provider.subscription_tier)}</td><td>${status(provider.is_verified ? 'verified' : documents.length ? 'pending' : 'not submitted')}</td><td><button class="action-link" data-open-provider="${provider.id}">Open record →</button></td></tr>`;
+    }).join('')}</tbody></table>` : emptyState('No matching providers.')}</div>`;
+}
+
+function providerDocuments(providerId) { return list('documents').filter((item) => item.provider_id === providerId); }
+function providerPackages(providerId) { return list('packages').filter((item) => item.provider_id === providerId); }
+function providerCoverage(providerId) { return list('coverage_zones').filter((item) => item.provider_id === providerId); }
+
+function renderProviderRecord(provider) {
+  const documents = providerDocuments(provider.id);
+  const packages = providerPackages(provider.id);
+  const coverage = providerCoverage(provider.id);
+  const pending = documents.filter((doc) => lower(doc.status) === 'pending').length;
+  return `<button class="provider-back action-link" data-provider-back>← All providers</button>
+    ${pageIntro(provider.provider_name, 'One provider record with verification files, packages and coverage grouped together.', `<div class="row-actions">${provider.is_verified ? '' : `<button class="primary-button compact" data-action="approve-provider" data-id="${provider.id}" data-name="${escapeHtml(provider.provider_name)}">Verify provider</button>`}<button class="action-link danger" data-action="reject-provider" data-provider="${provider.id}" data-name="${escapeHtml(provider.provider_name)}">Reject with reason</button></div>`)}
+    <section class="provider-record-head"><div class="provider-record-avatar">${escapeHtml(initials(provider.provider_name))}</div><div class="provider-record-copy"><span class="eyebrow">Provider account</span><h3>${escapeHtml(provider.business_name || provider.provider_name)}</h3><p>${escapeHtml(provider.email)} · ${escapeHtml(provider.primary_city || 'Location pending')}</p><div class="record-badges">${status(provider.subscription_tier)} ${status(provider.status)} ${status(provider.is_verified ? 'verified' : 'pending')}</div></div></section>
+    <div class="provider-summary-grid">
+      ${statCard('Documents', documents.length, pending ? `${pending} awaiting review` : 'No pending files')}
+      ${statCard('Packages', packages.length, 'Owned by this provider')}
+      ${statCard('Coverage areas', coverage.length, 'Owned by this provider')}
+      ${statCard('Registered', date(provider.created_at), provider.owner_name || 'Provider owner')}
+    </div>
+    <div class="provider-record-sections">
+      <section class="panel"><div class="panel-head"><div><h3>Verification documents</h3><p>Secure files submitted by ${escapeHtml(provider.provider_name)}</p></div></div><div class="table-panel embedded">${documents.length ? `<table class="data-table"><thead><tr><th>Document</th><th>Government check</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead><tbody>${documents.map((doc) => `<tr><td><strong>${escapeHtml(doc.document_type.replaceAll('_', ' '))}</strong><small><a class="document-link" href="${escapeHtml(safeUrl(doc.file_url))}" target="_blank" rel="noopener">Open secure document ↗</a></small></td><td>${kraCheckSummary(doc)}</td><td>${date(doc.created_at)}</td><td>${status(doc.status)}</td><td><div class="row-actions">${doc.document_type === 'kra_pin' ? `<button class="action-link" data-action="check-kra-pin" data-id="${doc.id}" data-name="${escapeHtml(provider.provider_name)}">Check KRA PIN</button>` : ''}${lower(doc.status) !== 'approved' ? `<button class="action-link" data-action="approve-document" data-id="${doc.id}">Approve</button>` : ''}</div></td></tr>`).join('')}</tbody></table>` : emptyState('This provider has not submitted documents yet.')}</div></section>
+      <section class="panel"><div class="panel-head"><div><h3>Internet packages</h3><p>Packages belonging to this provider</p></div><strong>${packages.length}</strong></div><div class="table-panel embedded">${packages.length ? `<table class="data-table"><thead><tr><th>Package</th><th>Speed</th><th>Price</th><th>Status</th></tr></thead><tbody>${packages.map((item) => `<tr><td><strong>${escapeHtml(item.package_name || item.name || 'Package')}</strong></td><td>${escapeHtml(item.speed || (item.speed_mbps ? `${item.speed_mbps} Mbps` : '—'))}</td><td>${money(item.price || item.monthly_price)}</td><td>${status(item.is_available === false ? 'unavailable' : 'available')}</td></tr>`).join('')}</tbody></table>` : emptyState('This provider has no packages yet.')}</div></section>
+      <section class="panel"><div class="panel-head"><div><h3>Coverage areas</h3><p>Areas belonging to this provider</p></div><strong>${coverage.length}</strong></div><div class="table-panel embedded">${coverage.length ? `<table class="data-table"><thead><tr><th>Area</th><th>City / county</th><th>Radius</th><th>Coordinates</th></tr></thead><tbody>${coverage.map((area) => `<tr><td><strong>${escapeHtml(area.area_name)}</strong></td><td>${escapeHtml(area.city || area.county || '—')}</td><td>${escapeHtml(area.radius_km ? `${area.radius_km} km` : '—')}</td><td><small>${escapeHtml(area.latitude ?? '—')}, ${escapeHtml(area.longitude ?? '—')}</small></td></tr>`).join('')}</tbody></table>` : emptyState('This provider has no coverage areas yet.')}</div></section>
+    </div>`;
 }
 
 function kraCheckSummary(doc) {
@@ -172,7 +208,7 @@ function renderProviders() {
   const query = lower(state.search);
   const rows = list('providers').filter((p) => !query || lower(`${p.provider_name} ${p.business_name} ${p.email} ${p.primary_city}`).includes(query));
   return `${pageIntro('Providers', 'Moderate provider businesses, verification and account status.')}${toolbar('Search providers')}
-    <div class="table-panel">${rows.length ? `<table class="data-table"><thead><tr><th>Provider</th><th>Location</th><th>Plan</th><th>Network</th><th>Verification</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows.map((p) => `<tr><td><strong>${escapeHtml(p.provider_name)}</strong><small>${escapeHtml(p.email)}</small></td><td>${escapeHtml(p.primary_city || '—')}</td><td>${status(p.subscription_tier)}</td><td>${p.package_count} packages<small>${p.coverage_count} coverage zones</small></td><td>${status(p.is_verified ? 'verified' : 'pending')}</td><td>${status(p.status)}</td><td><div class="row-actions">${p.is_verified ? '' : `<button class="action-link" data-action="approve-provider" data-id="${p.id}" data-name="${escapeHtml(p.provider_name)}">Verify</button>`}<button class="action-link" data-action="moderate-provider" data-id="${p.id}" data-name="${escapeHtml(p.provider_name)}">Moderate</button></div></td></tr>`).join('')}</tbody></table>` : emptyState('No matching providers.')}</div>`;
+    <div class="table-panel">${rows.length ? `<table class="data-table"><thead><tr><th>Provider</th><th>Location</th><th>Plan</th><th>Network</th><th>Verification</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows.map((p) => `<tr><td><strong>${escapeHtml(p.provider_name)}</strong><small>${escapeHtml(p.email)}</small></td><td>${escapeHtml(p.primary_city || '—')}</td><td>${status(p.subscription_tier)}</td><td>${p.package_count} packages<small>${p.coverage_count} coverage zones</small></td><td>${status(p.is_verified ? 'verified' : 'pending')}</td><td>${status(p.status)}</td><td><div class="row-actions"><button class="action-link" data-open-provider="${p.id}">View record</button>${p.is_verified ? '' : `<button class="action-link" data-action="approve-provider" data-id="${p.id}" data-name="${escapeHtml(p.provider_name)}">Verify</button>`}<button class="action-link" data-action="moderate-provider" data-id="${p.id}" data-name="${escapeHtml(p.provider_name)}">Moderate</button></div></td></tr>`).join('')}</tbody></table>` : emptyState('No matching providers.')}</div>`;
 }
 
 function renderUsers() {
@@ -252,6 +288,18 @@ function renderRevenue() {
 function bindViewActions() {
   $('[data-view-search]')?.addEventListener('input', (event) => { state.search = event.target.value; render(); requestAnimationFrame(() => $('[data-view-search]')?.focus()); });
   $$('[data-go]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.go)));
+  $$('button[data-open-provider]').forEach((element) => element.addEventListener('click', (event) => {
+    event.stopPropagation();
+    state.providerDetailId = element.dataset.openProvider;
+    state.view = 'verification';
+    state.search = '';
+    render();
+  }));
+  $$('tr[data-open-provider]').forEach((row) => {
+    row.addEventListener('click', () => { state.providerDetailId = row.dataset.openProvider; render(); });
+    row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); state.providerDetailId = row.dataset.openProvider; render(); } });
+  });
+  $('[data-provider-back]')?.addEventListener('click', () => { state.providerDetailId = null; render(); });
   $$('[data-select-user]').forEach((box) => box.addEventListener('change', () => { box.checked ? state.selected.add(box.value) : state.selected.delete(box.value); updateBulkBar(); }));
   $$('[data-action]').forEach((button) => button.addEventListener('click', () => handleAction(button)));
   $$('[data-bulk]').forEach((button) => button.addEventListener('click', () => handleBulk(button.dataset.bulk)));
@@ -339,7 +387,7 @@ async function execute(run, success) {
 }
 
 function toast(message, error = false) { const item = document.createElement('div'); item.className = `toast${error ? ' error' : ''}`; item.textContent = message; $('#toast-stack').append(item); setTimeout(() => item.remove(), 4300); }
-function setView(view) { state.view = view; state.search = ''; $('#sidebar').classList.remove('open'); render(); }
+function setView(view) { state.view = view; state.search = ''; state.providerDetailId = null; $('#sidebar').classList.remove('open'); render(); }
 
 async function signOut(askForConfirmation = true) {
   if (askForConfirmation) {

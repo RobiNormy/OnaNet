@@ -141,6 +141,21 @@ button:disabled { cursor: wait; opacity: .72; }
 .data-table strong { display: block; max-width: 230px; color: var(--navy-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .data-table small { display: block; max-width: 240px; margin-top: 3px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.provider-list-row { cursor: pointer; }
+.provider-list-row:hover { background: #f5fafc; }
+.provider-list-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+.provider-identity { display: flex; align-items: center; gap: 10px; min-width: 190px; }
+.provider-back { margin-bottom: 13px; }
+.provider-record-head { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: linear-gradient(135deg, #ffffff, #f2fafc); }
+.provider-record-avatar { display: grid; flex: 0 0 56px; width: 56px; height: 56px; place-items: center; border-radius: 15px; color: white; background: var(--navy-900); font-size: 17px; font-weight: 900; }
+.provider-record-copy { min-width: 0; }
+.provider-record-copy h3 { margin: 2px 0 4px; color: var(--navy-900); font-size: 18px; }
+.provider-record-copy p { margin: 0; color: var(--muted); font-size: 11px; }
+.record-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.provider-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin-bottom: 16px; }
+.provider-record-sections { display: grid; gap: 16px; }
+.table-panel.embedded { border: 0; border-radius: 0; box-shadow: none; }
+.primary-button.compact { min-height: 34px; padding: 7px 11px; font-size: 10px; }
 .action-link { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--navy-800); background: white; font-size: 9.5px; font-weight: 800; }
 .action-link:hover { border-color: #9ccfdc; background: #f2fbfd; }
 .action-link.danger { color: #a51e1e; border-color: #f0c7c7; }
@@ -213,6 +228,8 @@ button:disabled { cursor: wait; opacity: .72; }
   .topbar { padding: 12px 16px; }
   .global-search { display: none; }
   .content { padding: 19px 14px 55px; }
+  .provider-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .provider-record-head { align-items: flex-start; }
 }
 @media (max-width: 560px) {
   .stats-grid { grid-template-columns: 1fr 1fr; gap: 9px; }
