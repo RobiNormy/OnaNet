@@ -1,7 +1,9 @@
+import asyncio
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from contextlib import asynccontextmanager
 from backend.api.auth import ensure_auth_schema, router as auth_router
 from backend.api.provider import router as provider_router
 from backend.api.subscription import router as subscription_router
@@ -31,6 +33,10 @@ from backend.api.notifications import (
     ensure_notification_schema,
     router as notifications_router,
 )
+from backend.services.notification_dispatcher import (
+    recover_stale_notification_jobs,
+    run_notification_worker,
+)
 from backend.services.provider_access import provider_staff_access_middleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,8 +52,15 @@ async def lifespan(app: FastAPI):
     await ensure_email_otp_schema()
     await ensure_resend_webhook_schema()
     await ensure_notification_schema()
-    yield
-    await close_db_pool()
+    await recover_stale_notification_jobs()
+    notification_worker = asyncio.create_task(run_notification_worker())
+    try:
+        yield
+    finally:
+        notification_worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await notification_worker
+        await close_db_pool()
 
 app = FastAPI(
     title="OnaNet API",

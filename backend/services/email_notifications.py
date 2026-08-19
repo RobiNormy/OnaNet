@@ -261,13 +261,11 @@ async def send_installation_created_emails(request_id: UUID) -> None:
         row = await db.fetchrow(
             """
             SELECT customer.email AS customer_email,
-                   owner.email AS provider_email,
                    p.provider_name,
                    pkg.package_name
             FROM installation_requests ir
             JOIN users customer ON customer.id = ir.user_id
             JOIN providers p ON p.id = ir.provider_id
-            JOIN users owner ON owner.id = p.user_id
             JOIN provider_packages pkg ON pkg.id = ir.package_id
             WHERE ir.id = $1
             """,
@@ -288,17 +286,6 @@ async def send_installation_created_emails(request_id: UUID) -> None:
         text=f"Your request for {package_name} from {provider_name} was submitted.",
         tags={"category": "installation_created"},
         idempotency_key=f"installation-customer-{request_id}",
-    )
-    await _deliver(
-        to=str(row["provider_email"]),
-        subject="New installation request on OnaNet",
-        html=(
-            f"<h1>New installation request</h1><p>A customer requested "
-            f"<strong>{escape(package_name)}</strong>.</p>"
-        ),
-        text=f"A customer requested {package_name} from {provider_name}.",
-        tags={"category": "installation_provider"},
-        idempotency_key=f"installation-provider-{request_id}",
     )
 
 

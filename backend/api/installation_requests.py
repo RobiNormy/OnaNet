@@ -27,6 +27,9 @@ from backend.services.email_notifications import (
     send_installation_created_emails,
     send_installation_status_email,
 )
+from backend.services.notification_dispatcher import (
+    enqueue_installation_request_notifications,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +138,10 @@ async def create_installation_request(
         ) from exc
     
     background_tasks.add_task(send_installation_created_emails, result.id)
+    background_tasks.add_task(
+        enqueue_installation_request_notifications,
+        result.id,
+    )
     return _result_to_response(result)
 
 @router.get("/me",response_model=list[InstallationRequestOut])
