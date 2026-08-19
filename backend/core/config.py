@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
     GEOAPIFY_API_KEY: str | None = None
 
+    GAVACONNECT_CONSUMER_KEY: str | None = None
+    GAVACONNECT_CONSUMER_SECRET: str | None = None
+    GAVACONNECT_ENV: str = "sandbox"
+
     SMS_PROVIDER: str = "console"
     DEV_OTP: str | None = None
     AT_USERNAME: str | None = None

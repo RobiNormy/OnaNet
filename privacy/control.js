@@ -137,7 +137,14 @@ function renderVerification() {
   const query = lower(state.search);
   const docs = list('documents').filter((doc) => !query || lower(`${doc.provider_name} ${doc.document_type} ${doc.owner_email}`).includes(query));
   return `${pageIntro('Verification queue', 'Inspect provider documents and make a clear approval decision.')}${toolbar('Search provider, owner or document')}
-    <div class="table-panel">${docs.length ? `<table class="data-table"><thead><tr><th>Provider</th><th>Document</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead><tbody>${docs.map((doc) => `<tr><td><strong>${escapeHtml(doc.provider_name)}</strong><small>${escapeHtml(doc.owner_email)}</small></td><td><strong>${escapeHtml(doc.document_type)}</strong><small><a class="document-link" href="${escapeHtml(safeUrl(doc.file_url))}" target="_blank" rel="noopener">Open secure document ↗</a></small></td><td>${date(doc.created_at)}</td><td>${status(doc.status)}</td><td><div class="row-actions"><button class="action-link" data-action="approve-document" data-id="${doc.id}">Approve</button><button class="action-link danger" data-action="reject-provider" data-provider="${doc.provider_id}" data-name="${escapeHtml(doc.provider_name)}">Reject with reason</button></div></td></tr>`).join('')}</tbody></table>` : emptyState('No matching verification documents.')}</div>`;
+    <div class="table-panel">${docs.length ? `<table class="data-table"><thead><tr><th>Provider</th><th>Document</th><th>Government check</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead><tbody>${docs.map((doc) => `<tr><td><strong>${escapeHtml(doc.provider_name)}</strong><small>${escapeHtml(doc.owner_email)}</small></td><td><strong>${escapeHtml(doc.document_type)}</strong><small><a class="document-link" href="${escapeHtml(safeUrl(doc.file_url))}" target="_blank" rel="noopener">Open secure document ↗</a></small></td><td>${kraCheckSummary(doc)}</td><td>${date(doc.created_at)}</td><td>${status(doc.status)}</td><td><div class="row-actions">${doc.document_type === 'kra_pin' ? `<button class="action-link" data-action="check-kra-pin" data-id="${doc.id}" data-name="${escapeHtml(doc.provider_name)}">Check KRA PIN</button>` : ''}<button class="action-link" data-action="approve-document" data-id="${doc.id}">Approve</button><button class="action-link danger" data-action="reject-provider" data-provider="${doc.provider_id}" data-name="${escapeHtml(doc.provider_name)}">Reject with reason</button></div></td></tr>`).join('')}</tbody></table>` : emptyState('No matching verification documents.')}</div>`;
+}
+
+function kraCheckSummary(doc) {
+  if (doc.document_type !== 'kra_pin') return '<span class="subtle">Not applicable</span>';
+  if (!doc.kra_checked_at) return status('not checked');
+  const result = doc.kra_is_valid && lower(doc.kra_pin_status) === 'active' ? 'valid' : 'attention';
+  return `<div class="government-check">${status(result)}<strong>${escapeHtml(doc.kra_taxpayer_name || doc.kra_message || 'No taxpayer name')}</strong><small>${escapeHtml([doc.kra_pin_masked, doc.kra_taxpayer_type, doc.kra_pin_status, doc.kra_environment].filter(Boolean).join(' · '))}<br>Checked ${date(doc.kra_checked_at)}</small></div>`;
 }
 
 function renderProviders() {
@@ -233,6 +240,7 @@ function updateBulkBar() { const bar = $('#bulk-bar'); if (!bar) return; bar.hid
 
 async function handleAction(button) {
   const { action, id, provider, name, available, plan } = button.dataset;
+  if (action === 'check-kra-pin') return kraPinAction({ id, name });
   if (action === 'approve-document') return execute(() => api(`/admin/documents/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'approved' }) }), 'Document approved.');
   if (action === 'approve-provider') return confirmAction({ title: `Verify ${name}?`, description: 'All provider documents will be approved and the verified badge will become visible.', confirm: 'Verify provider', run: () => api(`/admin/providers/${id}/verification`, { method: 'POST', body: JSON.stringify({ action: 'approve' }) }), success: 'Provider verified successfully.' });
   if (action === 'reject-provider') return reasonAction({ title: `Reject ${name}?`, description: 'Explain what must be corrected before the provider submits verification again.', confirm: 'Reject verification', run: (reason) => api(`/admin/providers/${provider}/verification`, { method: 'POST', body: JSON.stringify({ action: 'reject', reason }) }), success: 'Verification rejected and provider notified.' });
@@ -246,6 +254,24 @@ async function handleAction(button) {
   if (action === 'change-plan') return selectAction({ title: `Change ${name} plan`, description: `Current plan: ${plan}.`, label: 'Plan', options: [['free', 'Free'], ['growth', 'Growth'], ['pro', 'Pro']], confirm: 'Update plan', run: ({ value }) => api(`/admin/subscriptions/${id}/action`, { method: 'POST', body: JSON.stringify({ action: value === 'free' ? 'downgrade' : 'upgrade', value }) }), success: 'Subscription updated.' });
   if (action === 'invoice-paid') return execute(() => api(`/admin/invoices/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'paid' }) }), 'Invoice marked as paid.');
   if (action === 'invoice-remind') return execute(() => api(`/admin/invoices/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'remind' }) }), 'Invoice reminder created.');
+}
+
+function kraPinAction({ id, name }) {
+  openModal({
+    kicker: 'Government verification',
+    title: `Check ${name} with KRA`,
+    description: 'Enter the PIN exactly as shown on the submitted certificate. This check does not approve the provider automatically.',
+    fields: '<div class="modal-fields"><label for="kra-pin">KRA PIN</label><input id="kra-pin" maxlength="11" autocomplete="off" autocapitalize="characters" placeholder="A123456789Z"><small class="field-help">The full PIN is sent securely to KRA and is not retained by OnaNet.</small></div>',
+    confirm: 'Check KRA PIN',
+    onConfirm: () => {
+      const kraPin = $('#kra-pin').value.trim().toUpperCase();
+      if (!/^[AP][0-9]{9}[A-Z]$/.test(kraPin)) return modalError('Enter a valid KRA PIN, for example A123456789Z.');
+      executeModal(
+        () => api(`/admin/documents/${id}/kra-pin-check`, { method: 'POST', body: JSON.stringify({ kra_pin: kraPin }) }),
+        'KRA PIN check completed.'
+      );
+    },
+  });
 }
 
 async function handleBulk(action) {

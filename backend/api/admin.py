@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse
 from uuid import UUID
@@ -15,6 +16,7 @@ from backend.core.config import settings
 from backend.core.supabase_auth import delete_supabase_user
 from backend.db.session import get_db_connection
 from backend.services.email_notifications import send_provider_status_email
+from backend.services.kra_pin_service import KraPinServiceError, check_kra_pin
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -40,6 +42,23 @@ class AdminAction(BaseModel):
     action: str = Field(min_length=2, max_length=40)
     reason: str | None = Field(default=None, max_length=1000)
     value: str | None = Field(default=None, max_length=100)
+
+
+class KraPinCheckRequest(BaseModel):
+    kra_pin: str = Field(min_length=11, max_length=11)
+
+    @classmethod
+    def _clean_pin(cls, value: str) -> str:
+        return value.strip().upper()
+
+    def normalized_pin(self) -> str:
+        value = self._clean_pin(self.kra_pin)
+        if not re.fullmatch(r"[AP][0-9]{9}[A-Z]", value):
+            raise HTTPException(
+                status_code=422,
+                detail="Enter a valid KRA PIN, for example A123456789Z.",
+            )
+        return value
 
 
 async def ensure_admin_schema() -> None:
@@ -98,6 +117,23 @@ async def ensure_admin_schema() -> None:
                 reviewed_at timestamptz NOT NULL DEFAULT now(),
                 resubmitted_at timestamptz
             );
+            CREATE TABLE IF NOT EXISTS kra_pin_verification_checks (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                provider_id uuid NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+                document_id uuid NOT NULL REFERENCES provider_documents(id) ON DELETE CASCADE,
+                checked_by_id uuid REFERENCES users(id) ON DELETE SET NULL,
+                pin_masked text NOT NULL,
+                is_valid boolean NOT NULL,
+                response_code text,
+                message text,
+                taxpayer_name text,
+                taxpayer_type text,
+                pin_status text,
+                environment text NOT NULL,
+                checked_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS kra_pin_checks_document_checked_idx
+                ON kra_pin_verification_checks(document_id, checked_at DESC);
             CREATE TABLE IF NOT EXISTS admin_deleted_users (
                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                 deleted_user_id uuid NOT NULL,
@@ -224,10 +260,22 @@ async def admin_snapshot(
             """
             SELECT
                 d.id, d.provider_id, d.document_type, d.file_url, d.status,
-                d.created_at, p.provider_name, p.logo_url, u.email AS owner_email
+                d.created_at, p.provider_name, p.logo_url, u.email AS owner_email,
+                kc.is_valid AS kra_is_valid, kc.taxpayer_name AS kra_taxpayer_name,
+                kc.taxpayer_type AS kra_taxpayer_type, kc.pin_status AS kra_pin_status,
+                kc.message AS kra_message, kc.pin_masked AS kra_pin_masked,
+                kc.environment AS kra_environment, kc.checked_at AS kra_checked_at
             FROM provider_documents d
             JOIN providers p ON p.id = d.provider_id
             JOIN users u ON u.id = p.user_id
+            LEFT JOIN LATERAL (
+                SELECT is_valid, taxpayer_name, taxpayer_type, pin_status,
+                       message, pin_masked, environment, checked_at
+                FROM kra_pin_verification_checks
+                WHERE document_id = d.id
+                ORDER BY checked_at DESC
+                LIMIT 1
+            ) kc ON true
             ORDER BY
                 CASE d.status WHEN 'pending' THEN 0 ELSE 1 END,
                 d.created_at DESC
@@ -305,6 +353,7 @@ async def admin_snapshot(
                 "id": str(row["id"]),
                 "provider_id": str(row["provider_id"]),
                 "created_at": _iso(row["created_at"]),
+                "kra_checked_at": _iso(row["kra_checked_at"]),
                 "file_url": signed_url,
             }
             for row, signed_url in zip(
@@ -317,6 +366,64 @@ async def admin_snapshot(
         "coverage_zones": [_json_row(row) for row in coverage],
         "reports": [_json_row(row) for row in reports],
         "invoices": [_json_row(row) for row in invoices],
+    }
+
+
+@router.post("/documents/{document_id}/kra-pin-check")
+async def verify_document_kra_pin(
+    document_id: UUID,
+    body: KraPinCheckRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    admin = await _require_admin(authorization)
+    kra_pin = body.normalized_pin()
+
+    async with get_db_connection() as db:
+        document = await db.fetchrow(
+            """
+            SELECT id, provider_id
+            FROM provider_documents
+            WHERE id=$1 AND document_type='kra_pin'
+            """,
+            document_id,
+        )
+    if document is None:
+        raise HTTPException(status_code=404, detail="KRA PIN document not found.")
+
+    try:
+        result = await check_kra_pin(kra_pin)
+    except KraPinServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    masked_pin = f"{kra_pin[:2]}******{kra_pin[-3:]}"
+    async with get_db_connection() as db:
+        row = await db.fetchrow(
+            """
+            INSERT INTO kra_pin_verification_checks(
+                provider_id, document_id, checked_by_id, pin_masked,
+                is_valid, response_code, message, taxpayer_name,
+                taxpayer_type, pin_status, environment
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            RETURNING id, checked_at
+            """,
+            document["provider_id"],
+            document_id,
+            admin["id"],
+            masked_pin,
+            result["valid"],
+            result["response_code"],
+            result["message"],
+            result["taxpayer_name"],
+            result["taxpayer_type"],
+            result["pin_status"],
+            result["environment"],
+        )
+
+    return {
+        **result,
+        "id": str(row["id"]),
+        "pin_masked": masked_pin,
+        "checked_at": _iso(row["checked_at"]),
     }
 
 
