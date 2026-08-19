@@ -27,7 +27,7 @@ class CoverageAreasScreen extends StatefulWidget {
 }
 
 class _CoverageAreasScreenState extends State<CoverageAreasScreen> {
-  static const int _freeCoverageAreaLimit = 3;
+  static const int _freeCoverageAreaLimit = 1;
   static const _defaultCenter = LatLng(-1.286389, 36.817223);
 
   final _searchController = TextEditingController();
@@ -143,7 +143,7 @@ class _CoverageAreasScreenState extends State<CoverageAreasScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'The Free plan supports up to 3 coverage areas. You can add more after upgrading.',
+            'Free includes 1 coverage area. Finish registration, then compare Growth and Pro from your dashboard.',
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -219,6 +219,8 @@ class _CoverageAreasScreenState extends State<CoverageAreasScreen> {
             subtitle:
                 'Pick your service center and set the radius customers can find you within.',
           ),
+          const SizedBox(height: 16),
+          const _StartingPlanNotice(),
           const SizedBox(height: 22),
           TextField(
             controller: _searchController,
@@ -550,7 +552,7 @@ class _CoverageAreasScreenState extends State<CoverageAreasScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'Saved Areas (${_savedCoverageAreas.length})',
+                      'Saved Areas (${_savedCoverageAreas.length} of $_freeCoverageAreaLimit on Free)',
                       style: GoogleFonts.plusJakartaSans(
                         color: textColor,
                         fontSize: 14,
@@ -634,6 +636,77 @@ class _CoverageAreasScreenState extends State<CoverageAreasScreen> {
           ProviderPrimaryButton(label: 'Continue', onPressed: _continue),
           const SizedBox(height: 24),
           const SecureFooter(),
+        ],
+      ),
+    );
+  }
+}
+
+class _StartingPlanNotice extends StatelessWidget {
+  const _StartingPlanNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? AppTheme.offWhite : AppTheme.navy;
+    final mutedColor = isDark ? AppTheme.gray : AppTheme.darkGray;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.amber.withValues(alpha: isDark ? 0.1 : 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.amber.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.workspace_premium_outlined,
+                color: AppTheme.amber,
+                size: 23,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'You will start on the Free plan',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: textColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      'Free includes 1 coverage area and 2 packages. Growth includes up to 5 areas, while Pro has unlimited coverage.',
+                      style: GoogleFonts.urbanist(
+                        color: mutedColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Finish registration with one area. Your dashboard will show the plan comparison before you decide whether to upgrade.',
+            style: GoogleFonts.urbanist(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              height: 1.35,
+            ),
+          ),
         ],
       ),
     );

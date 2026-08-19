@@ -382,14 +382,17 @@ class ProviderPrimaryButton extends StatelessWidget {
         ),
       ),
       onPressed: onPressed,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label),
-          const SizedBox(width: 14),
-          const Icon(Icons.arrow_forward_rounded, size: 19),
-        ],
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label),
+            const SizedBox(width: 14),
+            const Icon(Icons.arrow_forward_rounded, size: 19),
+          ],
+        ),
       ),
     );
   }
@@ -416,12 +419,15 @@ class SecureFooter extends StatelessWidget {
           color: isDark ? AppTheme.gray : AppTheme.darkGray,
         ),
         const SizedBox(width: 8),
-        Text(
-          message,
-          style: GoogleFonts.urbanist(
-            color: isDark ? AppTheme.gray : AppTheme.darkGray,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
+        Flexible(
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.urbanist(
+              color: isDark ? AppTheme.gray : AppTheme.darkGray,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],
