@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
 
 
+class NotificationChannelNotConfigured(RuntimeError):
+    pass
+
+
 def channels_for_limits(
     limits: dict[str, Any], *, sms_enabled: bool
 ) -> tuple[str, ...]:
@@ -166,6 +170,10 @@ async def _process_job(job_id: UUID) -> bool:
             raise RuntimeError("Africa's Talking SMS alerts are not enabled yet")
         await _finish(job_id, "sent")
         return True
+    except NotificationChannelNotConfigured as exc:
+        logger.info("Notification job %s deferred: %s", job_id, exc)
+        await _defer_unconfigured(job, str(exc))
+        return False
     except Exception as exc:
         logger.exception("Notification job %s failed", job_id)
         await _retry_or_fail(job, str(exc))
@@ -217,7 +225,7 @@ async def _send_push(job: Any, context: Any) -> None:
     relay_url = (settings.PUSH_RELAY_URL or "").strip()
     relay_secret = (settings.PUSH_RELAY_SECRET or "").strip()
     if not relay_url or not relay_secret:
-        raise RuntimeError("Push relay is not configured")
+        raise NotificationChannelNotConfigured("Push relay is not configured")
 
     async with get_db_connection() as db:
         rows = await db.fetch(
@@ -300,5 +308,20 @@ async def _retry_or_fail(job: Any, error: str) -> None:
             job["id"],
             "failed" if terminal else "pending",
             delay_minutes,
+            error[:1000],
+        )
+
+
+async def _defer_unconfigured(job: Any, error: str) -> None:
+    async with get_db_connection() as db:
+        await db.execute(
+            """
+            UPDATE notification_jobs
+            SET status='pending', attempts=greatest(attempts-1, 0),
+                available_at=now()+interval '6 hours',
+                last_error=$2, updated_at=now()
+            WHERE id=$1
+            """,
+            job["id"],
             error[:1000],
         )
