@@ -27,6 +27,10 @@ from backend.api.resend_webhooks import (
     ensure_resend_webhook_schema,
     router as resend_webhooks_router,
 )
+from backend.api.notifications import (
+    ensure_notification_schema,
+    router as notifications_router,
+)
 from backend.services.provider_access import provider_staff_access_middleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,6 +45,7 @@ async def lifespan(app: FastAPI):
     await ensure_performance_indexes()
     await ensure_email_otp_schema()
     await ensure_resend_webhook_schema()
+    await ensure_notification_schema()
     yield
     await close_db_pool()
 
@@ -80,6 +85,7 @@ app.include_router(admin_router)
 app.include_router(payments_router)
 app.include_router(locations_router)
 app.include_router(resend_webhooks_router)
+app.include_router(notifications_router)
 @app.get("/")
 async def root():
     return {

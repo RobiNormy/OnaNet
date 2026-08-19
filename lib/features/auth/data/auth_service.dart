@@ -7,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 import 'package:ona_net/core/network/api_client.dart';
+import 'package:ona_net/core/notifications/push_notification_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide MultipartFile;
 
 class AuthServiceException implements Exception {
@@ -683,6 +684,7 @@ class AuthService {
   }
 
   Future<void> signOut() async {
+    await PushNotificationService.unregisterCurrentDevice();
     await _auth.signOut();
     try {
       await _googleSignIn.signOut();
