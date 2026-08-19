@@ -23,6 +23,7 @@ body { margin: 0; color: var(--ink); background: var(--paper); font-family: Inte
 button, input, select, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
+button:disabled { cursor: wait; opacity: .72; }
 .brand { color: var(--navy-900); font-size: 25px; font-weight: 950; letter-spacing: -.055em; text-decoration: none; }
 .brand span { color: var(--cyan); }
 .brand-light { color: var(--white); }
@@ -51,6 +52,10 @@ button { cursor: pointer; }
 .password-wrap input { padding-right: 64px; }
 .text-button { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); border: 0; color: #176b99; background: transparent; font-size: 12px; font-weight: 900; }
 .primary-button, .secondary-button, .danger-button { min-height: 42px; padding: 10px 16px; border-radius: 9px; font-weight: 850; }
+.button-busy { display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
+.spinner { width: 15px; height: 15px; display: inline-block; flex: 0 0 auto; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .65s linear infinite; }
+.spinner-large { width: 28px; height: 28px; border-width: 3px; color: var(--cyan); }
+@keyframes spin { to { transform: rotate(360deg); } }
 .primary-button { border: 1px solid var(--navy-900); color: white; background: var(--navy-900); }
 .primary-button:hover { border-color: var(--navy-800); background: var(--navy-800); }
 .secondary-button { border: 1px solid var(--line); color: var(--navy-900); background: white; }
@@ -153,6 +158,7 @@ button { cursor: pointer; }
 .empty-state strong { display: block; color: var(--navy-900); }
 .empty-state p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 .document-link { color: #176b99; font-weight: 800; text-decoration: none; }
+.document-link.opening { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); pointer-events: none; }
 .government-check { min-width: 175px; }
 .government-check strong { margin-top: 6px; }
 .field-help { margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.45; }
@@ -180,6 +186,10 @@ button { cursor: pointer; }
 .modal-fields { display: grid; }
 .modal textarea { min-height: 110px; resize: vertical; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.busy-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; z-index: 200; background: rgb(6 19 30 / 46%); backdrop-filter: blur(3px); }
+.busy-card { width: min(90vw, 320px); display: grid; justify-items: center; gap: 9px; padding: 25px 22px; border: 1px solid rgb(255 255 255 / 65%); border-radius: 14px; color: var(--navy-900); background: white; box-shadow: 0 22px 65px rgb(0 0 0 / 25%); text-align: center; }
+.busy-card strong { font-size: 14px; }
+.busy-card small { color: var(--muted); font-size: 11px; line-height: 1.45; }
 .toast-stack { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 150; }
 .toast { max-width: 380px; padding: 12px 15px; border-radius: 9px; color: white; background: var(--navy-900); box-shadow: var(--shadow); font-size: 12px; font-weight: 750; animation: toast-in .22s ease-out; }
 .toast.error { background: #9f2929; }

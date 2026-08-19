@@ -102,6 +102,14 @@
     </section>
   </div>
 
+  <div class="busy-overlay" id="busy-overlay" role="status" aria-live="polite" hidden>
+    <div class="busy-card">
+      <span class="spinner spinner-large" aria-hidden="true"></span>
+      <strong id="busy-title">Working…</strong>
+      <small id="busy-message">Please wait while OnaNet completes this request.</small>
+    </div>
+  </div>
+
   <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
   <script type="module" src="../control.js"></script>
 </body>

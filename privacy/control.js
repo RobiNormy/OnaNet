@@ -75,9 +75,30 @@ async function loadSnapshot() {
   finally { setLoading(false); }
 }
 
-function setLoading(value) {
+function setLoading(value, title = 'Loading control data…') {
   $('#loading-bar').hidden = !value;
   $('#refresh-button').disabled = value;
+  setBusyOverlay(value, title);
+}
+
+function setBusyOverlay(value, title = 'Working…') {
+  $('#busy-title').textContent = title;
+  $('#busy-overlay').hidden = !value;
+}
+
+function setButtonBusy(button, value, label = 'Working…') {
+  if (!button) return;
+  if (value) {
+    button.dataset.idleLabel = button.textContent;
+    button.disabled = true;
+    button.classList.add('button-busy');
+    button.replaceChildren(Object.assign(document.createElement('span'), { className: 'spinner' }), document.createTextNode(label));
+    return;
+  }
+  button.disabled = false;
+  button.classList.remove('button-busy');
+  button.textContent = button.dataset.idleLabel || button.textContent;
+  delete button.dataset.idleLabel;
 }
 
 function renderIdentity() {
@@ -234,6 +255,12 @@ function bindViewActions() {
   $$('[data-select-user]').forEach((box) => box.addEventListener('change', () => { box.checked ? state.selected.add(box.value) : state.selected.delete(box.value); updateBulkBar(); }));
   $$('[data-action]').forEach((button) => button.addEventListener('click', () => handleAction(button)));
   $$('[data-bulk]').forEach((button) => button.addEventListener('click', () => handleBulk(button.dataset.bulk)));
+  $$('.document-link').forEach((link) => link.addEventListener('click', () => {
+    const idleLabel = link.textContent;
+    link.classList.add('opening');
+    link.replaceChildren(Object.assign(document.createElement('span'), { className: 'spinner' }), document.createTextNode('Opening document…'));
+    setTimeout(() => { link.classList.remove('opening'); link.textContent = idleLabel; }, 3000);
+  }));
 }
 
 function updateBulkBar() { const bar = $('#bulk-bar'); if (!bar) return; bar.hidden = state.selected.size === 0; $('#selected-count').textContent = state.selected.size; }
@@ -294,14 +321,18 @@ function selectAction({ title, description, label, options, reason = false, conf
 function modalError(message) { $('#modal-error').textContent = message; $('#modal-error').hidden = false; }
 
 async function executeModal(run, success) {
-  const button = $('#modal-confirm'); button.disabled = true;
+  const button = $('#modal-confirm');
+  const label = $('#modal-kicker').textContent === 'Government verification' ? 'Checking with KRA…' : 'Saving…';
+  setButtonBusy(button, true, label);
+  $('#modal-cancel').disabled = true;
+  $('#modal-close').disabled = true;
   try { await run(); closeModal(); await loadSnapshot(); renderIdentity(); render(); toast(success); }
   catch (error) { modalError(error.message); }
-  finally { button.disabled = false; }
+  finally { setButtonBusy(button, false); $('#modal-cancel').disabled = false; $('#modal-close').disabled = false; }
 }
 
 async function execute(run, success) {
-  setLoading(true);
+  setLoading(true, 'Saving changes…');
   try { await run(); await loadSnapshot(); renderIdentity(); render(); toast(success); }
   catch (error) { toast(error.message, true); }
   finally { setLoading(false); }
@@ -316,12 +347,12 @@ async function signOut(confirm = true) {
 }
 
 $('#login-form').addEventListener('submit', async (event) => {
-  event.preventDefault(); const button = event.submitter; const error = $('#login-error'); error.hidden = true; $('#login-notice').hidden = true; button.disabled = true;
+  event.preventDefault(); const button = event.submitter; const error = $('#login-error'); error.hidden = true; $('#login-notice').hidden = true; setButtonBusy(button, true, 'Signing in…');
   try {
     const { data, error: authError } = await state.supabase.auth.signInWithPassword({ email: $('#admin-email').value.trim(), password: $('#admin-password').value });
     if (authError) throw authError; await enterApp(data.session);
   } catch (failure) { await state.supabase.auth.signOut(); error.textContent = failure.message.includes('Admin access') ? 'This account is not authorised for OnaNet Control.' : failure.message; error.hidden = false; }
-  finally { button.disabled = false; }
+  finally { setButtonBusy(button, false); }
 });
 $('#toggle-password').addEventListener('click', () => { const input = $('#admin-password'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggle-password').textContent = input.type === 'password' ? 'Show' : 'Hide'; });
 $('#forgot-password').addEventListener('click', async () => {
